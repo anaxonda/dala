@@ -91,7 +91,7 @@ pip install requests aiohttp beautifulsoup4 EbookLib trafilatura lxml pygments t
 ## 🦊 Firefox Extension Setup
 
 The project includes a **Firefox Extension** and a **Local Python Server**.
-This enables **Paywall Bypassing**: The extension grabs the *unlocked* HTML from your browser (where you are logged in) and sends it to the server, ensuring the EPUB matches exactly what you see.
+ If it can the extension grabs the already loaded HTML from your browser (where you are logged in).
 
 ### Step 1: Run the Server
 The extension needs a backend to build the EPUB.
