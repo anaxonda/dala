@@ -95,6 +95,7 @@ class Source:
     """Represents an input source: URL and optional pre-fetched HTML."""
     url: str
     html: Optional[str] = None
+    cookies: Optional[Dict[str, str]] = None
 
 @dataclass
 class ImageAsset:
@@ -1127,6 +1128,9 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
 
     async def safe_process(source):
         async with GLOBAL_SEMAPHORE:
+             local_session = session
+             if source.cookies:
+                 local_session = aiohttp.ClientSession(timeout=REQUEST_TIMEOUT, cookies=source.cookies)
              driver = None
              parsed = urlparse(source.url)
              if "news.ycombinator.com" in source.url:
@@ -1138,10 +1142,13 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
              else:
                  driver = GenericDriver()
              try:
-                 return await driver.prepare_book_data(source, session, options)
+                 return await driver.prepare_book_data(source, local_session, options)
              except Exception as e:
                  log.exception(f"Failed to process {source.url}: {e}")
                  return None
+             finally:
+                 if local_session is not session:
+                     await local_session.close()
 
     results = await tqdm_asyncio.gather(*[safe_process(s) for s in sources], desc="Processing URLs")
     return [b for b in results if b]

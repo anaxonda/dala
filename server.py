@@ -38,6 +38,7 @@ app.add_middleware(
 class SourceItem(BaseModel):
     url: str
     html: Optional[str] = None
+    cookies: Optional[dict] = None
 
 class ConversionRequest(BaseModel):
     sources: List[SourceItem] # Renamed from urls
@@ -64,7 +65,7 @@ async def convert(req: ConversionRequest):
     )
 
     # Map Pydantic to Core Dataclass
-    core_sources = [core.Source(url=s.url, html=s.html) for s in req.sources]
+    core_sources = [core.Source(url=s.url, html=s.html, cookies=s.cookies) for s in req.sources]
 
     async with core.get_session() as session:
         processed_books = await core.process_urls(core_sources, options, session)

@@ -30,6 +30,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.querySelectorAll('input[type="checkbox"]').forEach(box => {
             box.onchange = saveOptions;
         });
+        const cookieBox = document.getElementById('opt-cookies');
+        if (cookieBox) {
+            cookieBox.onchange = handleCookieToggle;
+        }
     } catch (e) {
         console.error("Error attaching listeners:", e);
     }
@@ -78,7 +82,8 @@ async function saveOptions() {
         no_comments: document.getElementById('opt-nocomments').checked,
         no_article: document.getElementById('opt-noarticle').checked,
         no_images: document.getElementById('opt-noimages').checked,
-        archive: document.getElementById('opt-archive').checked
+        archive: document.getElementById('opt-archive').checked,
+        include_cookies: document.getElementById('opt-cookies').checked
     };
     await browser.storage.local.set({ savedOptions: options });
 }
@@ -90,6 +95,7 @@ async function restoreOptions() {
         document.getElementById('opt-noarticle').checked = res.savedOptions.no_article;
         document.getElementById('opt-noimages').checked = res.savedOptions.no_images;
         document.getElementById('opt-archive').checked = res.savedOptions.archive;
+        document.getElementById('opt-cookies').checked = !!res.savedOptions.include_cookies;
     }
 }
 
@@ -98,8 +104,68 @@ function getOptions() {
         no_comments: document.getElementById('opt-nocomments').checked,
         no_article: document.getElementById('opt-noarticle').checked,
         no_images: document.getElementById('opt-noimages').checked,
-        archive: document.getElementById('opt-archive').checked
+        archive: document.getElementById('opt-archive').checked,
+        include_cookies: document.getElementById('opt-cookies').checked
     };
+}
+
+async function handleCookieToggle() {
+    const box = document.getElementById('opt-cookies');
+    if (!box) return;
+    if (!box.checked) {
+        await saveOptions();
+        return;
+    }
+    try {
+        const tabs = await browser.tabs.query({active: true, currentWindow: true});
+        const tab = tabs && tabs[0];
+        if (!tab || !isValidUrl(tab.url)) {
+            showStatus("No active page to request cookies");
+            box.checked = false;
+            await saveOptions();
+            return;
+        }
+        const granted = await ensureCookiePermissionForUrl(tab.url);
+        if (!granted) {
+            showStatus("Cookie permission denied");
+            box.checked = false;
+        } else {
+            showStatus("Cookies enabled for this site");
+        }
+    } catch (e) {
+        console.warn("Cookie toggle error", e);
+        box.checked = false;
+        showStatus("Cookie access failed");
+    } finally {
+        await saveOptions();
+    }
+}
+
+async function ensureCookiePermissionForUrl(url) {
+    try {
+        const u = new URL(url);
+        const originPattern = `${u.origin}/*`;
+        const perms = {origins: [originPattern], permissions: ["cookies"]};
+        const hasPerm = await browser.permissions.contains(perms);
+        if (hasPerm) return true;
+        return await browser.permissions.request(perms);
+    } catch (e) {
+        console.warn("Permission request failed", e);
+        return false;
+    }
+}
+
+async function getCookiesForUrl(url) {
+    try {
+        const list = await browser.cookies.getAll({url});
+        if (!list || list.length === 0) return null;
+        const jar = {};
+        list.forEach(c => { jar[c.name] = c.value; });
+        return jar;
+    } catch (e) {
+        console.warn("Cookie fetch failed for", url, e);
+        return null;
+    }
 }
 
 // --- TAB IMPORT LOGIC ---
@@ -203,6 +269,7 @@ function showStatus(msg) {
 // --- PAYLOAD BUILDER (THE HYBRID ENGINE) ---
 // Combines URLs with raw HTML from open tabs to bypass paywalls
 async function preparePayload(urls, bundleTitle) {
+    const options = getOptions();
     const sources = [];
 
     // 1. Get all tabs to check for matches
@@ -234,13 +301,20 @@ async function preparePayload(urls, bundleTitle) {
                 console.log("Could not grab HTML (using fallback):", url);
             }
         }
-        sources.push({ url: url, html: html });
+        let cookies = null;
+        if (options.include_cookies) {
+            cookies = await getCookiesForUrl(url);
+        }
+        sources.push({ url: url, html: html, cookies: cookies });
     }
 
     return {
         sources: sources,
         bundle_title: bundleTitle,
-        ...getOptions()
+        no_comments: options.no_comments,
+        no_article: options.no_article,
+        no_images: options.no_images,
+        archive: options.archive
     };
 }
 
