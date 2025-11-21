@@ -4,44 +4,68 @@ Here is the comprehensive `README.md` reflecting the current state of the projec
 
 # Universal Web-to-EPUB Downloader (E-Ink Optimized)
 
-A sophisticated tool to convert web articles, Hacker News threads, and Substack posts into high-quality EPUB files designed specifically for e-ink devices (Kindle, KOReader, Kobo).
+Tool to convert web articles, Hacker News threads, Substack posts, and Reddit threads into EPUBs tuned for e-ink devices (Kindle, KOReader, Kobo). Specialized drivers handle site-specific APIs, anti-bot hurdles, and layouts that survive older reader engines.
 
-This project goes beyond simple HTML scraping. It includes specialized drivers to handle complex APIs, anti-bot protections, and layout optimizations for small, low-refresh-rate screens.
+## Table of Contents
+- [Quick Usage](#quick-usage)
+- [Options & Flags](#options--flags)
+- [Examples](#examples)
+- [Updates](#-updates)
+- [Installation](#-installation)
+- [Firefox Extension Setup](#-firefox-extension-setup)
+- [Systemd Setup](#-systemd-setup)
+- [Architecture & History](#-architecture--history)
+
+---
+
+## Quick Usage
+```bash
+uv run web_to_epub.py [URL]
+```
+- Supports single articles, HN threads, Substack posts (including custom domains), and Reddit threads (old/new/redd.it).
+- Bundle multiple URLs: `uv run web_to_epub.py -i links.txt --bundle --bundle-title "Morning Read"`
+
+## Options & Flags
+
+| Flag | Description |
+| :--- | :--- |
+| `--bundle` | Anthology mode; combines all input into one EPUB with nested TOC. |
+| `--bundle-title "Name"` | Custom bundle title; defaults to `Domain - Date`. |
+| `--no-comments` | Article text only; skip comment fetch. |
+| `--no-article` | Comments only (useful for HN where the link is just context). |
+| `--no-images` | Text-only mode to shrink file size. |
+| `-a`, `--archive` | Force fetch from the Wayback Machine (dead links). |
+| `-i [file.txt]` | File with one URL per line. |
+| `--max-depth [N]` | Limit comment recursion depth (HN/Reddit). |
+| `--css [file.css]` | Inject custom CSS into output. |
+| `-v` | Verbose logging (debug mode). |
+
+## Examples
+
+**Morning Digest Bundle**
+```bash
+uv run web_to_epub.py -i links.txt --bundle --bundle-title "Morning Read - Nov 20"
+```
+
+**Hacker News (Deep Dive)**
+```bash
+uv run web_to_epub.py "https://news.ycombinator.com/item?id=123456"
+```
+
+**Substack (Custom Domain)**
+```bash
+uv run web_to_epub.py https://www.astralcodexten.com/p/the-bloomers-paradox
+```
+
+**Reddit Thread**
+```bash
+uv run web_to_epub.py https://old.reddit.com/r/AskHistorians/comments/1p2uk19/ken_burns_the_american_revolution_claims_that_the/
+```
 
 ---
 
 ## 🔄 Updates
-- **Reddit Driver (new):** Reddit/old.reddit/redd.it links now fetch via the JSON API (`raw_json=1`), render self-posts or linked articles, and include threaded comments with navigation. Works in both CLI (`uv run web_to_epub.py <reddit-url>`) and the Firefox extension via the existing FastAPI backend.
-
----
-
-## 🏗 Architecture & History
-*Why the code looks the way it does.*
-
-### 1. The Driver Pattern
-Early in development, it became clear that a "one size fits all" scraper (like `trafilatura` alone) wasn't enough.
-*   **Generic Driver:** Uses heuristics to find the main content on standard websites.
-*   **Hacker News Driver:** Uses the Firebase API to recursively fetch comment trees, preserving the discussion structure.
-*   **Substack Driver:** Reverse-engineered. It hunts for hidden JSON in `window._preloads` to find IDs that aren't in the HTML, handles Cloudflare 403s via headers, and automatically falls back to the native `*.substack.com` API if a custom domain's API is broken (a common issue with Substack).
-
-### 2. The Battle for Layout (E-Ink Optimization)
-Formatting for a 30-inch monitor breaks on a 6-inch Kindle.
-*   **The "Squashed Text" Problem:** Initially, we used `margin-left` to indent nested comments. By depth 10, the text column was 1 character wide.
-    *   *Fix:* We switched to a **Border-based layout**. Instead of pushing text to the right, we add a vertical line on the left. Deep threads flatten visual indentation after Level 5 but keep the lines so you can track the hierarchy.
-*   **The "Flexbox" Failure:** Modern CSS (`display: flex`) is ignored by many older e-readers (Kindle's engine is ancient). This caused navigation buttons to wrap onto new lines, wasting vertical space.
-    *   *Fix:* We implemented a **CSS Table Layout**. This forces the username and buttons to stay on a single line, truncating the username if necessary.
-
-### 3. Navigation (The "Cluster")
-Reading threaded conversations linearly is difficult.
-*   *Solution:* We inject a **Navigation Cluster** (`↑ → ⏮ ⏭`) into every comment header.
-    *   These are internal anchor links calculated during a pre-processing pass of the comment tree.
-    *   They allow jumping to the **Parent**, the **Next Sibling** (skipping the current argument), or the **Next Root Thread**.
-
-### 4. Image Handling & The "Picture" Problem
-*   **Lazy Loading:** Sites like NYTimes use `data-src` or complex `srcset` attributes, leaving `src` as a 1x1 pixel.
-    *   *Fix:* The script uses a "Trust but Verify" logic. It checks `src` first; if it's a placeholder (junk), it scans `data-src` and `srcset` for the high-res version.
-*   **The `<picture>` Trap:** E-readers often prioritize the `<source>` tag inside a `<picture>` element, which points to a remote URL. Even if we downloaded the image locally, the reader would try (and fail) to load the remote one.
-    *   *Fix:* The script "unwraps" images. It deletes the `<picture>` and `<source>` tags, leaving only the standard `<img>` pointing to the local file inside the EPUB.
+- **Reddit Driver (new):** Reddit/old.reddit/redd.it links now fetch via the JSON API (`raw_json=1`), render self-posts or linked articles, and include threaded comments with navigation. Works in both CLI and the Firefox extension via the existing FastAPI backend.
 
 ---
 
@@ -61,51 +85,6 @@ uv run web_to_epub.py [URL]
 ```bash
 pip install requests aiohttp beautifulsoup4 EbookLib trafilatura lxml pygments tqdm Pillow uvicorn fastapi
 ```
-
----
-
-## 💻 CLI Usage
-
-### Basic Command
-```bash
-uv run web_to_epub.py [URL]
-```
-
-### Options & Flags
-
-| Flag | Description |
-| :--- | :--- |
-| `--bundle` | **Anthology Mode.** Combines all input URLs into a single EPUB file with a nested Table of Contents. |
-| `--bundle-title "Name"` | Sets the title for the bundle. If omitted, defaults to "Domain - Date". |
-| `--no-comments` | Downloads the article text only. Skips API calls for comments. |
-| `--no-article` | Downloads the comments only (useful for HN discussions where the link is just context). |
-| `--no-images` | Text-only mode. Significantly reduces file size. |
-| `-a`, `--archive` | Force-fetch content from the **Wayback Machine** (useful for dead links). |
-| `-i [file.txt]` | Input file containing a list of URLs (one per line). |
-| `--max-depth [N]` | (HN Only) Limit comment recursion depth. |
-| `--css [file.css]` | Inject custom CSS to override default e-reader styling. |
-| `-v` | Verbose logging (debug mode). |
-
-### Examples
-
-**1. The "Morning Digest" Bundle**
-Create a text file `links.txt` with 5 URLs. Run:
-```bash
-uv run web_to_epub.py -i links.txt --bundle --bundle-title "Morning Read - Nov 20"
-```
-*Result:* A single file `Morning_Read_-_Nov_20.epub` with a TOC listing all articles.
-
-**2. Hacker News (Deep Dive)**
-Download a thread, including the linked article and all comments.
-```bash
-uv run web_to_epub.py "https://news.ycombinator.com/item?id=123456"
-```
-
-**3. Substack (Custom Domain)**
-```bash
-uv run web_to_epub.py https://www.astralcodexten.com/p/the-bloomers-paradox
-```
-*Note:* The script automatically detects the custom domain, finds the hidden ID, and uses the native API to fetch comments.
 
 ---
 
@@ -180,3 +159,28 @@ To keep the server running in the background automatically on Linux:
     ```bash
     systemctl --user status epub-server
     ```
+
+---
+
+## 🏗 Architecture & History
+*Why the code looks the way it does.*
+
+### 1. The Driver Pattern
+A single heuristic scraper was not enough.
+*   **Generic Driver:** Uses heuristics to find the main content on standard websites.
+*   **Hacker News Driver:** Uses the Firebase API to recursively fetch comment trees, preserving the discussion structure.
+*   **Substack Driver:** Finds hidden JSON in `window._preloads`, handles Cloudflare 403s via headers, and falls back to native `*.substack.com` API when custom domains break.
+*   **Reddit Driver:** Calls the Reddit JSON API (`raw_json=1`), renders self-post HTML or linked articles, and normalizes threaded comments for navigation.
+
+### 2. The Battle for Layout (E-Ink Optimization)
+Formatting for a 30-inch monitor breaks on a 6-inch Kindle.
+*   **"Squashed Text" Problem:** Deep nesting shrank the content column. Border-based indentation keeps hierarchy without collapsing width.
+*   **"Flexbox" Failure:** Older e-readers ignore `display: flex`. CSS table layout keeps headers and navigation on one line.
+
+### 3. Navigation (The "Cluster")
+Reading threaded conversations linearly is difficult.
+*   Solution: A navigation cluster (`↑ → ⏮ ⏭`) in each comment header with internal anchors for Parent / Next Sibling / Thread Root / Next Thread.
+
+### 4. Image Handling & The "Picture" Problem
+*   **Lazy Loading:** Detects `data-src`/`srcset` fallbacks to retrieve high-res images.
+*   **`<picture>` Trap:** Unwraps `<picture>` and `<source>` so e-readers use the bundled `<img>` instead of remote URLs.
