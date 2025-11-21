@@ -1,8 +1,4 @@
-Here is the comprehensive `README.md` reflecting the current state of the project, its architectural history, and full usage documentation.
-
-***
-
-# Universal Web-to-EPUB Downloader (E-Ink Optimized)
+# Web-to-EPUB Downloader (E-Ink Optimized)
 
 Tool to convert web articles, Hacker News threads, Substack posts, and Reddit threads into EPUBs tuned for e-ink devices (Kindle, KOReader, Kobo). Specialized drivers handle site-specific APIs, anti-bot hurdles, and layouts that survive older reader engines.
 
