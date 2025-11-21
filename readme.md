@@ -2,7 +2,7 @@
 
 Tool to convert web articles, Hacker News threads, Substack posts, and Reddit threads into EPUBs tuned for e-ink devices (Kindle, KOReader, Kobo). A bundled Firefox extension can capture unlocked page HTML from your browser and send it to the local FastAPI server for EPUB generation. Specialized drivers handle site-specific APIs, anti-bot hurdles, and layouts that survive older reader engines.
 
-![Firefox Extension](extension/icon.png)
+<img src="extension/icon.png" alt="Firefox Extension" width="72" />
 
 Allow threaded comment navigation with button links in the epub  to jump to different levels in hierarchy: top level, parent, sibling, next top level.
 
