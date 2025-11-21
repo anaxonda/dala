@@ -2,6 +2,8 @@
 
 Tool to convert web articles, Hacker News threads, Substack posts, and Reddit threads into EPUBs tuned for e-ink devices (Kindle, KOReader, Kobo). Specialized drivers handle site-specific APIs, anti-bot hurdles, and layouts that survive older reader engines.
 
+Allow threaded comment navigation with button links in the epub  to jump to different levels in hierarchy: top level, parent, sibling, next top level.
+
 ## Table of Contents
 - [Quick Usage](#quick-usage)
 - [Options & Flags](#options--flags)
