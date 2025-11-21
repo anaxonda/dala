@@ -23,6 +23,7 @@ import asyncio
 import logging
 import random
 import json
+import html
 from urllib.parse import urlparse, parse_qs, urljoin, quote
 from datetime import datetime
 import time
@@ -847,6 +848,130 @@ class HackerNewsDriver(BaseDriver):
 
         return BookData(title=title, author=author, uid=f"urn:hn:{item_id}", language='en', description=f"HN Thread {item_id}", source_url=url, chapters=chapters, images=assets, toc_structure=toc_structure)
 
+class RedditDriver(BaseDriver):
+    async def prepare_book_data(self, source: Source, session, options: ConversionOptions) -> Optional[BookData]:
+        api_url = self._build_api_url(source.url)
+        log.info(f"Reddit Driver processing: {api_url}")
+
+        payload, final_url = await fetch_with_retry(session, api_url, 'json')
+        if not payload or not isinstance(payload, list) or len(payload) < 2:
+            log.error("Failed to fetch Reddit thread JSON")
+            return None
+
+        post_listing = payload[0].get("data", {}).get("children", [])
+        if not post_listing:
+            log.error("No post data in Reddit response")
+            return None
+        post_data = post_listing[0].get("data", {})
+
+        post_id = post_data.get("id") or abs(hash(source.url))
+        title = post_data.get("title") or "Reddit Thread"
+        author = f"u/{post_data.get('author')}" if post_data.get("author") else "Reddit"
+        subreddit = post_data.get("subreddit")
+
+        chapters, assets = [], []
+        art_chap = None
+
+        if not options.no_article:
+            selftext_html = post_data.get("selftext_html")
+            link_url = post_data.get("url")
+            article_html = ""
+            chapter_title = title
+
+            if selftext_html:
+                decoded = html.unescape(selftext_html)
+                soup = BeautifulSoup(decoded, 'html.parser')
+                if not options.no_images:
+                    await ImageProcessor.process_images(session, soup, source.url, assets)
+                article_html = soup.prettify()
+            elif link_url and not link_url.startswith(("https://www.reddit.com", "https://old.reddit.com", "https://redd.it")):
+                art_data = await ArticleExtractor.get_article_content(session, link_url, force_archive=options.archive)
+                if art_data['success']:
+                    chapter_title = art_data.get('title') or chapter_title
+                    soup = BeautifulSoup(art_data['html'], 'html.parser')
+                    body = soup.body if soup.body else soup
+                    if not options.no_images:
+                        base = art_data.get('archive_url') if art_data.get('was_archived') else link_url
+                        await ImageProcessor.process_images(session, body, base, assets)
+                    article_html = body.prettify()
+                else:
+                    article_html = f"<p>Original link: <a href=\"{link_url}\">{link_url}</a></p>"
+            else:
+                article_html = f"<p>Original thread: <a href=\"{source.url}\">{source.url}</a></p>"
+
+            meta_bits = [f"<p><strong>Subreddit:</strong> r/{subreddit}</p>" if subreddit else ""]
+            meta_bits.append(f"<p><strong>Reddit Link:</strong> <a href=\"{source.url}\">{source.url}</a></p>")
+            meta_html = "".join(meta_bits)
+            final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{chapter_title}</title><link rel="stylesheet" href="style/default.css"/></head>
+            <body><h1>{chapter_title}</h1><div class="post-meta">{meta_html}</div><hr/>{article_html}</body></html>"""
+
+            art_chap = Chapter(title=chapter_title, filename="article.xhtml", content_html=final_art_html, uid=f"reddit_art_{post_id}", is_article=True)
+            chapters.append(art_chap)
+
+        com_chap = None
+        if not options.no_comments:
+            comments_listing = payload[1].get("data", {}).get("children", [])
+            normalized = self._normalize_comments(comments_listing, options.max_depth)
+            enriched_roots = _enrich_comment_tree(normalized)
+
+            fmt = HtmlFormatter(style='default', cssclass='codehilite', noclasses=False)
+            chunks = []
+            for comment in enriched_roots:
+                chunks.append("<div class='thread-container'>")
+                chunks.append(format_comment_html(comment, fmt))
+                chunks.append("</div>")
+            comments_html = "".join(chunks)
+
+            if comments_html:
+                full_com_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Comments</title><link rel="stylesheet" href="style/default.css"/></head><body>
+                <h1>Comments</h1>{comments_html}</body></html>"""
+                com_chap = Chapter(title="Comments", filename="comments.xhtml", content_html=full_com_html, uid=f"reddit_com_{post_id}", is_comments=True)
+                chapters.append(com_chap)
+
+        toc_links = []
+        if art_chap: toc_links.append(epub.Link(art_chap.filename, "Post", art_chap.uid))
+        if com_chap: toc_links.append(epub.Link(com_chap.filename, "Comments", com_chap.uid))
+
+        desc = f"Reddit thread r/{subreddit}" if subreddit else "Reddit thread"
+        return BookData(title=title, author=author, uid=f"urn:reddit:{post_id}", language='en', description=desc, source_url=source.url, chapters=chapters, images=assets, toc_structure=toc_links)
+
+    def _build_api_url(self, url: str) -> str:
+        cleaned = url.rstrip('/')
+        if cleaned.endswith(".json"):
+            if "raw_json=1" in cleaned: return cleaned
+            joiner = "&" if "?" in cleaned else "?"
+            return f"{cleaned}{joiner}raw_json=1"
+        joiner = "&" if "?" in cleaned else "?"
+        return f"{cleaned}.json{joiner}raw_json=1"
+
+    def _normalize_comments(self, children, max_depth, depth=0):
+        if not children: return []
+        results = []
+        for child in children:
+            if child.get("kind") != "t1": continue
+            data = child.get("data", {})
+            if max_depth is not None and depth >= max_depth: continue
+
+            body_html = data.get("body_html") or ""
+            text = html.unescape(body_html) if body_html else "<p>[deleted]</p>"
+            author = data.get("author")
+            timestamp = data.get("created_utc") or 0
+            comment_id = data.get('id') or f"c_{abs(hash(text))}"
+
+            norm = {
+                'id': str(comment_id),
+                'by': f"u/{author}" if author else "[deleted]",
+                'text': text,
+                'time': timestamp,
+                'children_data': []
+            }
+            replies = data.get("replies")
+            if isinstance(replies, dict):
+                rep_children = replies.get("data", {}).get("children", [])
+                norm['children_data'] = self._normalize_comments(rep_children, max_depth, depth + 1)
+            results.append(norm)
+        return results
+
 # --- Global Logic: Tree Enrichment ---
 
 def _enrich_comment_tree(roots: List[Dict]) -> List[Dict]:
@@ -1006,6 +1131,8 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
              parsed = urlparse(source.url)
              if "news.ycombinator.com" in source.url:
                  driver = HackerNewsDriver()
+             elif "reddit.com" in parsed.netloc or parsed.netloc.endswith("redd.it"):
+                 driver = RedditDriver()
              elif "substack.com" in source.url or "/p/" in parsed.path:
                  driver = SubstackDriver()
              else:

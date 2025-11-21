@@ -10,6 +10,11 @@ This project goes beyond simple HTML scraping. It includes specialized drivers t
 
 ---
 
+## 🔄 Updates
+- **Reddit Driver (new):** Reddit/old.reddit/redd.it links now fetch via the JSON API (`raw_json=1`), render self-posts or linked articles, and include threaded comments with navigation. Works in both CLI (`uv run web_to_epub.py <reddit-url>`) and the Firefox extension via the existing FastAPI backend.
+
+---
+
 ## 🏗 Architecture & History
 *Why the code looks the way it does.*
 
