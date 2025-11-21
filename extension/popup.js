@@ -1,0 +1,294 @@
+let currentTab = null;
+
+function isValidUrl(url) {
+    return url && url.startsWith("http") && !url.includes("localhost");
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    // --- 1. Attach Event Listeners Immediately ---
+    try {
+        // Tab Switching
+        document.getElementById('tab-single').onclick = () => switchTab('single');
+        document.getElementById('tab-queue').onclick = () => switchTab('queue');
+
+        // Download Actions
+        document.getElementById('btn-download-single').onclick = safeDownloadSingle;
+        document.getElementById('btn-download-bundle').onclick = safeDownloadBundle;
+
+        // Queue Actions
+        document.getElementById('btn-add-tab').onclick = async () => {
+            if (!currentTab) currentTab = (await browser.tabs.query({active: true, currentWindow: true}))[0];
+            if (currentTab && isValidUrl(currentTab.url)) addToQueue(currentTab.url);
+        };
+        document.getElementById('btn-clear').onclick = clearQueue;
+
+        // Bulk Actions
+        document.getElementById('btn-add-selected').onclick = importSelectedTabs;
+        document.getElementById('btn-add-all').onclick = importAllTabs;
+
+        // Options
+        document.querySelectorAll('input[type="checkbox"]').forEach(box => {
+            box.onchange = saveOptions;
+        });
+    } catch (e) {
+        console.error("Error attaching listeners:", e);
+    }
+
+    // --- 2. Initialize Data ---
+    try {
+        checkServer();
+        restoreOptions();
+        refreshQueue();
+    } catch (e) {
+        console.error("Error restoring state:", e);
+    }
+
+    // --- 3. Get Active Tab ---
+    try {
+        const tabs = await browser.tabs.query({active: true, currentWindow: true});
+        if (tabs && tabs.length > 0) {
+            currentTab = tabs[0];
+            const titleInput = document.getElementById('single-title');
+            if (titleInput) titleInput.value = currentTab.title;
+        }
+    } catch (e) {
+        console.warn("Tab Init Warning:", e);
+    }
+});
+
+// --- SERVER CHECK ---
+async function checkServer() {
+    const dot = document.getElementById('server-status');
+    try {
+        const res = await fetch("http://127.0.0.1:8000/ping", {signal: AbortSignal.timeout(1000)});
+        if (res.ok) {
+            dot.className = "status-dot online";
+            dot.title = "Server Online";
+        } else { throw new Error(); }
+    } catch {
+        dot.className = "status-dot offline";
+        dot.title = "Server Offline (Run server.py!)";
+        showStatus("Server Offline");
+    }
+}
+
+// --- OPTIONS ---
+async function saveOptions() {
+    const options = {
+        no_comments: document.getElementById('opt-nocomments').checked,
+        no_article: document.getElementById('opt-noarticle').checked,
+        no_images: document.getElementById('opt-noimages').checked,
+        archive: document.getElementById('opt-archive').checked
+    };
+    await browser.storage.local.set({ savedOptions: options });
+}
+
+async function restoreOptions() {
+    const res = await browser.storage.local.get("savedOptions");
+    if (res.savedOptions) {
+        document.getElementById('opt-nocomments').checked = res.savedOptions.no_comments;
+        document.getElementById('opt-noarticle').checked = res.savedOptions.no_article;
+        document.getElementById('opt-noimages').checked = res.savedOptions.no_images;
+        document.getElementById('opt-archive').checked = res.savedOptions.archive;
+    }
+}
+
+function getOptions() {
+    return {
+        no_comments: document.getElementById('opt-nocomments').checked,
+        no_article: document.getElementById('opt-noarticle').checked,
+        no_images: document.getElementById('opt-noimages').checked,
+        archive: document.getElementById('opt-archive').checked
+    };
+}
+
+// --- TAB IMPORT LOGIC ---
+async function importSelectedTabs() {
+    try {
+        const tabs = await browser.tabs.query({currentWindow: true});
+        let count = 0;
+        for (let tab of tabs) {
+            if (tab.highlighted && isValidUrl(tab.url)) {
+                await addToQueue(tab.url);
+                count++;
+            }
+        }
+        showStatus(`Added ${count} selected tabs`);
+    } catch (e) {
+        showStatus("Error: " + e.message);
+    }
+}
+
+async function importAllTabs() {
+    try {
+        const tabs = await browser.tabs.query({currentWindow: true});
+        let count = 0;
+        for (let tab of tabs) {
+            if (isValidUrl(tab.url)) {
+                await addToQueue(tab.url);
+                count++;
+            }
+        }
+        showStatus(`Added ${count} tabs`);
+    } catch (e) {
+        showStatus("Error: " + e.message);
+    }
+}
+
+// --- QUEUE MANAGEMENT ---
+async function refreshQueue() {
+    const res = await browser.storage.local.get("urlQueue");
+    const queue = res.urlQueue || [];
+    const list = document.getElementById('queue-list');
+
+    if(document.getElementById('queue-count')) {
+        document.getElementById('queue-count').textContent = `(${queue.length})`;
+    }
+
+    list.innerHTML = '';
+    if (queue.length === 0) {
+        list.innerHTML = '<div class="empty-state">Queue is empty</div>';
+        return;
+    }
+
+    queue.forEach((url, index) => {
+        const div = document.createElement('div');
+        div.className = 'queue-item';
+        // &times; is the HTML entity for the multiplication X
+        div.innerHTML = `<span>${url}</span><button class="btn-remove" data-idx="${index}">&times;</button>`;
+        list.appendChild(div);
+    });
+
+    document.querySelectorAll('.btn-remove').forEach(btn => {
+        btn.onclick = async (e) => {
+            const idx = parseInt(e.target.dataset.idx);
+            queue.splice(idx, 1);
+            await browser.storage.local.set({ urlQueue: queue });
+            refreshQueue();
+        };
+    });
+}
+
+async function addToQueue(url) {
+    const res = await browser.storage.local.get("urlQueue");
+    const queue = res.urlQueue || [];
+    if (!queue.includes(url)) {
+        queue.push(url);
+        await browser.storage.local.set({ urlQueue: queue });
+        refreshQueue();
+    }
+}
+
+async function clearQueue() {
+    await browser.storage.local.set({ urlQueue: [] });
+    refreshQueue();
+}
+
+// --- UI HELPERS ---
+function switchTab(tab) {
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById(`view-${tab}`).classList.add('active');
+    document.getElementById(`tab-${tab}`).classList.add('active');
+}
+
+function showStatus(msg) {
+    const el = document.getElementById('status-bar');
+    el.textContent = msg;
+    // Optional: flash effect
+    el.style.backgroundColor = "#ffffcc";
+    setTimeout(() => el.style.backgroundColor = "#eee", 500);
+}
+
+// --- PAYLOAD BUILDER (THE HYBRID ENGINE) ---
+// Combines URLs with raw HTML from open tabs to bypass paywalls
+async function preparePayload(urls, bundleTitle) {
+    const sources = [];
+
+    // 1. Get all tabs to check for matches
+    let allTabs = [];
+    try {
+        allTabs = await browser.tabs.query({});
+    } catch(e) {
+        console.warn("Cannot query tabs for HTML injection");
+    }
+
+    // 2. Iterate requested URLs
+    for (const url of urls) {
+        let html = null;
+        // Find a tab that matches this URL and is fully loaded
+        const match = allTabs.find(t => t.url === url && t.status === "complete");
+
+        if (match) {
+            try {
+                // Inject script to steal DOM
+                const results = await browser.tabs.executeScript(match.id, {
+                    code: "document.documentElement.outerHTML;"
+                });
+                if (results && results[0]) {
+                    html = results[0];
+                    console.log("Injecting HTML for:", url);
+                }
+            } catch (e) {
+                // Fails on restricted domains (addons.mozilla.org) or discarded tabs
+                console.log("Could not grab HTML (using fallback):", url);
+            }
+        }
+        sources.push({ url: url, html: html });
+    }
+
+    return {
+        sources: sources,
+        bundle_title: bundleTitle,
+        ...getOptions()
+    };
+}
+
+// --- DOWNLOAD TRIGGERS ---
+async function safeDownloadSingle() {
+    try {
+        if (!currentTab) {
+            const tabs = await browser.tabs.query({active: true, currentWindow: true});
+            currentTab = tabs[0];
+        }
+
+        if (!currentTab || !isValidUrl(currentTab.url)) {
+            showStatus("Error: Invalid or empty tab.");
+            return;
+        }
+
+        showStatus("Grabbing content...");
+        const title = document.getElementById('single-title').value;
+        const payload = await preparePayload([currentTab.url], title);
+
+        browser.runtime.sendMessage({ action: "download", payload: payload, isBundle: false });
+        showStatus("Started in background...");
+        setTimeout(() => window.close(), 1500);
+    } catch (e) {
+        showStatus("Error: " + e.message);
+        console.error(e);
+    }
+}
+
+async function safeDownloadBundle() {
+    try {
+        const res = await browser.storage.local.get("urlQueue");
+        const queue = res.urlQueue || [];
+
+        if (queue.length === 0) {
+            showStatus("Queue is empty!");
+            return;
+        }
+
+        showStatus("Preparing bundle...");
+        const title = document.getElementById('bundle-title').value;
+        const payload = await preparePayload(queue, title);
+
+        browser.runtime.sendMessage({ action: "download", payload: payload, isBundle: true });
+        showStatus("Bundle started...");
+        setTimeout(() => window.close(), 1500);
+    } catch (e) {
+        showStatus("Error: " + e.message);
+        console.error(e);
+    }
+}
