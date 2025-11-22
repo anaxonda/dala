@@ -149,6 +149,22 @@ function parsePageSpecInput(spec) {
     return arr.length ? arr : null;
 }
 
+async function fetchPageAssets(url, cookies, page_spec, max_pages) {
+    const assets = [];
+    try {
+        const resp = await browser.runtime.sendMessage({
+            action: "fetch-assets",
+            url,
+            page_spec,
+            max_pages
+        });
+        if (resp && resp.assets) return resp.assets;
+    } catch (e) {
+        console.warn("fetchPageAssets failed", e);
+    }
+    return assets;
+}
+
 async function handleCookieToggle() {
     const box = document.getElementById('opt-cookies');
     if (!box) return;
@@ -315,6 +331,7 @@ async function preparePayload(urls, bundleTitle) {
     const sources = [];
     const page_spec = parsePageSpecInput(options.pages);
     const max_pages = options.max_pages ? parseInt(options.max_pages, 10) || null : null;
+    const include_assets = options.include_cookies;
 
     // 1. Get all tabs to check for matches
     let allTabs = [];
@@ -349,7 +366,8 @@ async function preparePayload(urls, bundleTitle) {
         if (options.include_cookies) {
             cookies = await getCookiesForUrl(url);
         }
-        sources.push({ url: url, html: html, cookies: cookies });
+        const assets = include_assets ? await fetchPageAssets(url, cookies, page_spec, max_pages) : [];
+        sources.push({ url: url, html: html, cookies: cookies, assets: assets });
     }
 
     return {

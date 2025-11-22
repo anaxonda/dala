@@ -26,6 +26,8 @@ browser.runtime.onMessage.addListener((message) => {
         processDownload(message.payload, message.isBundle);
     } else if (message.action === "cancel-download") {
         cancelDownload();
+    } else if (message.action === "fetch-assets") {
+        return fetchAssetsForPage(message.url, message.page_spec, message.max_pages);
     }
 });
 
@@ -160,4 +162,91 @@ function cancelDownload() {
         });
         updateBadge();
     }
+}
+
+async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
+    const assets = [];
+    try {
+        // fetch only specified pages; otherwise fetch page 1
+        const pages = page_spec && page_spec.length ? page_spec : [1];
+        const limiter = (arr, n) => arr.slice(0, n || arr.length);
+        const pagesToFetch = limiter(pages, max_pages || pages.length);
+        for (const page of pagesToFetch) {
+            const url = buildForumPageUrl(threadUrl, page);
+            const html = await fetchWithCookies(url, threadUrl);
+            if (!html) continue;
+            const found = parseAttachmentsFromHtml(html, url);
+            for (const att of found) {
+                const data = await fetchBinaryWithCookies(att.url, url);
+                if (data) {
+                    assets.push({
+                        original_url: att.url,
+                        viewer_url: att.viewer_url,
+                        filename_hint: att.filename,
+                        content_type: data.type,
+                        content: data.base64
+                    });
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("fetchAssetsForPage error", e);
+    }
+    return { assets };
+}
+
+function buildForumPageUrl(base, page) {
+    if (page <= 1) return base;
+    if (base.includes("page-")) {
+        return base.replace(/page-\d+/, `page-${page}`);
+    }
+    if (base.includes("?")) {
+        return `${base}&page=${page}`;
+    }
+    return `${base}page-${page}`;
+}
+
+async function fetchWithCookies(url, referer) {
+    try {
+        const resp = await fetch(url, {credentials: "include", headers: {"Referer": referer || url}});
+        if (!resp.ok) return null;
+        return await resp.text();
+    } catch (e) {
+        console.warn("fetchWithCookies failed", e);
+        return null;
+    }
+}
+
+async function fetchBinaryWithCookies(url, referer) {
+    try {
+        const resp = await fetch(url, {credentials: "include", headers: {"Referer": referer || url}});
+        if (!resp.ok) return null;
+        const ct = resp.headers.get("Content-Type") || "application/octet-stream";
+        const buf = await resp.arrayBuffer();
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        return {type: ct, base64};
+    } catch (e) {
+        console.warn("fetchBinaryWithCookies failed", e);
+        return null;
+    }
+}
+
+function parseAttachmentsFromHtml(html, baseUrl) {
+    const list = [];
+    try {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const imgs = doc.querySelectorAll("a[href*='/attachments/'] img, img[src*='/attachments/'], img[data-src*='/attachments/']");
+        imgs.forEach(img => {
+            const a = img.closest('a');
+            const viewer = a && a.href ? a.href : null;
+            const src = img.getAttribute("data-src") || img.getAttribute("src") || viewer;
+            if (!src) return;
+            const absViewer = viewer ? new URL(viewer, baseUrl).href : null;
+            const absSrc = new URL(src, baseUrl).href;
+            list.push({url: absSrc, viewer_url: absViewer || absSrc, filename: absSrc.split('/').pop()});
+        });
+    } catch (e) {
+        console.warn("parseAttachmentsFromHtml failed", e);
+    }
+    return list;
 }
