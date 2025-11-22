@@ -555,6 +555,14 @@ class ImageProcessor:
             parent_link = img_tag.find_parent('a')
             if parent_link and parent_link.get('href'):
                 link_href = parent_link.get('href')
+            data_attrs_json = img_tag.get('data-attrs')
+            data_attrs_src = None
+            if data_attrs_json:
+                try:
+                    attrs_obj = json.loads(data_attrs_json)
+                    data_attrs_src = attrs_obj.get('src') or attrs_obj.get('srcNoWatermark')
+                except Exception:
+                    data_attrs_src = None
 
             final_src = None
 
@@ -564,6 +572,7 @@ class ImageProcessor:
                 candidates.extend(ImageProcessor.parse_srcset(data_srcset))
             if srcset:
                 candidates.extend(ImageProcessor.parse_srcset(srcset))
+            if data_attrs_src: candidates.append(data_attrs_src)
             if data_src: candidates.append(data_src)
             if src: candidates.append(src)
             if link_href: candidates.append(link_href)
