@@ -718,7 +718,8 @@ class SubstackDriver(BaseDriver):
         else:
             log.info(f"Targeting Post ID: {post_id} (Pub ID: {pub_id}, Subdomain: {subdomain})")
 
-        body_soup = soup.body if soup.body else soup
+        cleaned = BeautifulSoup(data.get('html', ''), 'html.parser') if data.get('html') else soup
+        body_soup = cleaned.body if cleaned and cleaned.body else cleaned
         assets = []
         if not options.no_images:
             base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
