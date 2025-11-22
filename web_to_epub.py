@@ -561,12 +561,12 @@ class ImageProcessor:
                 if "/avatar" in full_url or "/avatars/" in full_url:
                     return
 
-                if not re.search(r'\\.(jpe?g|png|webp|gif|bmp)(\\?|$)', full_url, re.IGNORECASE) and "attachments" not in full_url and "image" not in full_url:
+                if not re.search(r'\.(jpe?g|png|webp|gif|bmp)(\?|$)', full_url, re.IGNORECASE) and "attachments" not in full_url and "image" not in full_url:
                     return
 
                 # XenForo attachment viewer URLs often look like /attachments/<slug>.<id>/
                 viewer_url = None
-                if link_href and re.search(r'/attachments/[^/]+\\.\\d+/?', link_href):
+                if link_href and re.search(r'/attachments/[^/]+\.\d+/?', link_href):
                     viewer_url = urljoin(base_url, link_href.strip())
                 elif "/attachments/" in full_url and "d3/attachments" not in full_url:
                     viewer_url = full_url
