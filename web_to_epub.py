@@ -34,6 +34,7 @@ import io
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any, Tuple
 from abc import ABC, abstractmethod
+from yarl import URL
 from itertools import islice
 
 # --- Dependency Imports ---
@@ -369,10 +370,12 @@ class ImageProcessor:
                     import requests
                     cookie_dict = {}
                     try:
-                        jar = session.cookie_jar.filter_cookies(url)
+                        jar = session.cookie_jar.filter_cookies(URL(url))
                         cookie_dict = {k: v.value for k, v in jar.items()}
                     except Exception:
                         pass
+                    extra = getattr(session, "_extra_cookies", None)
+                    if isinstance(extra, dict): cookie_dict.update(extra)
                     resp = requests.get(url, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
                     if resp.status_code == 200 and resp.content:
                         return resp.headers, resp.content, None
@@ -387,10 +390,12 @@ class ImageProcessor:
                     import requests
                     cookie_dict = {}
                     try:
-                        jar = session.cookie_jar.filter_cookies(url)
+                        jar = session.cookie_jar.filter_cookies(URL(url))
                         cookie_dict = {k: v.value for k, v in jar.items()}
                     except Exception:
                         pass
+                    extra = getattr(session, "_extra_cookies", None)
+                    if isinstance(extra, dict): cookie_dict.update(extra)
                     resp = requests.get(url, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
                     if resp.status_code == 200 and resp.content:
                         headers = resp.headers
@@ -1408,6 +1413,7 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
              local_session = session
              if source.cookies:
                  local_session = aiohttp.ClientSession(timeout=REQUEST_TIMEOUT, cookies=source.cookies)
+                 setattr(local_session, "_extra_cookies", source.cookies)
              driver = None
              parsed = urlparse(source.url)
              if "news.ycombinator.com" in source.url:
