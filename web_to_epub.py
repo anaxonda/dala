@@ -102,6 +102,7 @@ class Source:
     url: str
     html: Optional[str] = None
     cookies: Optional[Dict[str, str]] = None
+    assets: Optional[List[Dict[str, Any]]] = None
 
 @dataclass
 class ImageAsset:
@@ -598,6 +599,40 @@ class ImageProcessor:
                     for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding']:
                          if img_tag.has_attr(attr): del img_tag[attr]
                     return
+
+                # Use preloaded assets from source (sent by extension)
+                preload_match = None
+                for a in preloaded_assets:
+                    if a.get("original_url") == full_url or a.get("viewer_url") == viewer_url:
+                        preload_match = a
+                        break
+
+                if preload_match:
+                    mime = preload_match.get("media_type") or preload_match.get("content_type") or "image/jpeg"
+                    data_bytes = preload_match.get("content")
+                    if isinstance(data_bytes, str):
+                        import base64
+                        try:
+                            data_bytes = base64.b64decode(data_bytes)
+                        except Exception:
+                            data_bytes = None
+                    if data_bytes:
+                        fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(full_url).path))[0])
+                        ext = os.path.splitext(fname_base)[1] or ".img"
+                        if len(fname_base) < 3: fname_base = f"img_{abs(hash(full_url))}"
+                        count = 0
+                        fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}{ext}"
+                        while any(a.filename == fname for a in book_assets):
+                            count += 1
+                            fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}_{count}{ext}"
+                        uid = f"img_{abs(hash(fname))}"
+                        asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=data_bytes, original_url=full_url)
+                        book_assets.append(asset)
+                        img_tag['src'] = fname
+                        for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
+                            if img_tag.has_attr(attr): del img_tag[attr]
+                        img_tag['class'] = 'epub-image'
+                        return
 
                 headers, data, err = await ImageProcessor.fetch_image_data(session, attach_target, referer=base_url, viewer_url=viewer_url)
                 if err:
@@ -1463,8 +1498,10 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
         async with GLOBAL_SEMAPHORE:
              local_session = session
              if source.cookies:
-                 local_session = aiohttp.ClientSession(timeout=REQUEST_TIMEOUT, cookies=source.cookies)
-                 setattr(local_session, "_extra_cookies", source.cookies)
+                local_session = aiohttp.ClientSession(timeout=REQUEST_TIMEOUT, cookies=source.cookies)
+                setattr(local_session, "_extra_cookies", source.cookies)
+            # preload assets if provided (from extension)
+             preloaded_assets = source.assets or []
              driver = None
              parsed = urlparse(source.url)
              if "news.ycombinator.com" in source.url:
