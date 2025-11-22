@@ -672,11 +672,14 @@ class ImageProcessor:
                 asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=full_url)
                 book_assets.append(asset)
 
+                # Simplify markup: unwrap empty divs and strip extra attrs
                 img_tag['src'] = fname
                 for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
                      if img_tag.has_attr(attr): del img_tag[attr]
-                if img_tag.parent and img_tag.parent.name == 'div' and not img_tag.parent.get_text(strip=True):
-                    img_tag.parent.unwrap()
+                parent = img_tag.parent
+                while parent and parent.name == 'div' and not parent.get_text(strip=True):
+                    parent.unwrap()
+                    parent = img_tag.parent
                 img_tag['class'] = 'epub-image'
 
                 caption_text = ImageProcessor.find_caption(img_tag)
