@@ -702,7 +702,7 @@ class SubstackDriver(BaseDriver):
             return None
 
         raw_html = data.get('raw_html_for_metadata') or data.get('html', '')
-        soup = BeautifulSoup(data['html'], 'html.parser')
+        soup = BeautifulSoup(raw_html, 'html.parser')
         post_id, pub_id, subdomain = self._extract_all_metadata(soup, raw_html)
 
         if not post_id:
