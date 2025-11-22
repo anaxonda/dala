@@ -1440,8 +1440,8 @@ class EpubWriter:
         base_css = """
             body { font-family: sans-serif; margin: 0.5em; background-color: #fdfdfd; line-height: 1.5; }
             .epub-image { max-width: 100%; max-height: 60vh; height: auto; display: block; margin: 4px auto; }
-            figure { margin: 0.4em 0; text-align: center; }
-            figcaption { font-size: 0.9em; color: #666; font-style: italic; margin-top: 0.2em; }
+            figure { margin: 0.2em 0; text-align: center; }
+            figcaption { font-size: 0.85em; color: #666; font-style: italic; margin-top: 0.1em; }
             .post-meta { background: #f5f5f5; padding: 10px; margin-bottom: 20px; border-radius: 5px; font-size: 0.9em; }
             .thread-container { margin-top: 25px; padding-top: 15px; border-top: 1px solid #ddd; }
             .comment-header { display: table; width: 100%; table-layout: auto; border-bottom: 1px solid #eee; margin-bottom: 4px; background-color: #f9f9f9; border-radius: 4px; }
