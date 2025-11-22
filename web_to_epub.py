@@ -359,7 +359,7 @@ class ImageProcessor:
     @staticmethod
     async def fetch_image_data(session, url, referer=None, viewer_url=None):
         try:
-            non_retry = {401, 403, 404, 409}
+            non_retry = {401, 403, 404}
             img_headers = {
                 "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
@@ -370,28 +370,29 @@ class ImageProcessor:
             targets.append(url)
 
             for target in targets:
-                # First try via aiohttp
-                headers, resp = await fetch_with_retry(session, target, 'bytes', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
-                if headers and resp and not str(headers.get('Content-Type', '')).startswith('text/html'):
-                    return headers, resp, None
-                # If HTML viewer/login page, parse for img href/src and retry
-                if resp and str(headers.get('Content-Type', '')).startswith('text/html'):
-                    img_url = ImageProcessor._parse_viewer_for_image(resp, target)
-                    if img_url:
-                        headers2, resp2, err = await ImageProcessor._requests_fetch(session, img_url, img_headers, referer or target)
-                        if resp2:
-                            return headers2, resp2, None
+                # Try requests first to capture content even on 4xx
+                headers_r, data_r, status_r = await ImageProcessor._requests_fetch(session, target, img_headers, referer)
+                if data_r:
+                    ctype = str(headers_r.get('Content-Type', '')) if headers_r else ''
+                    if not ctype.startswith('text/html'):
+                        return headers_r or {}, data_r, None
+                    viewer_img = ImageProcessor._parse_viewer_for_image(data_r, target)
+                    if viewer_img:
+                        h2, d2, s2 = await ImageProcessor._requests_fetch(session, viewer_img, img_headers, referer or target)
+                        if d2 and not str(h2.get('Content-Type','')).startswith('text/html'):
+                            return h2 or {}, d2, None
 
-                # Fallback using requests
-                headers_r, data_r, err = await ImageProcessor._requests_fetch(session, target, img_headers, referer)
-                if data_r and not str(headers_r.get('Content-Type', '')).startswith('text/html'):
-                    return headers_r, data_r, None
-                if data_r and str(headers_r.get('Content-Type', '')).startswith('text/html'):
-                    img_url = ImageProcessor._parse_viewer_for_image(data_r, target)
-                    if img_url:
-                        headers3, resp3, err3 = await ImageProcessor._requests_fetch(session, img_url, img_headers, referer or target)
-                        if resp3:
-                            return headers3, resp3, None
+                # Then aiohttp as secondary
+                headers, resp = await fetch_with_retry(session, target, 'bytes', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
+                if headers and resp:
+                    ctype = str(headers.get('Content-Type', ''))
+                    if not ctype.startswith('text/html'):
+                        return headers, resp, None
+                    viewer_img = ImageProcessor._parse_viewer_for_image(resp, target)
+                    if viewer_img:
+                        h3, d3, s3 = await ImageProcessor._requests_fetch(session, viewer_img, img_headers, referer or target)
+                        if d3 and not str(h3.get('Content-Type','')).startswith('text/html'):
+                            return h3 or {}, d3, None
 
             return None, None, "No data"
         except Exception as e: return None, None, str(e)
@@ -409,11 +410,11 @@ class ImageProcessor:
             extra = getattr(session, "_extra_cookies", None)
             if isinstance(extra, dict): cookie_dict.update(extra)
             resp = requests.get(target, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
-            if resp.status_code == 200 and resp.content:
-                return resp.headers, resp.content, None
+            if resp.content:
+                return resp.headers, resp.content, resp.status_code
         except Exception:
             pass
-        return None, None, "fallback-failed"
+        return None, None, None
 
     @staticmethod
     def _parse_viewer_for_image(html_bytes, base_url):
