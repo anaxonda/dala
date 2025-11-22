@@ -729,8 +729,9 @@ class SubstackDriver(BaseDriver):
         else:
             log.info(f"Targeting Post ID: {post_id} (Pub ID: {pub_id}, Subdomain: {subdomain})")
 
-        cleaned = BeautifulSoup(raw_html, 'html.parser') if raw_html else soup
-        ArticleExtractor._clean_soup(cleaned) if cleaned else None
+        cleaned_html = data.get('html') or raw_html
+        cleaned = BeautifulSoup(cleaned_html, 'html.parser') if cleaned_html else soup
+        if cleaned: ArticleExtractor._clean_soup(cleaned)
         body_soup = cleaned.body if cleaned and cleaned.body else cleaned
         assets = []
         if not options.no_images:
