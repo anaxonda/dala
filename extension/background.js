@@ -332,7 +332,7 @@ function parseExternalImages(html, baseUrl) {
     const urls = new Set();
     try {
         const doc = new DOMParser().parseFromString(html, "text/html");
-        const imgs = doc.querySelectorAll("img");
+        const imgs = doc.querySelectorAll(".message-body img");
         imgs.forEach(img => {
             const src = img.getAttribute("data-src") || img.getAttribute("src");
             if (!src) return;

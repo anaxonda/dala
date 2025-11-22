@@ -153,7 +153,7 @@ async function fetchAssetsFromPage(tabId, refererUrl) {
     try {
         const results = await browser.tabs.executeScript(tabId, {
             code: `(() => {
-                const imgs = Array.from(document.querySelectorAll('img'));
+                const imgs = Array.from(document.querySelectorAll('.message-body img'));
                 return imgs.map(img => {
                     const srcset = img.getAttribute('data-srcset') || img.getAttribute('srcset');
                     const dataUrl = img.getAttribute('data-url');
