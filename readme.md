@@ -22,7 +22,7 @@ Allow threaded comment navigation with button links in the epub  to jump to diff
 ```bash
 uv run web_to_epub.py [URL]
 ```
-- Supports single articles, HN threads, Substack posts (including custom domains), and Reddit threads (old/new/redd.it).
+- Supports single articles, HN threads, Substack posts (including custom domains), Reddit threads (old/new/redd.it), and forum threads (e.g., XenForo).
 - Bundle multiple URLs: `uv run web_to_epub.py -i links.txt --bundle --bundle-title "Morning Read"`
 
 ## Options & Flags
@@ -37,6 +37,8 @@ uv run web_to_epub.py [URL]
 | `-a`, `--archive` | Force fetch from the Wayback Machine (dead links). |
 | `-i [file.txt]` | File with one URL per line. |
 | `--max-depth [N]` | Limit comment recursion depth (HN/Reddit). |
+| `--max-pages [N]` | Limit forum pages fetched. |
+| `--pages 1,3-5` | Fetch specific forum pages. |
 | `--css [file.css]` | Inject custom CSS into output. |
 | `-v` | Verbose logging (debug mode). |
 
@@ -60,6 +62,11 @@ uv run web_to_epub.py https://www.astralcodexten.com/p/the-bloomers-paradox
 **Reddit Thread**
 ```bash
 uv run web_to_epub.py https://old.reddit.com/r/AskHistorians/comments/1p2uk19/ken_burns_the_american_revolution_claims_that_the/
+```
+
+**XenForo Forum Thread (pages 1–2)**
+```bash
+uv run web_to_epub.py "https://www.trek-lite.com/index.php?threads/arcdome-1.15243/" --pages 1-2
 ```
 
 ---
@@ -92,7 +99,7 @@ pip install requests aiohttp beautifulsoup4 EbookLib trafilatura lxml pygments t
 ## 🦊 Firefox Extension Setup
 
 The project includes a **Firefox Extension** and a **Local Python Server**.
- If it can the extension grabs the already loaded HTML from your browser (where you are logged in).
+The extension grabs unlocked HTML from your browser session; for gated forums, it can also fetch attachments and inline images with your cookies. Use the extension path when images/attachments are blocked via CLI (403/409 hotlink rules).
 
 ### Step 1: Run the Server
 The extension needs a backend to build the EPUB.
