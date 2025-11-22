@@ -192,3 +192,11 @@ Reading threaded conversations linearly is difficult.
 ### 4. Image Handling & The "Picture" Problem
 *   **Lazy Loading:** Detects `data-src`/`srcset` fallbacks to retrieve high-res images.
 *   **`<picture>` Trap:** Unwraps `<picture>` and `<source>` so e-readers use the bundled `<img>` instead of remote URLs.
+
+### 5. Forums & Gated Attachments (Browser Assist)
+*   **Problem:** XenForo and similar forums gate attachments behind session/anti-hotlink checks, returning 403/409 and serving only thumbnails to direct fetches.
+*   **Solution:** The Firefox extension preloads assets using the live browser session:
+    * Scrapes post-body images (src/srcset/data-url) from the active tab.
+    * Background-fetches forum pages/attachments with cookies; follows viewer pages and parses full-size URLs, and downloads external images (e.g., Flickr).
+    * Sends assets to the server; core matches them and skips re-downloading.
+*   **Result:** Full-size forum attachments embed correctly; use the extension path for gated content (CLI alone cannot replicate browser-only tokens/headers).
