@@ -474,7 +474,7 @@ class ImageProcessor:
 
         bad_keywords = [
             "spacer", "1x1", "transparent", "gray.gif", "pixel.gif",
-            "placeholder", "loader", "blank.gif"
+            "placeholder", "loader", "blank.gif", "reaction_id=", "/react?"
         ]
         lower_url = url.lower()
         if any(k in lower_url for k in bad_keywords):
@@ -553,6 +553,9 @@ class ImageProcessor:
                      full_url = full_url.replace("http://", "https://", 1)
 
                 if "/avatar" in full_url or "/avatars/" in full_url:
+                    return
+
+                if not re.search(r'\\.(jpe?g|png|webp|gif|bmp)(\\?|$)', full_url, re.IGNORECASE) and "attachments" not in full_url and "image" not in full_url:
                     return
 
                 # XenForo attachment viewer URLs often look like /attachments/<slug>.<id>/
