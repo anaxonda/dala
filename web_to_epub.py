@@ -183,7 +183,7 @@ async def get_session():
     async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
         yield session
 
-async def fetch_with_retry(session, url, response_type='json', allow_redirects=True, referer=None):
+async def fetch_with_retry(session, url, response_type='json', allow_redirects=True, referer=None, non_retry_statuses: Optional[set] = None):
     final_url = url
     for attempt in range(MAX_RETRIES):
         try:
@@ -204,6 +204,10 @@ async def fetch_with_retry(session, url, response_type='json', allow_redirects=T
                     log.warning(f"Rate limit hit (429). Cooling down for {wait_time}s...")
                     await asyncio.sleep(wait_time)
                     continue
+
+                if non_retry_statuses and response.status in non_retry_statuses:
+                    log.warning(f"Non-retryable HTTP {response.status} for {url}")
+                    return None, final_url
 
                 if response.status >= 400:
                     if response.status == 404: return None, final_url
@@ -352,9 +356,10 @@ class ImageProcessor:
     @staticmethod
     async def fetch_image_data(session, url, referer=None):
         try:
-            headers, _ = await fetch_with_retry(session, url, 'headers', referer=referer)
+            non_retry = {401, 403, 404, 409}
+            headers, _ = await fetch_with_retry(session, url, 'headers', referer=referer, non_retry_statuses=non_retry)
             if not headers: return None, None, "No headers"
-            data, _ = await fetch_with_retry(session, url, 'bytes', referer=referer)
+            data, _ = await fetch_with_retry(session, url, 'bytes', referer=referer, non_retry_statuses=non_retry)
             if not data: return headers, None, "No data"
             return headers, data, None
         except Exception as e: return None, None, str(e)
@@ -494,6 +499,9 @@ class ImageProcessor:
                 full_url = urljoin(base_url, final_src.strip())
                 if "web.archive.org" in base_url and full_url.startswith("http://"):
                      full_url = full_url.replace("http://", "https://", 1)
+
+                if "/avatar" in full_url or "/avatars/" in full_url:
+                    return
 
                 existing = next((a for a in book_assets if a.original_url == full_url), None)
                 if existing:
