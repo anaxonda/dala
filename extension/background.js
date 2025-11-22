@@ -219,6 +219,21 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
                     });
                 }
             }
+
+            // External images (non-attachment)
+            const externals = parseExternalImages(html, url);
+            for (const ext of externals) {
+                const data = await fetchBinaryMaybeHtml(ext, url);
+                if (data && data.base64 && !data.isHtml) {
+                    assets.push({
+                        original_url: ext,
+                        viewer_url: null,
+                        filename_hint: ext.split('/').pop(),
+                        content_type: data.type,
+                        content: data.base64
+                    });
+                }
+            }
         }
     } catch (e) {
         console.warn("fetchAssetsForPage error", e);
@@ -311,6 +326,24 @@ function parseViewerForFullImage(html, baseUrl) {
         console.warn("parseViewerForFullImage failed", e);
     }
     return null;
+}
+
+function parseExternalImages(html, baseUrl) {
+    const urls = new Set();
+    try {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const imgs = doc.querySelectorAll("img");
+        imgs.forEach(img => {
+            const src = img.getAttribute("data-src") || img.getAttribute("src");
+            if (!src) return;
+            if (src.includes('/attachments/')) return;
+            if (src.startsWith('data:')) return;
+            try { urls.add(new URL(src, baseUrl).href); } catch(e) {}
+        });
+    } catch (e) {
+        console.warn("parseExternalImages failed", e);
+    }
+    return Array.from(urls);
 }
 
 function pickLargestFromSrcset(srcset, baseUrl) {
