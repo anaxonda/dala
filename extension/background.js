@@ -193,13 +193,13 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
 
                 if (att.viewer_url) {
                     const viewerResp = await fetchBinaryMaybeHtml(att.viewer_url, url);
-                    if (!debugViewerLogged && viewerResp.text) {
+                    if (!debugViewerLogged && viewerResp && viewerResp.text) {
                         console.log("DEBUG viewer HTML snippet", att.viewer_url, viewerResp.text.slice(0, 500));
                         debugViewerLogged = true;
                     }
-                    if (viewerResp.type && !viewerResp.isHtml && viewerResp.base64) {
+                    if (viewerResp && viewerResp.type && !viewerResp.isHtml && viewerResp.base64) {
                         fullData = viewerResp;
-                    } else if (viewerResp.text) {
+                    } else if (viewerResp && viewerResp.text) {
                         const fullUrl = parseViewerForFullImage(viewerResp.text, att.viewer_url) || att.url;
                         fullData = await fetchBinaryMaybeHtml(fullUrl, att.viewer_url);
                     }
