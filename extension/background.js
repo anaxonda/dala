@@ -178,21 +178,27 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
             if (!html) continue;
             const found = parseAttachmentsFromHtml(html, url);
             for (const att of found) {
-                // fetch viewer to get full-size image
                 let fullData = null;
+
                 if (att.viewer_url) {
-                    const viewerHtml = await fetchWithCookies(att.viewer_url, url);
-                    if (!debugViewerLogged && viewerHtml) {
-                        console.log("DEBUG viewer HTML snippet", att.viewer_url, viewerHtml.slice(0, 500));
+                    const viewerResp = await fetchBinaryMaybeHtml(att.viewer_url, url);
+                    if (!debugViewerLogged && viewerResp.text) {
+                        console.log("DEBUG viewer HTML snippet", att.viewer_url, viewerResp.text.slice(0, 500));
                         debugViewerLogged = true;
                     }
-                    const fullUrl = parseViewerForFullImage(viewerHtml, att.viewer_url) || att.url;
-                    fullData = await fetchBinaryWithCookies(fullUrl, att.viewer_url);
+                    if (viewerResp.type && !viewerResp.isHtml && viewerResp.base64) {
+                        fullData = viewerResp;
+                    } else if (viewerResp.text) {
+                        const fullUrl = parseViewerForFullImage(viewerResp.text, att.viewer_url) || att.url;
+                        fullData = await fetchBinaryMaybeHtml(fullUrl, att.viewer_url);
+                    }
                 }
+
                 if (!fullData) {
-                    fullData = await fetchBinaryWithCookies(att.url, url);
+                    fullData = await fetchBinaryMaybeHtml(att.url, url);
                 }
-                if (fullData) {
+
+                if (fullData && fullData.base64 && !fullData.isHtml) {
                     assets.push({
                         original_url: att.url,
                         viewer_url: att.viewer_url,
@@ -231,14 +237,18 @@ async function fetchWithCookies(url, referer) {
     }
 }
 
-async function fetchBinaryWithCookies(url, referer) {
+async function fetchBinaryMaybeHtml(url, referer) {
     try {
         const resp = await fetch(url, {credentials: "include", headers: {"Referer": referer || url}});
         if (!resp.ok) return null;
         const ct = resp.headers.get("Content-Type") || "application/octet-stream";
+        if (ct.startsWith("text/") || ct.includes("html")) {
+            const text = await resp.text();
+            return {type: ct, base64: null, text, isHtml: true};
+        }
         const buf = await resp.arrayBuffer();
         const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-        return {type: ct, base64};
+        return {type: ct, base64, text: null, isHtml: false};
     } catch (e) {
         console.warn("fetchBinaryWithCookies failed", e);
         return null;
