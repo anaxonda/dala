@@ -366,8 +366,7 @@ async function preparePayload(urls, bundleTitle) {
         if (options.include_cookies) {
             cookies = await getCookiesForUrl(url);
         }
-        const assets = include_assets ? await fetchPageAssets(url, cookies, page_spec, max_pages) : [];
-        sources.push({ url: url, html: html, cookies: cookies, assets: assets });
+        sources.push({ url: url, html: html, cookies: cookies, assets: [] });
     }
 
     return {
@@ -378,7 +377,8 @@ async function preparePayload(urls, bundleTitle) {
         no_images: options.no_images,
         archive: options.archive,
         max_pages: max_pages,
-        page_spec: page_spec && page_spec.length ? page_spec : null
+        page_spec: page_spec && page_spec.length ? page_spec : null,
+        fetch_assets: include_assets
     };
 }
 

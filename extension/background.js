@@ -94,6 +94,17 @@ async function processDownload(payload, isBundle) {
     browser.browserAction.setBadgeBackgroundColor({ color: "#FFA500" }); // Orange
 
     try {
+        // Background asset fetch if requested
+        if (payload.fetch_assets && payload.sources) {
+            for (const src of payload.sources) {
+                if (src.assets && src.assets.length) continue;
+                const res = await fetchAssetsForPage(src.url, payload.page_spec, payload.max_pages);
+                if (res && res.assets) {
+                    src.assets = res.assets;
+                }
+            }
+        }
+
         const response = await fetch("http://127.0.0.1:8000/convert", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
