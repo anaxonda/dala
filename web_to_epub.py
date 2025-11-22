@@ -1439,9 +1439,9 @@ class EpubWriter:
         pygments_style = HtmlFormatter(style='default').get_style_defs('.codehilite')
         base_css = """
             body { font-family: sans-serif; margin: 0.5em; background-color: #fdfdfd; line-height: 1.5; }
-            .epub-image { max-width: 100%; max-height: 80vh; height: auto; display: block; margin: 8px auto; }
-            figure { margin: 1em 0; text-align: center; }
-            figcaption { font-size: 0.9em; color: #666; font-style: italic; margin-top: 0.5em; }
+            .epub-image { max-width: 100%; max-height: 60vh; height: auto; display: block; margin: 4px auto; }
+            figure { margin: 0.4em 0; text-align: center; }
+            figcaption { font-size: 0.9em; color: #666; font-style: italic; margin-top: 0.2em; }
             .post-meta { background: #f5f5f5; padding: 10px; margin-bottom: 20px; border-radius: 5px; font-size: 0.9em; }
             .thread-container { margin-top: 25px; padding-top: 15px; border-top: 1px solid #ddd; }
             .comment-header { display: table; width: 100%; table-layout: auto; border-bottom: 1px solid #eee; margin-bottom: 4px; background-color: #f9f9f9; border-radius: 4px; }
@@ -1454,7 +1454,7 @@ class EpubWriter:
             .comment-body { margin-top: 2px; }
             pre { background: #f0f0f0; padding: 10px; overflow-x: auto; font-size: 0.9em; }
             p { margin-top: 0; margin-bottom: 0.8em; }
-            .forum-post { border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px; margin-bottom: 14px; background: #fff; }
+            .forum-post { border: 1px solid #e0e0e0; border-radius: 6px; padding: 8px; margin-bottom: 12px; background: #fff; }
             .forum-post-header { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 6px; font-size: 0.95em; color: #333; }
             .forum-author { color: #222; }
             .forum-time { color: #777; font-weight: 400; font-size: 0.9em; }
