@@ -1135,14 +1135,21 @@ class ForumDriver(BaseDriver):
 
     def _extract_posts(self, soup):
         posts = []
-        containers = soup.find_all(lambda tag: tag.get("class") and any("message" in c for c in tag.get("class")))
+        # XenForo style messages
+        containers = soup.select("article.message.message--post")
+        if not containers:
+            containers = soup.find_all(lambda tag: tag.get("class") and any("message" in c for c in tag.get("class")))
         for c in containers:
             pid = c.get("id") or c.get("data-content") or f"post_{len(posts)+1}"
             author = None
             author_tag = c.find(lambda t: t.get("class") and any("username" in x or "author" in x for x in t.get("class")))
+            if not author and c.has_attr("data-author"):
+                author = c.get("data-author")
             if author_tag:
                 author = author_tag.get_text(strip=True)
-            content_tag = c.find(lambda t: t.get("class") and any("messageContent" in x or "bbWrapper" in x or "content" == x for x in t.get("class")))
+            content_tag = c.select_one(".message-body") or c.select_one(".message-content") or c.select_one(".messageContent")
+            if not content_tag:
+                content_tag = c.find(lambda t: t.get("class") and any("messageContent" in x or "bbWrapper" in x or "content" == x for x in t.get("class")))
             if not content_tag:
                 continue
             time_val = None
