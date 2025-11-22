@@ -1004,6 +1004,12 @@ class RedditDriver(BaseDriver):
             return None
         post_data = post_listing[0].get("data", {})
 
+        # Handle crossposts: if it's a crosspost, use the original post's data
+        if post_data.get("crosspost_parent_list"):
+            log.info(f"Detected crosspost for {source.url}. Using original post data.")
+            # Reddit API returns a list of crosspost parents, usually just one
+            post_data = post_data["crosspost_parent_list"][0]
+
         post_id = post_data.get("id") or abs(hash(source.url))
         title = post_data.get("title") or "Reddit Thread"
         author = f"u/{post_data.get('author')}" if post_data.get("author") else "Reddit"

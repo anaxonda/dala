@@ -11,7 +11,8 @@
     "storage",
     "downloads",
     "http://127.0.0.1:8000/*",
-    "cookies"
+    "cookies",
+    "<all_urls>"
   ],
   "optional_permissions": [
     "<all_urls>"
