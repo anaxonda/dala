@@ -566,9 +566,12 @@ class ImageProcessor:
 
                 # XenForo attachment viewer URLs often look like /attachments/<slug>.<id>/
                 viewer_url = None
-                if "/attachments/" in full_url and "d3/attachments" not in full_url:
+                if link_href and re.search(r'/attachments/[^/]+\\.\\d+/?', link_href):
+                    viewer_url = urljoin(base_url, link_href.strip())
+                elif "/attachments/" in full_url and "d3/attachments" not in full_url:
                     viewer_url = full_url
-                attach_target = full_url
+
+                attach_target = viewer_url or full_url
 
                 existing = next((a for a in book_assets if a.original_url == full_url), None)
                 if existing:
