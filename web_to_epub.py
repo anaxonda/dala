@@ -1499,8 +1499,8 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
         async with GLOBAL_SEMAPHORE:
              local_session = session
              if source.cookies:
-                local_session = aiohttp.ClientSession(timeout=REQUEST_TIMEOUT, cookies=source.cookies)
-                setattr(local_session, "_extra_cookies", source.cookies)
+                 local_session = aiohttp.ClientSession(timeout=REQUEST_TIMEOUT, cookies=source.cookies)
+                 setattr(local_session, "_extra_cookies", source.cookies)
             # preload assets if provided (from extension)
              preloaded_assets = source.assets or []
              driver = None
@@ -1511,7 +1511,7 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
                  driver = RedditDriver()
              elif "substack.com" in source.url or "/p/" in parsed.path:
                  driver = SubstackDriver()
-             elif "/threads/" in parsed.path:
+             elif "threads" in parsed.path or "threads" in parsed.query or "threads" in source.url:
                  driver = ForumDriver()
              else:
                  driver = GenericDriver()
