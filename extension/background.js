@@ -171,6 +171,7 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
         const pages = page_spec && page_spec.length ? page_spec : [1];
         const limiter = (arr, n) => arr.slice(0, n || arr.length);
         const pagesToFetch = limiter(pages, max_pages || pages.length);
+        let debugViewerLogged = false;
         for (const page of pagesToFetch) {
             const url = buildForumPageUrl(threadUrl, page);
             const html = await fetchWithCookies(url, threadUrl);
@@ -181,6 +182,10 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
                 let fullData = null;
                 if (att.viewer_url) {
                     const viewerHtml = await fetchWithCookies(att.viewer_url, url);
+                    if (!debugViewerLogged && viewerHtml) {
+                        console.log("DEBUG viewer HTML snippet", att.viewer_url, viewerHtml.slice(0, 500));
+                        debugViewerLogged = true;
+                    }
                     const fullUrl = parseViewerForFullImage(viewerHtml, att.viewer_url) || att.url;
                     fullData = await fetchBinaryWithCookies(fullUrl, att.viewer_url);
                 }
