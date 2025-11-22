@@ -24,6 +24,7 @@ import logging
 import random
 import json
 import html
+import http.cookiejar as cookiejar
 from urllib.parse import urlparse, parse_qs, urljoin, quote
 from datetime import datetime
 import time
@@ -33,6 +34,7 @@ import io
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any, Tuple
 from abc import ABC, abstractmethod
+from itertools import islice
 
 # --- Dependency Imports ---
 try:
@@ -89,6 +91,9 @@ class ConversionOptions:
     archive: bool = False
     compact_comments: bool = False
     max_depth: Optional[int] = None
+    max_pages: Optional[int] = None
+    max_posts: Optional[int] = None
+    page_spec: Optional[List[int]] = None
 
 @dataclass
 class Source:
@@ -135,6 +140,43 @@ def sanitize_filename(filename):
     sanitized = re.sub(r'[<>:"/\\|?*]', '', filename)
     sanitized = re.sub(r'\s+', '_', sanitized).strip('_')
     return sanitized[:150]
+
+def parse_page_spec(spec: str) -> Optional[List[int]]:
+    if not spec: return None
+    pages = set()
+    for part in spec.split(','):
+        part = part.strip()
+        if not part: continue
+        if '-' in part:
+            try:
+                start, end = part.split('-')
+                start, end = int(start), int(end)
+                if start > end: start, end = end, start
+                pages.update(range(start, end + 1))
+            except: continue
+        else:
+            try:
+                pages.add(int(part))
+            except: continue
+    if not pages: return None
+    return sorted(p for p in pages if p > 0)
+
+def load_cookie_file(path: str) -> List[Dict[str, str]]:
+    """Parse Netscape cookie file format into a list of dict entries."""
+    cookies = []
+    if not path or not os.path.exists(path):
+        return cookies
+    try:
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            for line in f:
+                if not line or line.startswith('#'): continue
+                parts = line.strip().split('\t')
+                if len(parts) >= 7:
+                    domain, _, _, _, _, name, value = parts[:7]
+                    cookies.append({"domain": domain.lstrip('.'), "name": name, "value": value})
+    except Exception as e:
+        log.warning(f"Failed to parse cookies file {path}: {e}")
+    return cookies
 
 @asynccontextmanager
 async def get_session():
@@ -973,6 +1015,181 @@ class RedditDriver(BaseDriver):
             results.append(norm)
         return results
 
+# --- Forum Driver ---
+
+class ForumDriver(BaseDriver):
+    async def prepare_book_data(self, source: Source, session, options: ConversionOptions) -> Optional[BookData]:
+        base_url = self._normalize_url(source.url)
+        log.info(f"Forum Driver processing: {base_url}")
+
+        assets: List[ImageAsset] = []
+        page_blocks: List[Tuple[int, List[Dict[str, Any]]]] = []
+        title = None
+
+        target_pages = options.page_spec or []
+        pages_sequence = list(target_pages) if target_pages else []
+        max_pages = options.max_pages
+        max_posts = options.max_posts
+
+        page = 1
+        seen_pages = set()
+
+        while True:
+            if target_pages:
+                if not pages_sequence:
+                    break
+                page = pages_sequence.pop(0)
+            else:
+                if max_pages and page > max_pages:
+                    break
+
+            if page in seen_pages:
+                page += 1
+                continue
+
+            html_content, final_url = await fetch_with_retry(session, self._build_page_url(base_url, page), 'text')
+            if not html_content:
+                if target_pages:
+                    log.warning(f"Page {page} missing.")
+                    continue
+                else:
+                    break
+
+            soup = BeautifulSoup(html_content, 'lxml')
+            if not title:
+                title = self._extract_title(soup, base_url)
+
+            if not options.no_images:
+                base_for_imgs = final_url or base_url
+                await ImageProcessor.process_images(session, soup, base_for_imgs, assets)
+
+            posts = self._extract_posts(soup)
+            if posts:
+                if max_posts:
+                    remaining = max_posts - sum(len(b[1]) for b in page_blocks)
+                    if remaining <= 0:
+                        break
+                    posts = list(islice(posts, remaining))
+                page_blocks.append((page, posts))
+            if max_posts and sum(len(b[1]) for b in page_blocks) >= max_posts:
+                break
+
+            seen_pages.add(page)
+            if target_pages:
+                continue
+
+            has_next = self._has_next_page(soup, page)
+            if not has_next:
+                break
+            page += 1
+
+        if not page_blocks:
+            log.error("Forum extraction produced no posts.")
+            return None
+
+        chapter_html = self._render_thread_html(title or "Forum Thread", source.url, page_blocks)
+        chapter = Chapter(
+            title=title or "Forum Thread",
+            filename="thread.xhtml",
+            content_html=chapter_html,
+            uid="forum_thread",
+            is_article=True
+        )
+
+        toc_links = [epub.Link("thread.xhtml", "Thread", "forum_thread")]
+        return BookData(
+            title=title or "Forum Thread",
+            author="Forum",
+            uid=f"urn:forum:{abs(hash(base_url))}",
+            language="en",
+            description=f"Forum thread from {base_url}",
+            source_url=source.url,
+            chapters=[chapter],
+            images=assets,
+            toc_structure=toc_links
+        )
+
+    def _normalize_url(self, url: str) -> str:
+        cleaned = url.rstrip('/')
+        if "page-" in cleaned:
+            cleaned = re.sub(r'/page-\d+', '', cleaned)
+        cleaned = re.sub(r'([?&])page=\d+', r'\1', cleaned)
+        cleaned = cleaned.rstrip('?&')
+        return cleaned
+
+    def _build_page_url(self, base_url: str, page: int) -> str:
+        if page <= 1:
+            return base_url
+        if re.search(r'page-\d+', base_url):
+            return re.sub(r'page-\d+', f"page-{page}", base_url)
+        if '.' in base_url.split('/')[-1] and not base_url.endswith('.html'):
+            return f"{base_url}/page-{page}"
+        joiner = '&' if '?' in base_url else '?'
+        return f"{base_url}{joiner}page={page}"
+
+    def _extract_title(self, soup, url):
+        og = soup.find("meta", attrs={"property": "og:title"})
+        if og and og.get("content"): return og.get("content")
+        if soup.title and soup.title.string: return soup.title.string.strip()
+        return url
+
+    def _extract_posts(self, soup):
+        posts = []
+        containers = soup.find_all(lambda tag: tag.get("class") and any("message" in c for c in tag.get("class")))
+        for c in containers:
+            pid = c.get("id") or c.get("data-content") or f"post_{len(posts)+1}"
+            author = None
+            author_tag = c.find(lambda t: t.get("class") and any("username" in x or "author" in x for x in t.get("class")))
+            if author_tag:
+                author = author_tag.get_text(strip=True)
+            content_tag = c.find(lambda t: t.get("class") and any("messageContent" in x or "bbWrapper" in x or "content" == x for x in t.get("class")))
+            if not content_tag:
+                continue
+            time_val = None
+            time_tag = c.find("time")
+            if time_tag:
+                time_val = time_tag.get("datetime") or time_tag.get("title") or time_tag.get_text(strip=True)
+            posts.append({
+                "id": pid,
+                "author": author or "Anonymous",
+                "html": str(content_tag),
+                "time": time_val
+            })
+        return posts
+
+    def _has_next_page(self, soup, current_page: int) -> bool:
+        link = soup.find("link", rel="next")
+        if link and link.get("href"):
+            return True
+        anchors = soup.find_all("a")
+        for a in anchors:
+            txt = a.get_text(strip=True).lower()
+            if txt in ("next", "next >", "next>"):
+                return True
+            if txt == str(current_page + 1):
+                return True
+        return False
+
+    def _render_thread_html(self, title, url, page_blocks: List[Tuple[int, List[Dict[str, Any]]]]):
+        chunks = [f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head><body>"""]
+        chunks.append(f"<h1>{title}</h1><div class='post-meta'><p><strong>Source:</strong> <a href=\"{url}\">{url}</a></p></div>")
+        post_counter = 1
+        for page_no, posts in page_blocks:
+            chunks.append(f"<div class='page-label' id='page_{page_no}'>Page {page_no}</div>")
+            for post in posts:
+                pid = sanitize_filename(post.get("id") or f"post_{post_counter}")
+                author = html.escape(post.get("author") or "Anonymous")
+                when = html.escape(post.get("time") or "")
+                chunks.append(f"<div class='forum-post' id='p_{pid}'>")
+                chunks.append(f"<div class='forum-post-header'><span class='forum-author'>{author}</span>")
+                if when: chunks.append(f"<span class='forum-time'>{when}</span>")
+                chunks.append("</div>")
+                chunks.append(f"<div class='forum-post-body'>{post.get('html','')}</div>")
+                chunks.append("</div>")
+                post_counter += 1
+        chunks.append("</body></html>")
+        return "".join(chunks)
+
 # --- Global Logic: Tree Enrichment ---
 
 def _enrich_comment_tree(roots: List[Dict]) -> List[Dict]:
@@ -1091,6 +1308,12 @@ class EpubWriter:
             .comment-body { margin-top: 2px; }
             pre { background: #f0f0f0; padding: 10px; overflow-x: auto; font-size: 0.9em; }
             p { margin-top: 0; margin-bottom: 0.8em; }
+            .forum-post { border: 1px solid #e0e0e0; border-radius: 6px; padding: 10px; margin-bottom: 14px; background: #fff; }
+            .forum-post-header { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 6px; font-size: 0.95em; color: #333; }
+            .forum-author { color: #222; }
+            .forum-time { color: #777; font-weight: 400; font-size: 0.9em; }
+            .forum-post-body { font-size: 0.97em; color: #222; }
+            .page-label { margin: 18px 0 10px 0; padding: 8px 10px; background: #eef5ff; border-left: 3px solid #4a7bd4; font-weight: 600; border-radius: 4px; }
         """ + pygments_style
         if custom_css: base_css += f"\n{custom_css}"
 
@@ -1139,6 +1362,8 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
                  driver = RedditDriver()
              elif "substack.com" in source.url or "/p/" in parsed.path:
                  driver = SubstackDriver()
+             elif "/threads/" in parsed.path:
+                 driver = ForumDriver()
              else:
                  driver = GenericDriver()
              try:
@@ -1195,6 +1420,10 @@ async def async_main():
     parser.add_argument("--bundle-title", help="Custom title for the bundle")
     parser.add_argument("--bundle-author", help="Custom author for the bundle")
     parser.add_argument("--max-depth", type=int, default=None)
+    parser.add_argument("--max-pages", type=int, default=None, help="Max forum pages to fetch")
+    parser.add_argument("--max-posts", type=int, default=None, help="Max forum posts to fetch")
+    parser.add_argument("--pages", help="Forum pages to fetch (e.g., 1,3-5)")
+    parser.add_argument("--cookie-file", help="Netscape-format cookie file for auth-gated content")
     parser.add_argument("--css", help="Custom CSS file")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
@@ -1209,10 +1438,33 @@ async def async_main():
 
     if not urls: print("No input provided."); sys.exit(1)
 
-    options = ConversionOptions(no_article=args.no_article, no_comments=args.no_comments, no_images=args.no_images, archive=args.archive, max_depth=args.max_depth)
+    page_spec = parse_page_spec(args.pages) if args.pages else None
+    options = ConversionOptions(
+        no_article=args.no_article,
+        no_comments=args.no_comments,
+        no_images=args.no_images,
+        archive=args.archive,
+        max_depth=args.max_depth,
+        max_pages=args.max_pages,
+        max_posts=args.max_posts,
+        page_spec=page_spec
+    )
+
+    # Load cookies once if provided
+    cookie_entries = load_cookie_file(args.cookie_file) if args.cookie_file else []
+
+    def cookies_for_url(u: str) -> Optional[Dict[str, str]]:
+        if not cookie_entries: return None
+        host = urlparse(u).netloc.lower()
+        jar = {}
+        for c in cookie_entries:
+            dom = c.get("domain", "").lower()
+            if dom and (host == dom or host.endswith(f".{dom}")):
+                jar[c["name"]] = c["value"]
+        return jar or None
 
     # Convert URLs to Sources (CLI doesn't support HTML injection)
-    sources = [Source(url=u, html=None) for u in urls]
+    sources = [Source(url=u, html=None, cookies=cookies_for_url(u)) for u in urls]
 
     async with get_session() as session:
         processed_books = await process_urls(sources, options, session)

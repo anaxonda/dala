@@ -48,6 +48,10 @@ class ConversionRequest(BaseModel):
     no_images: bool = False
     no_article: bool = False
     archive: bool = False
+    max_depth: Optional[int] = None
+    max_pages: Optional[int] = None
+    max_posts: Optional[int] = None
+    page_spec: Optional[List[int]] = None
 
 @app.get("/ping")
 async def ping(): return {"status": "ok"}
@@ -61,7 +65,11 @@ async def convert(req: ConversionRequest):
         no_images=req.no_images,
         no_article=req.no_article,
         archive=req.archive,
-        compact_comments=True
+        compact_comments=True,
+        max_depth=req.max_depth,
+        max_pages=req.max_pages,
+        max_posts=req.max_posts,
+        page_spec=req.page_spec
     )
 
     # Map Pydantic to Core Dataclass

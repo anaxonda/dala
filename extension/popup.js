@@ -34,6 +34,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (cookieBox) {
             cookieBox.onchange = handleCookieToggle;
         }
+        const pagesInput = document.getElementById('opt-pages');
+        const maxPagesInput = document.getElementById('opt-maxpages');
+        if (pagesInput) pagesInput.onchange = saveOptions;
+        if (maxPagesInput) maxPagesInput.onchange = saveOptions;
     } catch (e) {
         console.error("Error attaching listeners:", e);
     }
@@ -83,7 +87,9 @@ async function saveOptions() {
         no_article: document.getElementById('opt-noarticle').checked,
         no_images: document.getElementById('opt-noimages').checked,
         archive: document.getElementById('opt-archive').checked,
-        include_cookies: document.getElementById('opt-cookies').checked
+        include_cookies: document.getElementById('opt-cookies').checked,
+        pages: (document.getElementById('opt-pages')?.value || "").trim(),
+        max_pages: document.getElementById('opt-maxpages')?.value || ""
     };
     await browser.storage.local.set({ savedOptions: options });
 }
@@ -96,6 +102,12 @@ async function restoreOptions() {
         document.getElementById('opt-noimages').checked = res.savedOptions.no_images;
         document.getElementById('opt-archive').checked = res.savedOptions.archive;
         document.getElementById('opt-cookies').checked = !!res.savedOptions.include_cookies;
+        if (res.savedOptions.pages !== undefined) {
+            document.getElementById('opt-pages').value = res.savedOptions.pages;
+        }
+        if (res.savedOptions.max_pages !== undefined) {
+            document.getElementById('opt-maxpages').value = res.savedOptions.max_pages;
+        }
     }
 }
 
@@ -105,8 +117,31 @@ function getOptions() {
         no_article: document.getElementById('opt-noarticle').checked,
         no_images: document.getElementById('opt-noimages').checked,
         archive: document.getElementById('opt-archive').checked,
-        include_cookies: document.getElementById('opt-cookies').checked
+        include_cookies: document.getElementById('opt-cookies').checked,
+        pages: (document.getElementById('opt-pages')?.value || "").trim(),
+        max_pages: (document.getElementById('opt-maxpages')?.value || "").trim()
     };
+}
+
+function parsePageSpecInput(spec) {
+    if (!spec) return null;
+    const parts = spec.split(',').map(p => p.trim()).filter(Boolean);
+    const pages = new Set();
+    for (const part of parts) {
+        if (part.includes('-')) {
+            const [a, b] = part.split('-').map(x => parseInt(x, 10));
+            if (!isNaN(a) && !isNaN(b)) {
+                const start = Math.min(a, b);
+                const end = Math.max(a, b);
+                for (let i = start; i <= end; i++) pages.add(i);
+            }
+        } else {
+            const n = parseInt(part, 10);
+            if (!isNaN(n) && n > 0) pages.add(n);
+        }
+    }
+    const arr = Array.from(pages).sort((a, b) => a - b);
+    return arr.length ? arr : null;
 }
 
 async function handleCookieToggle() {
@@ -271,6 +306,8 @@ function showStatus(msg) {
 async function preparePayload(urls, bundleTitle) {
     const options = getOptions();
     const sources = [];
+    const page_spec = parsePageSpecInput(options.pages);
+    const max_pages = options.max_pages ? parseInt(options.max_pages, 10) || null : null;
 
     // 1. Get all tabs to check for matches
     let allTabs = [];
@@ -314,7 +351,9 @@ async function preparePayload(urls, bundleTitle) {
         no_comments: options.no_comments,
         no_article: options.no_article,
         no_images: options.no_images,
-        archive: options.archive
+        archive: options.archive,
+        max_pages: max_pages,
+        page_spec: page_spec && page_spec.length ? page_spec : null
     };
 }
 

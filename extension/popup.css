@@ -70,3 +70,4 @@ input[type="checkbox"] { margin-right: 5px; }
 
 #status-bar { text-align: center; padding: 4px; font-size: 11px; color: #666; height: 15px; background: #eee;}
 .cookie-opt { padding: 8px 15px 4px 15px; font-size: 11px; color: #444; }
+.pagination-opt { padding: 0 15px 6px 15px; }
