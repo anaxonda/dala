@@ -105,11 +105,14 @@ async function processDownload(payload, isBundle) {
             }
         }
 
+        // Once assets are loaded, do not abort this request on popup close.
+        const localController = currentController;
+
         const response = await fetch("http://127.0.0.1:8000/convert", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
-            signal: currentController.signal
+            signal: localController.signal
         });
 
         if (!response.ok) {
