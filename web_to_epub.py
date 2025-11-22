@@ -183,7 +183,7 @@ async def get_session():
     async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
         yield session
 
-async def fetch_with_retry(session, url, response_type='json', allow_redirects=True, referer=None, non_retry_statuses: Optional[set] = None):
+async def fetch_with_retry(session, url, response_type='json', allow_redirects=True, referer=None, non_retry_statuses: Optional[set] = None, extra_headers: Optional[Dict[str, str]] = None):
     final_url = url
     for attempt in range(MAX_RETRIES):
         try:
@@ -194,6 +194,8 @@ async def fetch_with_retry(session, url, response_type='json', allow_redirects=T
             }
             if referer:
                 headers['Referer'] = referer
+            if extra_headers:
+                headers.update(extra_headers)
 
             async with session.get(url, allow_redirects=allow_redirects, headers=headers, timeout=REQUEST_TIMEOUT) as response:
                 final_url = str(response.url)
@@ -357,9 +359,15 @@ class ImageProcessor:
     async def fetch_image_data(session, url, referer=None):
         try:
             non_retry = {401, 403, 404, 409}
-            headers, _ = await fetch_with_retry(session, url, 'headers', referer=referer, non_retry_statuses=non_retry)
+            img_headers = {
+                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                "Sec-Fetch-Dest": "image",
+                "Sec-Fetch-Mode": "no-cors",
+                "Sec-Fetch-Site": "same-origin",
+            }
+            headers, _ = await fetch_with_retry(session, url, 'headers', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
             if not headers: return None, None, "No headers"
-            data, _ = await fetch_with_retry(session, url, 'bytes', referer=referer, non_retry_statuses=non_retry)
+            data, _ = await fetch_with_retry(session, url, 'bytes', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
             if not data: return headers, None, "No data"
             return headers, data, None
         except Exception as e: return None, None, str(e)
