@@ -177,14 +177,23 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
             if (!html) continue;
             const found = parseAttachmentsFromHtml(html, url);
             for (const att of found) {
-                const data = await fetchBinaryWithCookies(att.url, url);
-                if (data) {
+                // fetch viewer to get full-size image
+                let fullData = null;
+                if (att.viewer_url) {
+                    const viewerHtml = await fetchWithCookies(att.viewer_url, url);
+                    const fullUrl = parseViewerForFullImage(viewerHtml, att.viewer_url) || att.url;
+                    fullData = await fetchBinaryWithCookies(fullUrl, att.viewer_url);
+                }
+                if (!fullData) {
+                    fullData = await fetchBinaryWithCookies(att.url, url);
+                }
+                if (fullData) {
                     assets.push({
                         original_url: att.url,
                         viewer_url: att.viewer_url,
                         filename_hint: att.filename,
-                        content_type: data.type,
-                        content: data.base64
+                        content_type: fullData.type,
+                        content: fullData.base64
                     });
                 }
             }
@@ -235,18 +244,30 @@ function parseAttachmentsFromHtml(html, baseUrl) {
     const list = [];
     try {
         const doc = new DOMParser().parseFromString(html, "text/html");
-        const imgs = doc.querySelectorAll("a[href*='/attachments/'] img, img[src*='/attachments/'], img[data-src*='/attachments/']");
-        imgs.forEach(img => {
-            const a = img.closest('a');
-            const viewer = a && a.href ? a.href : null;
-            const src = img.getAttribute("data-src") || img.getAttribute("src") || viewer;
-            if (!src) return;
-            const absViewer = viewer ? new URL(viewer, baseUrl).href : null;
-            const absSrc = new URL(src, baseUrl).href;
-            list.push({url: absSrc, viewer_url: absViewer || absSrc, filename: absSrc.split('/').pop()});
+        const anchors = doc.querySelectorAll("a[href*='/attachments/']");
+        anchors.forEach(a => {
+            const viewer = a.href ? new URL(a.href, baseUrl).href : null;
+            const img = a.querySelector('img');
+            const src = img ? (img.getAttribute("data-src") || img.getAttribute("src")) : null;
+            if (!viewer && !src) return;
+            const absSrc = src ? new URL(src, baseUrl).href : viewer;
+            list.push({url: absSrc, viewer_url: viewer, filename: (absSrc || '').split('/').pop()});
         });
     } catch (e) {
         console.warn("parseAttachmentsFromHtml failed", e);
     }
     return list;
+}
+
+function parseViewerForFullImage(html, baseUrl) {
+    try {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const og = doc.querySelector("meta[property='og:image']");
+        if (og && og.content) return new URL(og.content, baseUrl).href;
+        const img = doc.querySelector("img");
+        if (img && img.src) return new URL(img.src, baseUrl).href;
+    } catch (e) {
+        console.warn("parseViewerForFullImage failed", e);
+    }
+    return null;
 }
