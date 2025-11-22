@@ -557,10 +557,12 @@ class ImageProcessor:
                 link_href = parent_link.get('href')
             data_attrs_json = img_tag.get('data-attrs')
             data_attrs_src = None
+            data_attrs_redirect = None
             if data_attrs_json:
                 try:
                     attrs_obj = json.loads(data_attrs_json)
                     data_attrs_src = attrs_obj.get('src') or attrs_obj.get('srcNoWatermark')
+                    data_attrs_redirect = attrs_obj.get('internalRedirect')
                 except Exception:
                     data_attrs_src = None
 
@@ -568,11 +570,13 @@ class ImageProcessor:
 
             # Prefer the largest candidate from srcset/data-srcset, then data-src, then src
             candidates = []
+            # Substack: prefer internalRedirect/src from data-attrs if present
+            if data_attrs_redirect: candidates.insert(0, data_attrs_redirect)
+            if data_attrs_src: candidates.insert(0, data_attrs_src)
             if data_srcset:
                 candidates.extend(ImageProcessor.parse_srcset(data_srcset))
             if srcset:
                 candidates.extend(ImageProcessor.parse_srcset(srcset))
-            if data_attrs_src: candidates.append(data_attrs_src)
             if data_src: candidates.append(data_src)
             if src: candidates.append(src)
             if link_href: candidates.append(link_href)
