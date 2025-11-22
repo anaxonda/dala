@@ -506,17 +506,26 @@ class ImageProcessor:
     def parse_srcset(srcset_str: str) -> List[str]:
         if not srcset_str: return []
         candidates = []
-        parts = srcset_str.split(',')
-        for p in parts:
-            p = p.strip()
-            if not p: continue
-            sub = p.split(' ')
-            url = sub[0]
-            width = 0
-            if len(sub) > 1 and sub[1].endswith('w'):
-                try: width = int(sub[1][:-1])
-                except: pass
+        import re
+        # Robust parse: find all occurrences of "<url> <width>w"
+        for match in re.finditer(r'(?P<url>\\S+)\\s+(?P<w>\\d+)w', srcset_str):
+            url = match.group('url')
+            try: width = int(match.group('w'))
+            except: width = 0
             candidates.append((width, url))
+        if not candidates:
+            # fallback to comma split if regex fails
+            parts = srcset_str.split(',')
+            for p in parts:
+                p = p.strip()
+                if not p: continue
+                sub = p.split(' ')
+                url = sub[0]
+                width = 0
+                if len(sub) > 1 and sub[1].endswith('w'):
+                    try: width = int(sub[1][:-1])
+                    except: pass
+                candidates.append((width, url))
 
         candidates.sort(key=lambda x: x[0], reverse=True)
         return [c[1] for c in candidates]
