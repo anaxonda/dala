@@ -149,6 +149,63 @@ function parsePageSpecInput(spec) {
     return arr.length ? arr : null;
 }
 
+async function fetchAssetsFromPage(tabId, refererUrl) {
+    try {
+        const results = await browser.tabs.executeScript(tabId, {
+            code: `(() => {
+                const imgs = Array.from(document.querySelectorAll('img'));
+                return imgs.map(img => {
+                    const srcset = img.getAttribute('data-srcset') || img.getAttribute('srcset');
+                    const dataUrl = img.getAttribute('data-url');
+                    const src = img.getAttribute('data-src') || img.getAttribute('src');
+                    const a = img.closest('a');
+                    const viewer = a && a.href ? a.href : null;
+                    return {src, srcset, dataUrl, viewer};
+                });
+            })();`
+        });
+        const assets = [];
+        if (results && results[0]) {
+            for (const rec of results[0]) {
+                const best = pickBestImageCandidate(rec, refererUrl);
+                if (!best) continue;
+                const data = await fetchBinaryWithCookies(best.url, refererUrl);
+                if (data) {
+                    assets.push({
+                        original_url: best.url,
+                        viewer_url: rec.viewer ? new URL(rec.viewer, refererUrl).href : null,
+                        filename_hint: best.url.split('/').pop(),
+                        content_type: data.type,
+                        content: data.base64
+                    });
+                }
+            }
+        }
+        return assets;
+    } catch (e) {
+        console.warn('fetchAssetsFromPage failed', e);
+        return [];
+    }
+}
+
+function pickBestImageCandidate(rec, baseUrl) {
+    const candidates = [];
+    if (rec.dataUrl) candidates.push(rec.dataUrl);
+    if (rec.srcset) {
+        const parts = rec.srcset.split(',').map(p => p.trim()).filter(Boolean);
+        for (const p of parts) {
+            const [u, w] = p.split(/\\s+/);
+            candidates.push(u);
+        }
+    }
+    if (rec.src) candidates.push(rec.src);
+    const cleaned = candidates.map(u => {
+        try { return new URL(u, baseUrl).href; } catch(e) { return null; }
+    }).filter(Boolean);
+    if (!cleaned.length) return null;
+    return {url: cleaned[0]};
+}
+
 async function fetchPageAssets(url, cookies, page_spec, max_pages) {
     const assets = [];
     try {
@@ -366,7 +423,14 @@ async function preparePayload(urls, bundleTitle) {
         if (options.include_cookies) {
             cookies = await getCookiesForUrl(url);
         }
-        sources.push({ url: url, html: html, cookies: cookies, assets: [] });
+        let assets = [];
+        if (include_assets && match) {
+            assets = await fetchAssetsFromPage(match.id, url) || [];
+        }
+        if (include_assets && assets.length === 0) {
+            assets = await fetchPageAssets(url, cookies, page_spec, max_pages);
+        }
+        sources.push({ url: url, html: html, cookies: cookies, assets: assets });
     }
 
     return {
