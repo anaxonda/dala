@@ -24,8 +24,12 @@ browser.menus.onClicked.addListener(async (info, tab) => {
 browser.runtime.onMessage.addListener((message) => {
     if (message.action === "download") {
         processDownload(message.payload, message.isBundle);
+    } else if (message.action === "cancel-download") {
+        cancelDownload();
     }
 });
+
+let currentController = null;
 
 async function addToQueue(url) {
     const res = await browser.storage.local.get("urlQueue");
@@ -79,6 +83,11 @@ function getFilenameFromHeader(header) {
 
 // The Main Download Logic
 async function processDownload(payload, isBundle) {
+    if (currentController) {
+        currentController.abort();
+        currentController = null;
+    }
+    currentController = new AbortController();
     browser.browserAction.setBadgeText({ text: "..." });
     browser.browserAction.setBadgeBackgroundColor({ color: "#FFA500" }); // Orange
 
@@ -86,7 +95,8 @@ async function processDownload(payload, isBundle) {
         const response = await fetch("http://127.0.0.1:8000/convert", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: currentController.signal
         });
 
         if (!response.ok) {
@@ -116,17 +126,38 @@ async function processDownload(payload, isBundle) {
         } else {
             setTimeout(updateBadge, 3000);
         }
+        currentController = null;
 
     } catch (error) {
-        console.error("Download Failed:", error);
-        browser.browserAction.setBadgeText({ text: "ERR" });
-        browser.browserAction.setBadgeBackgroundColor({ color: "red" });
+        if (error.name === 'AbortError') {
+            browser.browserAction.setBadgeText({ text: "" });
+            browser.browserAction.setBadgeBackgroundColor({ color: "#e85a4f" });
+        } else {
+            console.error("Download Failed:", error);
+            browser.browserAction.setBadgeText({ text: "ERR" });
+            browser.browserAction.setBadgeBackgroundColor({ color: "red" });
 
+            browser.notifications.create({
+                type: "basic",
+                iconUrl: "icon.png",
+                title: "Download Failed",
+                message: error.message || "Check server.py console"
+            });
+        }
+        currentController = null;
+    }
+}
+
+function cancelDownload() {
+    if (currentController) {
+        currentController.abort();
+        currentController = null;
         browser.notifications.create({
             type: "basic",
             iconUrl: "icon.png",
-            title: "Download Failed",
-            message: error.message || "Check server.py console"
+            title: "Download Cancelled",
+            message: "Current download was cancelled."
         });
+        updateBadge();
     }
 }

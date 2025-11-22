@@ -38,6 +38,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         const maxPagesInput = document.getElementById('opt-maxpages');
         if (pagesInput) pagesInput.onchange = saveOptions;
         if (maxPagesInput) maxPagesInput.onchange = saveOptions;
+        const cancelBtn = document.getElementById('btn-cancel');
+        if (cancelBtn) cancelBtn.onclick = () => {
+            browser.runtime.sendMessage({ action: "cancel-download" });
+            showStatus("Cancel requested");
+        };
     } catch (e) {
         console.error("Error attaching listeners:", e);
     }
