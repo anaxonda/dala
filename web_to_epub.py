@@ -1439,7 +1439,7 @@ class EpubWriter:
         pygments_style = HtmlFormatter(style='default').get_style_defs('.codehilite')
         base_css = """
             body { font-family: sans-serif; margin: 0.5em; background-color: #fdfdfd; line-height: 1.5; }
-            .epub-image { max-width: 100%; height: auto; display: block; margin: 10px auto; }
+            .epub-image { max-width: 100%; max-height: 80vh; height: auto; display: block; margin: 8px auto; }
             figure { margin: 1em 0; text-align: center; }
             figcaption { font-size: 0.9em; color: #666; font-style: italic; margin-top: 0.5em; }
             .post-meta { background: #f5f5f5; padding: 10px; margin-bottom: 20px; border-radius: 5px; font-size: 0.9em; }
