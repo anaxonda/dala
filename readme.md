@@ -200,3 +200,8 @@ Reading threaded conversations linearly is difficult.
     * Background-fetches forum pages/attachments with cookies; follows viewer pages and parses full-size URLs, and downloads external images (e.g., Flickr).
     * Sends assets to the server; core matches them and skips re-downloading.
 *   **Result:** Full-size forum attachments embed correctly; use the extension path for gated content (CLI alone cannot replicate browser-only tokens/headers).
+
+### 6. Substack Image Selection
+*   **Problem:** Substack pages expose multiple image URLs (thumbs, `image/fetch` transforms, original S3) and often wrap them in extra divs. Using raw page HTML or picking `src` first could embed a tiny thumbnail or the wrong asset in single downloads.
+*   **Solution:** Image processing now runs on the cleaned extracted HTML, prefers `data-attrs` sources (e.g., `internalRedirect`/`src` pointing at the original S3 image) before srcset/src, and unwraps empty wrappers around `<img>`.
+*   **Result:** Single and bundle outputs pick the correct Substack image (e.g., ACX) and render with simpler markup for readers like Calibre.
