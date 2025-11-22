@@ -522,7 +522,8 @@ class ImageProcessor:
         return [c[1] for c in candidates]
 
     @staticmethod
-    async def process_images(session, soup, base_url, book_assets: List[ImageAsset]):
+    async def process_images(session, soup, base_url, book_assets: List[ImageAsset], preloaded_assets: Optional[List[Dict[str, Any]]] = None):
+        preloaded_assets = preloaded_assets or []
         # 1. UNWRAP PICTURE TAGS (Critical for E-Readers)
         for pic in soup.find_all('picture'):
             img = pic.find('img')
@@ -603,7 +604,7 @@ class ImageProcessor:
                 # Use preloaded assets from source (sent by extension)
                 preload_match = None
                 for a in preloaded_assets:
-                    if a.get("original_url") == full_url or a.get("viewer_url") == viewer_url:
+                    if a.get("original_url") == full_url or (viewer_url and a.get("viewer_url") == viewer_url):
                         preload_match = a
                         break
 
@@ -715,7 +716,7 @@ class SubstackDriver(BaseDriver):
         assets = []
         if not options.no_images:
             base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
-            await ImageProcessor.process_images(session, body_soup, base, assets)
+            await ImageProcessor.process_images(session, body_soup, base, assets, preloaded_assets=source.assets)
 
         title = data['title'] or "Substack Article"
         chapter_html = body_soup.prettify()
@@ -925,7 +926,7 @@ class GenericDriver(BaseDriver):
         assets = []
         if not options.no_images:
             base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
-            await ImageProcessor.process_images(session, body_soup, base, assets)
+            await ImageProcessor.process_images(session, body_soup, base, assets, preloaded_assets=source.assets)
 
         chapter_html = body_soup.prettify()
         meta_html = f"""<div class="post-meta">
@@ -980,7 +981,7 @@ class HackerNewsDriver(BaseDriver):
                     body = soup.body if soup.body else soup
                     if not options.no_images:
                         base = art_data.get('archive_url') if art_data.get('was_archived') else article_url
-                        await ImageProcessor.process_images(session, body, base, assets)
+                        await ImageProcessor.process_images(session, body, base, assets, preloaded_assets=source.assets)
                     art_html = body.prettify()
                     meta_info = f"<p><strong>Article Author:</strong> {art_data['author']}</p>" if art_data['author'] else ""
                     if art_data['was_archived']: meta_info += f"<p class='archive-notice'>Archived: <a href='{art_data['archive_url']}'>Link</a></p>"
@@ -1063,7 +1064,7 @@ class RedditDriver(BaseDriver):
                 decoded = html.unescape(selftext_html)
                 soup = BeautifulSoup(decoded, 'html.parser')
                 if not options.no_images:
-                    await ImageProcessor.process_images(session, soup, source.url, assets)
+                    await ImageProcessor.process_images(session, soup, source.url, assets, preloaded_assets=source.assets)
                 article_html = soup.prettify()
             elif link_url and not link_url.startswith(("https://www.reddit.com", "https://old.reddit.com", "https://redd.it")):
                 art_data = await ArticleExtractor.get_article_content(session, link_url, force_archive=options.archive)
@@ -1073,7 +1074,7 @@ class RedditDriver(BaseDriver):
                     body = soup.body if soup.body else soup
                     if not options.no_images:
                         base = art_data.get('archive_url') if art_data.get('was_archived') else link_url
-                        await ImageProcessor.process_images(session, body, base, assets)
+                        await ImageProcessor.process_images(session, body, base, assets, preloaded_assets=source.assets)
                     article_html = body.prettify()
                 else:
                     article_html = f"<p>Original link: <a href=\"{link_url}\">{link_url}</a></p>"
@@ -1199,7 +1200,7 @@ class ForumDriver(BaseDriver):
 
             if not options.no_images:
                 base_for_imgs = final_url or base_url
-                await ImageProcessor.process_images(session, soup, base_for_imgs, assets)
+                await ImageProcessor.process_images(session, soup, base_for_imgs, assets, preloaded_assets=source.assets)
 
             posts = self._extract_posts(soup)
             if posts:
