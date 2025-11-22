@@ -358,12 +358,10 @@ class ImageProcessor:
     @staticmethod
     async def fetch_image_data(session, url, referer=None):
         try:
-            non_retry = {401, 403, 404, 409}
+            non_retry = {401, 403, 404}
             img_headers = {
                 "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-                "Sec-Fetch-Dest": "image",
-                "Sec-Fetch-Mode": "no-cors",
-                "Sec-Fetch-Site": "same-origin",
+                "Accept-Language": "en-US,en;q=0.5",
             }
             headers, _ = await fetch_with_retry(session, url, 'headers', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
             if not headers: return None, None, "No headers"
