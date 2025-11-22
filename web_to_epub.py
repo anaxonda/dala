@@ -365,10 +365,10 @@ class ImageProcessor:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             }
             headers, _ = await fetch_with_retry(session, url, 'headers', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
-            if not headers: return None, None, "No headers"
             data, _ = await fetch_with_retry(session, url, 'bytes', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
-            if not data:
-                # Fallback using requests (some CDNs block aiohttp)
+
+            # Fallback using requests (some CDNs block aiohttp)
+            if not headers or not data:
                 try:
                     import requests
                     cookie_dict = {}
@@ -377,7 +377,7 @@ class ImageProcessor:
                         cookie_dict = {k: v.value for k, v in jar.items()}
                     except Exception:
                         pass
-                    resp = requests.get(url, headers={**img_headers, "User-Agent": img_headers.get("User-Agent", "Mozilla/5.0"), "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
+                    resp = requests.get(url, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
                     if resp.status_code == 200 and resp.content:
                         headers = resp.headers
                         data = resp.content
@@ -386,7 +386,7 @@ class ImageProcessor:
                 except Exception as e:
                     return headers, None, f"Fallback failed: {e}"
             if not data: return headers, None, "No data"
-            return headers, data, None
+            return headers or {}, data, None
         except Exception as e: return None, None, str(e)
 
     @staticmethod
