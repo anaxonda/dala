@@ -149,6 +149,7 @@ async function handleCookieToggle() {
     if (!box) return;
     if (!box.checked) {
         await saveOptions();
+        showStatus("Cookies disabled");
         return;
     }
     try {
@@ -180,7 +181,8 @@ async function ensureCookiePermissionForUrl(url) {
     try {
         const u = new URL(url);
         const originPattern = `${u.origin}/*`;
-        const perms = {origins: [originPattern], permissions: ["cookies"]};
+        // cookies permission is already declared in manifest; request only host origin
+        const perms = {origins: [originPattern]};
         const hasPerm = await browser.permissions.contains(perms);
         if (hasPerm) return true;
         return await browser.permissions.request(perms);
