@@ -918,6 +918,10 @@ class GenericDriver(BaseDriver):
         if 'substack:post_id' in raw_html:
              log.info("Detected Substack metadata on custom domain. Switching to SubstackDriver.")
              return await SubstackDriver().prepare_book_data(source, session, options)
+        # Detect XenForo/forum markers even on non-standard paths
+        if 'data-template="thread_view"' in raw_html or 'xenforo' in raw_html.lower():
+             log.info("Detected forum/thread template. Switching to ForumDriver.")
+             return await ForumDriver().prepare_book_data(source, session, options)
 
         title = data['title'] or "Untitled Webpage"
         soup = BeautifulSoup(data['html'], 'html.parser')
