@@ -357,7 +357,7 @@ class ArticleExtractor:
 
 class ImageProcessor:
     @staticmethod
-    async def fetch_image_data(session, url, referer=None):
+    async def fetch_image_data(session, url, referer=None, viewer_url=None):
         try:
             non_retry = {401, 403, 404}
             img_headers = {
@@ -365,48 +365,51 @@ class ImageProcessor:
                 "Accept-Language": "en-US,en;q=0.5",
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             }
-            if "mtbr.com/d3/attachments/" in url:
-                try:
-                    import requests
-                    cookie_dict = {}
-                    try:
-                        jar = session.cookie_jar.filter_cookies(URL(url))
-                        cookie_dict = {k: v.value for k, v in jar.items()}
-                    except Exception:
-                        pass
-                    extra = getattr(session, "_extra_cookies", None)
-                    if isinstance(extra, dict): cookie_dict.update(extra)
-                    resp = requests.get(url, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
-                    if resp.status_code == 200 and resp.content:
-                        return resp.headers, resp.content, None
-                except Exception:
-                    pass
-            headers, _ = await fetch_with_retry(session, url, 'headers', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
-            data, _ = await fetch_with_retry(session, url, 'bytes', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
+            # Try viewer URL first if provided (common on XenForo)
+            targets = []
+            if viewer_url: targets.append(viewer_url)
+            targets.append(url)
 
-            # Fallback using requests (some CDNs block aiohttp)
-            if not headers or not data:
-                try:
-                    import requests
-                    cookie_dict = {}
-                    try:
-                        jar = session.cookie_jar.filter_cookies(URL(url))
-                        cookie_dict = {k: v.value for k, v in jar.items()}
-                    except Exception:
-                        pass
-                    extra = getattr(session, "_extra_cookies", None)
-                    if isinstance(extra, dict): cookie_dict.update(extra)
-                    resp = requests.get(url, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
-                    if resp.status_code == 200 and resp.content:
-                        headers = resp.headers
-                        data = resp.content
-                    else:
-                        return headers, None, f"Fallback status {resp.status_code}"
-                except Exception as e:
-                    return headers, None, f"Fallback failed: {e}"
-            if not data: return headers, None, "No data"
-            return headers or {}, data, None
+            for idx, target in enumerate(targets):
+                use_requests_first = idx == 0 and viewer_url is not None
+
+                if use_requests_first:
+                    resp_headers, resp_bytes = await ImageProcessor._requests_fetch(session, target, img_headers, referer)
+                    if resp_bytes:
+                        return resp_headers, resp_bytes, None
+
+                headers, _ = await fetch_with_retry(session, target, 'headers', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
+                data, _ = await fetch_with_retry(session, target, 'bytes', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
+
+                if headers and data:
+                    return headers, data, None
+
+                # Fallback using requests (some CDNs block aiohttp)
+                resp_headers, resp_bytes = await ImageProcessor._requests_fetch(session, target, img_headers, referer)
+                if resp_bytes:
+                    return resp_headers, resp_bytes, None
+
+            return None, None, "No data"
         except Exception as e: return None, None, str(e)
+
+    @staticmethod
+    async def _requests_fetch(session, target, img_headers, referer):
+        try:
+            import requests
+            cookie_dict = {}
+            try:
+                jar = session.cookie_jar.filter_cookies(URL(target))
+                cookie_dict = {k: v.value for k, v in jar.items()}
+            except Exception:
+                pass
+            extra = getattr(session, "_extra_cookies", None)
+            if isinstance(extra, dict): cookie_dict.update(extra)
+            resp = requests.get(target, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
+            if resp.status_code == 200 and resp.content and "text/html" not in resp.headers.get("Content-Type",""):
+                return resp.headers, resp.content
+        except Exception:
+            pass
+        return None, None
 
     @staticmethod
     def optimize_and_get_details(url, headers, data):
@@ -517,6 +520,10 @@ class ImageProcessor:
             srcset = img_tag.get('srcset')
             data_src = img_tag.get('data-src')
             data_srcset = img_tag.get('data-srcset')
+            link_href = None
+            parent_link = img_tag.find_parent('a')
+            if parent_link and parent_link.get('href'):
+                link_href = parent_link.get('href')
 
             final_src = None
 
@@ -528,6 +535,7 @@ class ImageProcessor:
                 if data_src: candidates.append(data_src)
                 if data_srcset: candidates.extend(ImageProcessor.parse_srcset(data_srcset))
                 if srcset: candidates.extend(ImageProcessor.parse_srcset(srcset))
+                if link_href: candidates.append(link_href)
 
                 for c in candidates:
                     if not ImageProcessor.is_junk(c):
@@ -547,6 +555,12 @@ class ImageProcessor:
                 if "/avatar" in full_url or "/avatars/" in full_url:
                     return
 
+                # XenForo attachment viewer URLs often look like /attachments/<slug>.<id>/
+                viewer_url = None
+                if "/attachments/" in full_url and "d3/attachments" not in full_url:
+                    viewer_url = full_url
+                attach_target = full_url
+
                 existing = next((a for a in book_assets if a.original_url == full_url), None)
                 if existing:
                     img_tag['src'] = existing.filename
@@ -554,7 +568,7 @@ class ImageProcessor:
                          if img_tag.has_attr(attr): del img_tag[attr]
                     return
 
-                headers, data, err = await ImageProcessor.fetch_image_data(session, full_url, referer=base_url)
+                headers, data, err = await ImageProcessor.fetch_image_data(session, attach_target, referer=base_url, viewer_url=viewer_url)
                 if err:
                     return
 
