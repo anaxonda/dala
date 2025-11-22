@@ -249,8 +249,14 @@ function parseAttachmentsFromHtml(html, baseUrl) {
             const viewer = a.href ? new URL(a.href, baseUrl).href : null;
             const img = a.querySelector('img');
             const src = img ? (img.getAttribute("data-src") || img.getAttribute("src")) : null;
+            const srcset = img ? (img.getAttribute("data-srcset") || img.getAttribute("srcset")) : null;
+            let candidate = src;
+            if (srcset) {
+                const best = pickLargestFromSrcset(srcset, baseUrl);
+                if (best) candidate = best;
+            }
             if (!viewer && !src) return;
-            const absSrc = src ? new URL(src, baseUrl).href : viewer;
+            const absSrc = candidate ? new URL(candidate, baseUrl).href : viewer;
             list.push({url: absSrc, viewer_url: viewer, filename: (absSrc || '').split('/').pop()});
         });
     } catch (e) {
@@ -265,9 +271,34 @@ function parseViewerForFullImage(html, baseUrl) {
         const og = doc.querySelector("meta[property='og:image']");
         if (og && og.content) return new URL(og.content, baseUrl).href;
         const img = doc.querySelector("img");
-        if (img && img.src) return new URL(img.src, baseUrl).href;
+        if (img) {
+            const dataUrl = img.getAttribute("data-url");
+            if (dataUrl) return new URL(dataUrl, baseUrl).href;
+            const srcset = img.getAttribute("data-srcset") || img.getAttribute("srcset");
+            if (srcset) {
+                const best = pickLargestFromSrcset(srcset, baseUrl);
+                if (best) return best;
+            }
+            if (img.src) return new URL(img.src, baseUrl).href;
+        }
     } catch (e) {
         console.warn("parseViewerForFullImage failed", e);
     }
     return null;
+}
+
+function pickLargestFromSrcset(srcset, baseUrl) {
+    const parts = srcset.split(',').map(p => p.trim()).filter(Boolean);
+    let best = null;
+    let maxw = -1;
+    for (const p of parts) {
+        const [u, w] = p.split(/\s+/);
+        let width = parseInt((w || '').replace('w',''), 10);
+        if (isNaN(width)) width = 0;
+        if (width > maxw) {
+            maxw = width;
+            try { best = new URL(u, baseUrl).href; } catch(e) { best = null; }
+        }
+    }
+    return best;
 }
