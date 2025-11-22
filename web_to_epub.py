@@ -364,6 +364,20 @@ class ImageProcessor:
                 "Accept-Language": "en-US,en;q=0.5",
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             }
+            if "mtbr.com/d3/attachments/" in url:
+                try:
+                    import requests
+                    cookie_dict = {}
+                    try:
+                        jar = session.cookie_jar.filter_cookies(url)
+                        cookie_dict = {k: v.value for k, v in jar.items()}
+                    except Exception:
+                        pass
+                    resp = requests.get(url, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
+                    if resp.status_code == 200 and resp.content:
+                        return resp.headers, resp.content, None
+                except Exception:
+                    pass
             headers, _ = await fetch_with_retry(session, url, 'headers', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
             data, _ = await fetch_with_retry(session, url, 'bytes', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
 
