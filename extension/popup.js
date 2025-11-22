@@ -190,20 +190,27 @@ async function fetchAssetsFromPage(tabId, refererUrl) {
 
 function pickBestImageCandidate(rec, baseUrl) {
     const candidates = [];
-    if (rec.dataUrl) candidates.push(rec.dataUrl);
+    if (rec.dataUrl) candidates.push({u: rec.dataUrl, w: 99999});
     if (rec.srcset) {
         const parts = rec.srcset.split(',').map(p => p.trim()).filter(Boolean);
         for (const p of parts) {
             const [u, w] = p.split(/\\s+/);
-            candidates.push(u);
+            let width = parseInt((w || '').replace('w',''), 10);
+            if (isNaN(width)) width = 0;
+            candidates.push({u, w: width});
         }
     }
-    if (rec.src) candidates.push(rec.src);
-    const cleaned = candidates.map(u => {
-        try { return new URL(u, baseUrl).href; } catch(e) { return null; }
-    }).filter(Boolean);
-    if (!cleaned.length) return null;
-    return {url: cleaned[0]};
+    if (rec.src) candidates.push({u: rec.src, w: 0});
+    let best = null;
+    let maxw = -1;
+    for (const c of candidates) {
+        let abs = null;
+        try { abs = new URL(c.u, baseUrl).href; } catch(e) { abs = null; }
+        if (!abs) continue;
+        if (c.w > maxw) { maxw = c.w; best = abs; }
+    }
+    if (!best) return null;
+    return {url: best};
 }
 
 async function fetchPageAssets(url, cookies, page_spec, max_pages) {
