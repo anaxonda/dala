@@ -365,33 +365,29 @@ class ImageProcessor:
                 "Accept-Language": "en-US,en;q=0.5",
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             }
+            # Try viewer URL first if provided (common on XenForo)
             targets = []
             if viewer_url: targets.append(viewer_url)
             targets.append(url)
 
-            for target in targets:
-                # First try via aiohttp
-                headers, resp = await fetch_with_retry(session, target, 'bytes', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
-                if headers and resp and not str(headers.get('Content-Type', '')).startswith('text/html'):
-                    return headers, resp, None
-                # If HTML viewer/login page, parse for img href/src and retry
-                if resp and str(headers.get('Content-Type', '')).startswith('text/html'):
-                    img_url = ImageProcessor._parse_viewer_for_image(resp, target)
-                    if img_url:
-                        headers2, resp2, err = await ImageProcessor._requests_fetch(session, img_url, img_headers, referer or target)
-                        if resp2:
-                            return headers2, resp2, None
+            for idx, target in enumerate(targets):
+                use_requests_first = idx == 0 and viewer_url is not None
 
-                # Fallback using requests
-                headers_r, data_r, err = await ImageProcessor._requests_fetch(session, target, img_headers, referer)
-                if data_r and not str(headers_r.get('Content-Type', '')).startswith('text/html'):
-                    return headers_r, data_r, None
-                if data_r and str(headers_r.get('Content-Type', '')).startswith('text/html'):
-                    img_url = ImageProcessor._parse_viewer_for_image(data_r, target)
-                    if img_url:
-                        headers3, resp3, err3 = await ImageProcessor._requests_fetch(session, img_url, img_headers, referer or target)
-                        if resp3:
-                            return headers3, resp3, None
+                if use_requests_first:
+                    resp_headers, resp_bytes = await ImageProcessor._requests_fetch(session, target, img_headers, referer)
+                    if resp_bytes:
+                        return resp_headers, resp_bytes, None
+
+                headers, _ = await fetch_with_retry(session, target, 'headers', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
+                data, _ = await fetch_with_retry(session, target, 'bytes', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
+
+                if headers and data:
+                    return headers, data, None
+
+                # Fallback using requests (some CDNs block aiohttp)
+                resp_headers, resp_bytes = await ImageProcessor._requests_fetch(session, target, img_headers, referer)
+                if resp_bytes:
+                    return resp_headers, resp_bytes, None
 
             return None, None, "No data"
         except Exception as e: return None, None, str(e)
@@ -409,25 +405,11 @@ class ImageProcessor:
             extra = getattr(session, "_extra_cookies", None)
             if isinstance(extra, dict): cookie_dict.update(extra)
             resp = requests.get(target, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
-            if resp.status_code == 200 and resp.content:
-                return resp.headers, resp.content, None
+            if resp.status_code == 200 and resp.content and "text/html" not in resp.headers.get("Content-Type",""):
+                return resp.headers, resp.content
         except Exception:
             pass
-        return None, None, "fallback-failed"
-
-    @staticmethod
-    def _parse_viewer_for_image(html_bytes, base_url):
-        try:
-            soup = BeautifulSoup(html_bytes, 'html.parser')
-            img = soup.find('img')
-            if img and img.get('src'):
-                return urljoin(base_url, img.get('src'))
-            link = soup.find('a', href=re.compile(r'\\.(jpg|jpeg|png|webp|gif)(\\?|$)', re.IGNORECASE))
-            if link and link.get('href'):
-                return urljoin(base_url, link.get('href'))
-        except Exception:
-            return None
-        return None
+        return None, None
 
     @staticmethod
     def optimize_and_get_details(url, headers, data):
