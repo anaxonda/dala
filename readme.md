@@ -66,6 +66,7 @@ uv run web_to_epub.py https://old.reddit.com/r/AskHistorians/comments/1p2uk19/ke
 
 ## 🔄 Updates
 - **Reddit Driver (new):** Reddit/old.reddit/redd.it links now fetch via the JSON API (`raw_json=1`), render self-posts or linked articles, and include threaded comments with navigation. Works in both CLI and the Firefox extension via the existing FastAPI backend.
+- **Forum Driver & Attachments:** Forum threads (e.g., XenForo) now support page ranges, asset preloading from the browser, and external images. The Firefox extension can fetch gated attachments with your session cookies and embed them into EPUBs.
 
 ---
 
