@@ -549,23 +549,20 @@ class ImageProcessor:
 
             final_src = None
 
-            # LAZY FALLBACK LOGIC
-            if src and not ImageProcessor.is_junk(src):
-                final_src = src
-            else:
-                candidates = []
-                if data_src: candidates.append(data_src)
-                if data_srcset: candidates.extend(ImageProcessor.parse_srcset(data_srcset))
-                if srcset: candidates.extend(ImageProcessor.parse_srcset(srcset))
-                if link_href: candidates.append(link_href)
+            # Prefer the largest candidate from srcset/data-srcset, then data-src, then src
+            candidates = []
+            if data_srcset:
+                candidates.extend(ImageProcessor.parse_srcset(data_srcset))
+            if srcset:
+                candidates.extend(ImageProcessor.parse_srcset(srcset))
+            if data_src: candidates.append(data_src)
+            if src: candidates.append(src)
+            if link_href: candidates.append(link_href)
 
-                for c in candidates:
-                    if not ImageProcessor.is_junk(c):
-                        final_src = c
-                        break
-
-                if not final_src and src:
-                    final_src = src
+            for c in candidates:
+                if not ImageProcessor.is_junk(c):
+                    final_src = c
+                    break
 
             if not final_src or final_src.startswith(('data:', 'mailto:', 'javascript:')): return
 
