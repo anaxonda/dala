@@ -359,7 +359,7 @@ class ImageProcessor:
     @staticmethod
     async def fetch_image_data(session, url, referer=None, viewer_url=None):
         try:
-            non_retry = {401, 403, 404}
+            non_retry = {401, 403, 404, 409}
             img_headers = {
                 "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
@@ -471,6 +471,7 @@ class ImageProcessor:
         """Determines if an image URL is a known placeholder or tracking pixel."""
         if not url: return True
         if url.startswith("data:"): return True
+        if url.startswith("view-source:"): return True
 
         bad_keywords = [
             "spacer", "1x1", "transparent", "gray.gif", "pixel.gif",
@@ -548,6 +549,11 @@ class ImageProcessor:
             if not final_src or final_src.startswith(('data:', 'mailto:', 'javascript:')): return
 
             try:
+                if final_src.startswith("view-source:"):
+                    final_src = final_src.replace("view-source:", "", 1)
+                if link_href and link_href.startswith("view-source:"):
+                    link_href = link_href.replace("view-source:", "", 1)
+
                 full_url = urljoin(base_url, final_src.strip())
                 if "web.archive.org" in base_url and full_url.startswith("http://"):
                      full_url = full_url.replace("http://", "https://", 1)
