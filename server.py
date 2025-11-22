@@ -60,6 +60,10 @@ async def ping(): return {"status": "ok"}
 @app.post("/convert")
 async def convert(req: ConversionRequest):
     print(f"📥 Received request: {len(req.sources)} sources")
+    if req.sources:
+        for idx, s in enumerate(req.sources[:1]):
+            count_assets = len(s.assets) if s.assets else 0
+            print(f"Source[{idx}] assets: {count_assets}")
 
     options = core.ConversionOptions(
         no_comments=req.no_comments,
