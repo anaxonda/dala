@@ -40,6 +40,7 @@ class SourceItem(BaseModel):
     html: Optional[str] = None
     cookies: Optional[dict] = None
     assets: Optional[list] = None
+    is_forum: Optional[bool] = False
 
 class ConversionRequest(BaseModel):
     sources: List[SourceItem] # Renamed from urls
@@ -80,11 +81,13 @@ async def convert(req: ConversionRequest):
     # Map Pydantic to Core Dataclass
     core_sources = []
     for s in req.sources:
+        is_forum = bool(s.is_forum)
         core_sources.append(core.Source(
             url=s.url,
             html=s.html,
-            cookies=s.cookies,
-            assets=s.assets
+            cookies=s.cookies if is_forum else None,
+            assets=s.assets if is_forum else None,
+            is_forum=is_forum
         ))
 
     async with core.get_session() as session:

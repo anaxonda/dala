@@ -97,6 +97,7 @@ async function processDownload(payload, isBundle) {
         // Background asset fetch if requested
         if (payload.fetch_assets && payload.sources) {
             for (const src of payload.sources) {
+                if (!src.is_forum) continue;
                 if (src.assets && src.assets.length) continue;
                 const res = await fetchAssetsForPage(src.url, payload.page_spec, payload.max_pages);
                 if (res && res.assets) {
@@ -178,16 +179,27 @@ function cancelDownload() {
 async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
     const assets = [];
     try {
-        // fetch only specified pages; otherwise fetch page 1
-        const pages = page_spec && page_spec.length ? page_spec : [1];
+        const normBase = threadUrl.replace(/\/page-\d+/i, "").replace(/([?&])page=\d+/i, "$1").replace(/[?&]$/, "");
+        const currentPageMatch = threadUrl.match(/page-(\d+)/i) || threadUrl.match(/[?&]page=(\d+)/i);
+        const currentPage = currentPageMatch ? parseInt(currentPageMatch[1], 10) : 1;
+        const hasExplicitPages = page_spec && page_spec.length;
+        const pages = hasExplicitPages ? page_spec : [1];
+        const uniquePages = Array.from(new Set(pages.filter(p => p && p > 0))).sort((a, b) => a - b);
         const limiter = (arr, n) => arr.slice(0, n || arr.length);
-        const pagesToFetch = limiter(pages, max_pages || pages.length);
+        const pagesToFetch = limiter(uniquePages, max_pages || uniquePages.length);
         let debugViewerLogged = false;
-        for (const page of pagesToFetch) {
-            const url = buildForumPageUrl(threadUrl, page);
+        const seenPages = new Set();
+        const queue = [...pagesToFetch];
+
+        while (queue.length) {
+            const page = queue.shift();
+            if (seenPages.has(page)) continue;
+            seenPages.add(page);
+            const url = buildForumPageUrl(normBase, page);
             const html = await fetchWithCookies(url, threadUrl);
             if (!html) continue;
             const found = parseAttachmentsFromHtml(html, url);
+            console.debug("attachments found", found.slice(0, 3).map(x => x.url));
             for (const att of found) {
                 let fullData = null;
 
@@ -210,9 +222,11 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
                 }
 
                 if (fullData && fullData.base64 && !fullData.isHtml) {
+                    const canonical = att.url && att.url.includes("?") ? att.url.split("?")[0] : att.url;
                     assets.push({
                         original_url: att.url,
-                        viewer_url: att.viewer_url,
+                        viewer_url: att.viewer_url || canonical,
+                        canonical_url: canonical,
                         filename_hint: att.filename,
                         content_type: fullData.type,
                         content: fullData.base64
@@ -232,6 +246,13 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
                         content_type: data.type,
                         content: data.base64
                     });
+                }
+            }
+
+            if (!hasExplicitPages) {
+                const nextPage = findNextPage(html, page);
+                if (nextPage && (!max_pages || nextPage <= max_pages) && !seenPages.has(nextPage)) {
+                    queue.push(nextPage);
                 }
             }
         }
@@ -265,15 +286,41 @@ async function fetchWithCookies(url, referer) {
 
 async function fetchBinaryMaybeHtml(url, referer) {
     try {
-        const resp = await fetch(url, {credentials: "include", headers: {"Referer": referer || url}});
-        if (!resp.ok) return null;
+        let target = url;
+        let resp = await fetch(target, {
+            credentials: "include",
+            headers: {
+                "Referer": referer || target,
+                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
+            },
+            cache: "no-store"
+        });
+        if (!resp.ok && resp.status === 409 && target.includes("?")) {
+            target = target.split("?")[0];
+            resp = await fetch(target, {
+                credentials: "include",
+                headers: {
+                    "Referer": referer || target,
+                    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
+                },
+                cache: "no-store"
+            });
+        }
         const ct = resp.headers.get("Content-Type") || "application/octet-stream";
+        const allowOnError = ct.startsWith("image/");
+        if (!resp.ok && !allowOnError) return null;
         if (ct.startsWith("text/") || ct.includes("html")) {
             const text = await resp.text();
             return {type: ct, base64: null, text, isHtml: true};
         }
         const buf = await resp.arrayBuffer();
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+        const bytes = new Uint8Array(buf);
+        const chunk = 8192;
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += chunk) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        const base64 = btoa(binary);
         return {type: ct, base64, text: null, isHtml: false};
     } catch (e) {
         console.warn("fetchBinaryWithCookies failed", e);
@@ -298,7 +345,41 @@ function parseAttachmentsFromHtml(html, baseUrl) {
             }
             if (!viewer && !src) return;
             const absSrc = candidate ? new URL(candidate, baseUrl).href : viewer;
-            list.push({url: absSrc, viewer_url: viewer, filename: (absSrc || '').split('/').pop()});
+            if (!absSrc.startsWith("http")) return;
+            const viewerClean = viewer ? viewer.split("?")[0] : null;
+            list.push({url: absSrc, viewer_url: viewerClean || viewer, filename: (absSrc || '').split('/').pop()});
+        });
+
+        // Fallback: images with attachment src/data-src even without anchors
+        const imgs = doc.querySelectorAll("img");
+        imgs.forEach(img => {
+            const src = img.getAttribute("data-src") || img.getAttribute("src");
+            const srcset = img.getAttribute("data-srcset") || img.getAttribute("srcset");
+            let candidate = src;
+            if (srcset) {
+                const best = pickLargestFromSrcset(srcset, baseUrl);
+                if (best) candidate = best;
+            }
+            if (!candidate || !candidate.includes("/attachments/")) return;
+            try {
+                const absSrc = new URL(candidate, baseUrl).href;
+                if (!absSrc.startsWith("http")) return;
+                const viewerClean = absSrc.includes("?") ? absSrc.split("?")[0] : null;
+                list.push({url: absSrc, viewer_url: viewerClean, filename: (absSrc || '').split('/').pop()});
+            } catch (_) {}
+        });
+
+        // Fallback: elements with data-src pointing at attachments (e.g., lightbox containers)
+        const dataSrcNodes = doc.querySelectorAll("[data-src*='/attachments/']");
+        dataSrcNodes.forEach(node => {
+            const ds = node.getAttribute("data-src");
+            if (!ds) return;
+            try {
+                const absSrc = new URL(ds, baseUrl).href;
+                if (!absSrc.startsWith("http")) return;
+                const viewerClean = absSrc.includes("?") ? absSrc.split("?")[0] : null;
+                list.push({url: absSrc, viewer_url: viewerClean, filename: (absSrc || '').split('/').pop()});
+            } catch (_) {}
         });
     } catch (e) {
         console.warn("parseAttachmentsFromHtml failed", e);
@@ -336,7 +417,6 @@ function parseExternalImages(html, baseUrl) {
         imgs.forEach(img => {
             const src = img.getAttribute("data-src") || img.getAttribute("src");
             if (!src) return;
-            if (src.includes('/attachments/')) return;
             if (src.startsWith('data:')) return;
             try { urls.add(new URL(src, baseUrl).href); } catch(e) {}
         });
@@ -360,4 +440,31 @@ function pickLargestFromSrcset(srcset, baseUrl) {
         }
     }
     return best;
+}
+
+function findNextPage(html, currentPage) {
+    try {
+        const doc = new DOMParser().parseFromString(html, "text/html");
+        const link = doc.querySelector("link[rel='next']");
+        if (link && link.href) {
+            const m = link.href.match(/page-(\d+)/i) || link.href.match(/[?&]page=(\d+)/i);
+            if (m) return parseInt(m[1], 10);
+        }
+        const anchors = Array.from(doc.querySelectorAll("a"));
+        for (const a of anchors) {
+            const txt = (a.textContent || "").trim().toLowerCase();
+            if (txt === "next" || txt === "next >" || txt === "next>") {
+                const m = a.href && (a.href.match(/page-(\d+)/i) || a.href.match(/[?&]page=(\d+)/i));
+                if (m) return parseInt(m[1], 10);
+            }
+            if (txt === String(currentPage + 1)) {
+                const m = a.href && (a.href.match(/page-(\d+)/i) || a.href.match(/[?&]page=(\d+)/i));
+                if (m) return parseInt(m[1], 10);
+                return currentPage + 1;
+            }
+        }
+    } catch (e) {
+        console.warn("findNextPage failed", e);
+    }
+    return null;
 }

@@ -200,3 +200,12 @@ Reading threaded conversations linearly is difficult.
     * Background-fetches forum pages/attachments with cookies; follows viewer pages and parses full-size URLs, and downloads external images (e.g., Flickr).
     * Sends assets to the server; core matches them and skips re-downloading.
 *   **Result:** Full-size forum attachments embed correctly; use the extension path for gated content (CLI alone cannot replicate browser-only tokens/headers).
+
+### Forum Pipeline (Current)
+*   **Input:** Extension flags `is_forum`, passes cookies plus preloaded assets (base64 content with original/viewer/canonical URLs, queryless variants allowed), optional page ranges (`pages`, `max_pages`).
+*   **Pre-seed:** All preloaded assets are decoded once and added to `book_assets` with URL variants so they are available for every page before HTML processing.
+*   **Crawl:** Normalize base thread URL; fetch each page (sequentially or explicit range); parse posts; run the forum image processor.
+*   **Rewrite:** Build a map from every pre-seeded asset URL (including query-stripped and viewer/canonical variants) to its filename; swap matching `<img>`/attachment URLs in-place. Skip junk (reaction emoji) and prefer preloaded assets over network fetches.
+*   **Fallback fetch:** For unmatched attachment URLs, use requests-only with cookies, including queryless retries; avoid aiohttp 409 loops.
+*   **Output:** Single-thread chapter with page labels and all distinct attachments embedded; tightened CSS to reduce whitespace around images/posts.
+*   **Challenges solved:** MTBR-style attachments used multiple URL forms and 409-protected CDNs. The mapping of URL variants to preloaded assets prevented collapsing every image to the first, and request-only/queryless fallbacks plus multi-page asset fetch ensured coverage across thread pages.

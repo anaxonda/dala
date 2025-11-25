@@ -93,6 +93,7 @@ async function saveOptions() {
         no_images: document.getElementById('opt-noimages').checked,
         archive: document.getElementById('opt-archive').checked,
         include_cookies: document.getElementById('opt-cookies').checked,
+        forum: document.getElementById('opt-forum').checked,
         pages: (document.getElementById('opt-pages')?.value || "").trim(),
         max_pages: document.getElementById('opt-maxpages')?.value || ""
     };
@@ -107,6 +108,7 @@ async function restoreOptions() {
         document.getElementById('opt-noimages').checked = res.savedOptions.no_images;
         document.getElementById('opt-archive').checked = res.savedOptions.archive;
         document.getElementById('opt-cookies').checked = !!res.savedOptions.include_cookies;
+        document.getElementById('opt-forum').checked = !!res.savedOptions.forum;
         if (res.savedOptions.pages !== undefined) {
             document.getElementById('opt-pages').value = res.savedOptions.pages;
         }
@@ -123,6 +125,7 @@ function getOptions() {
         no_images: document.getElementById('opt-noimages').checked,
         archive: document.getElementById('opt-archive').checked,
         include_cookies: document.getElementById('opt-cookies').checked,
+        forum: document.getElementById('opt-forum').checked,
         pages: (document.getElementById('opt-pages')?.value || "").trim(),
         max_pages: (document.getElementById('opt-maxpages')?.value || "").trim()
     };
@@ -169,16 +172,7 @@ async function fetchAssetsFromPage(tabId, refererUrl) {
             for (const rec of results[0]) {
                 const best = pickBestImageCandidate(rec, refererUrl);
                 if (!best) continue;
-                const data = await fetchBinaryWithCookies(best.url, refererUrl);
-                if (data) {
-                    assets.push({
-                        original_url: best.url,
-                        viewer_url: rec.viewer ? new URL(rec.viewer, refererUrl).href : null,
-                        filename_hint: best.url.split('/').pop(),
-                        content_type: data.type,
-                        content: data.base64
-                    });
-                }
+                // Tab-level fetch disabled; rely on background fetch path
             }
         }
         return assets;
@@ -396,6 +390,8 @@ async function preparePayload(urls, bundleTitle) {
     const page_spec = parsePageSpecInput(options.pages);
     const max_pages = options.max_pages ? parseInt(options.max_pages, 10) || null : null;
     const include_assets = options.include_cookies;
+    const is_forum = !!options.forum;
+    let hasForum = is_forum;
 
     // 1. Get all tabs to check for matches
     let allTabs = [];
@@ -427,19 +423,20 @@ async function preparePayload(urls, bundleTitle) {
             }
         }
         let cookies = null;
-        if (options.include_cookies) {
-            cookies = await getCookiesForUrl(url);
-        }
         let assets = [];
-        if (include_assets && match) {
-            assets = await fetchAssetsFromPage(match.id, url) || [];
+        if (is_forum && include_assets) {
+            cookies = await getCookiesForUrl(url);
+            if (match) {
+                assets = await fetchAssetsFromPage(match.id, url) || [];
+            }
+            if (assets.length === 0) {
+                assets = await fetchPageAssets(url, cookies, page_spec, max_pages);
+            }
         }
-        if (include_assets && assets.length === 0) {
-            assets = await fetchPageAssets(url, cookies, page_spec, max_pages);
-        }
-        sources.push({ url: url, html: html, cookies: cookies, assets: assets });
+        sources.push({ url: url, html: html, cookies: cookies, assets: assets, is_forum: is_forum });
     }
 
+    const shouldFetchAssets = include_assets && hasForum;
     return {
         sources: sources,
         bundle_title: bundleTitle,
@@ -449,7 +446,7 @@ async function preparePayload(urls, bundleTitle) {
         archive: options.archive,
         max_pages: max_pages,
         page_spec: page_spec && page_spec.length ? page_spec : null,
-        fetch_assets: include_assets
+        fetch_assets: shouldFetchAssets
     };
 }
 

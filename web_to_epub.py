@@ -24,7 +24,6 @@ import logging
 import random
 import json
 import html
-import http.cookiejar as cookiejar
 from urllib.parse import urlparse, parse_qs, urljoin, quote
 from datetime import datetime
 import time
@@ -103,6 +102,7 @@ class Source:
     html: Optional[str] = None
     cookies: Optional[Dict[str, str]] = None
     assets: Optional[List[Dict[str, Any]]] = None
+    is_forum: bool = False
 
 @dataclass
 class ImageAsset:
@@ -111,6 +111,7 @@ class ImageAsset:
     media_type: str
     content: bytes
     original_url: str
+    alt_urls: Optional[List[str]] = None
 
 @dataclass
 class Chapter:
@@ -358,82 +359,22 @@ class ArticleExtractor:
 
 class ImageProcessor:
     @staticmethod
-    async def fetch_image_data(session, url, referer=None, viewer_url=None):
+    async def fetch_image_data(session, url, referer=None):
         try:
-            non_retry = {401, 403, 404, 409}
-            img_headers = {
-                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            }
-            targets = []
-            if viewer_url: targets.append(viewer_url)
-            targets.append(url)
-
-            for target in targets:
-                # Try requests first to capture content even on 4xx
-                headers_r, data_r, status_r = await ImageProcessor._requests_fetch(session, target, img_headers, referer)
-                if data_r:
-                    ctype = str(headers_r.get('Content-Type', '')) if headers_r else ''
-                    if not ctype.startswith('text/html'):
-                        return headers_r or {}, data_r, None
-                    viewer_img = ImageProcessor._parse_viewer_for_image(data_r, target)
-                    if viewer_img:
-                        h2, d2, s2 = await ImageProcessor._requests_fetch(session, viewer_img, img_headers, referer or target)
-                        if d2 and not str(h2.get('Content-Type','')).startswith('text/html'):
-                            return h2 or {}, d2, None
-
-                # Then aiohttp as secondary
-                headers, resp = await fetch_with_retry(session, target, 'bytes', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
-                if headers and resp:
-                    ctype = str(headers.get('Content-Type', ''))
-                    if not ctype.startswith('text/html'):
-                        return headers, resp, None
-                    viewer_img = ImageProcessor._parse_viewer_for_image(resp, target)
-                    if viewer_img:
-                        h3, d3, s3 = await ImageProcessor._requests_fetch(session, viewer_img, img_headers, referer or target)
-                        if d3 and not str(h3.get('Content-Type','')).startswith('text/html'):
-                            return h3 or {}, d3, None
-
-            return None, None, "No data"
-        except Exception as e: return None, None, str(e)
-
-    @staticmethod
-    async def _requests_fetch(session, target, img_headers, referer):
-        try:
-            import requests
-            cookie_dict = {}
-            try:
-                jar = session.cookie_jar.filter_cookies(URL(target))
-                cookie_dict = {k: v.value for k, v in jar.items()}
-            except Exception:
-                pass
-            extra = getattr(session, "_extra_cookies", None)
-            if isinstance(extra, dict): cookie_dict.update(extra)
-            resp = requests.get(target, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
-            if resp.content:
-                return resp.headers, resp.content, resp.status_code
-        except Exception:
-            pass
-        return None, None, None
-
-    @staticmethod
-    def _parse_viewer_for_image(html_bytes, base_url):
-        try:
-            soup = BeautifulSoup(html_bytes, 'html.parser')
-            img = soup.find('img')
-            if img and img.get('src'):
-                return urljoin(base_url, img.get('src'))
-            link = soup.find('a', href=re.compile(r'\\.(jpg|jpeg|png|webp|gif)(\\?|$)', re.IGNORECASE))
-            if link and link.get('href'):
-                return urljoin(base_url, link.get('href'))
-        except Exception:
-            return None
-        return None
+            headers, _ = await fetch_with_retry(session, url, 'headers', referer=referer)
+            if not headers:
+                return None, None, "No headers"
+            data, _ = await fetch_with_retry(session, url, 'bytes', referer=referer)
+            if not data:
+                return headers, None, "No data"
+            return headers, data, None
+        except Exception as e:
+            return None, None, str(e)
 
     @staticmethod
     def optimize_and_get_details(url, headers, data):
-        if not data: return None, None, None, "No Data"
+        if not data:
+            return None, None, None, "No Data"
         if not HAS_PILLOW:
             content_type = headers.get('Content-Type', '').split(';')[0].strip().lower()
             ext = mimetypes.guess_extension(content_type) or '.img'
@@ -443,7 +384,8 @@ class ImageProcessor:
             img_io = io.BytesIO(data)
             with PillowImage.open(img_io) as img:
                 img.load()
-                if img.width < 20 or img.height < 20: return None, None, None, "Tracking Pixel"
+                if img.width < 20 or img.height < 20:
+                    return None, None, None, "Tracking Pixel"
 
                 if img.width > MAX_IMAGE_DIMENSION or img.height > MAX_IMAGE_DIMENSION:
                     img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), PillowImage.Resampling.LANCZOS)
@@ -460,10 +402,12 @@ class ImageProcessor:
                 if output_format == 'JPEG':
                     if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
                         background = PillowImage.new("RGB", img.size, (255, 255, 255))
-                        if img.mode == 'P': img = img.convert('RGBA')
+                        if img.mode == 'P':
+                            img = img.convert('RGBA')
                         background.paste(img, mask=img.split()[3])
                         img = background
-                    elif img.mode != 'RGB': img = img.convert('RGB')
+                    elif img.mode != 'RGB':
+                        img = img.convert('RGB')
 
                 out_io = io.BytesIO()
                 if output_format == 'JPEG':
@@ -473,29 +417,33 @@ class ImageProcessor:
 
                 return output_mime, output_ext, out_io.getvalue(), None
 
-        except Exception as e: return None, None, None, f"Optimization Error: {e}"
+        except Exception as e:
+            return None, None, None, f"Optimization Error: {e}"
 
     @staticmethod
     def find_caption(element_tag):
         if element_tag.parent and element_tag.parent.name == 'figure':
             cap = element_tag.parent.find('figcaption')
-            if cap: return cap.get_text(strip=True)
+            if cap:
+                return cap.get_text(strip=True)
         nxt = element_tag.find_next_sibling(['p', 'div', 'span', 'figcaption'])
         if nxt:
             text = nxt.get_text(strip=True)
-            if 5 < len(text) < 300: return text
+            if 5 < len(text) < 300:
+                return text
         return None
 
     @staticmethod
     def is_junk(url: str) -> bool:
         """Determines if an image URL is a known placeholder or tracking pixel."""
-        if not url: return True
-        if url.startswith("data:"): return True
-        if url.startswith("view-source:"): return True
+        if not url:
+            return True
+        if url.startswith("data:"):
+            return True
 
         bad_keywords = [
             "spacer", "1x1", "transparent", "gray.gif", "pixel.gif",
-            "placeholder", "loader", "blank.gif", "reaction_id=", "/react?"
+            "placeholder", "loader", "blank.gif"
         ]
         lower_url = url.lower()
         if any(k in lower_url for k in bad_keywords):
@@ -503,28 +451,264 @@ class ImageProcessor:
         return False
 
     @staticmethod
-    def parse_srcset(srcset_str: str) -> List[str]:
-        if not srcset_str: return []
+    def parse_srcset(srcset_str: str) -> list:
+        if not srcset_str:
+            return []
         candidates = []
         parts = srcset_str.split(',')
         for p in parts:
             p = p.strip()
-            if not p: continue
+            if not p:
+                continue
             sub = p.split(' ')
             url = sub[0]
             width = 0
             if len(sub) > 1 and sub[1].endswith('w'):
-                try: width = int(sub[1][:-1])
-                except: pass
+                try:
+                    width = int(sub[1][:-1])
+                except:
+                    pass
             candidates.append((width, url))
 
         candidates.sort(key=lambda x: x[0], reverse=True)
         return [c[1] for c in candidates]
 
     @staticmethod
-    async def process_images(session, soup, base_url, book_assets: List[ImageAsset], preloaded_assets: Optional[List[Dict[str, Any]]] = None):
+    async def process_images(session, soup, base_url, book_assets: list):
+        for pic in soup.find_all('picture'):
+            img = pic.find('img')
+            if img:
+                for source in pic.find_all('source'):
+                    source.decompose()
+                pic.replace_with(img)
+            else:
+                pic.decompose()
+
+        img_tags = soup.find_all('img')
+        tasks = []
+
+        async def _process_tag(img_tag):
+            src = img_tag.get('src')
+            srcset = img_tag.get('srcset')
+            data_src = img_tag.get('data-src')
+            data_srcset = img_tag.get('data-srcset')
+
+            final_src = None
+
+            if src and not ImageProcessor.is_junk(src):
+                final_src = src
+            else:
+                candidates = []
+                if data_src:
+                    candidates.append(data_src)
+                if data_srcset:
+                    candidates.extend(ImageProcessor.parse_srcset(data_srcset))
+                if srcset:
+                    candidates.extend(ImageProcessor.parse_srcset(srcset))
+
+                for c in candidates:
+                    if not ImageProcessor.is_junk(c):
+                        final_src = c
+                        break
+
+                if not final_src and src:
+                    final_src = src
+
+            if not final_src or final_src.startswith(('data:', 'mailto:', 'javascript:')):
+                return
+
+            try:
+                full_url = urljoin(base_url, final_src.strip())
+                if "web.archive.org" in base_url and full_url.startswith("http://"):
+                    full_url = full_url.replace("http://", "https://", 1)
+
+                existing = next((a for a in book_assets if a.original_url == full_url), None)
+                if existing:
+                    img_tag['src'] = existing.filename
+                    for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding']:
+                        if img_tag.has_attr(attr):
+                            del img_tag[attr]
+                    return
+
+                headers, data, err = await ImageProcessor.fetch_image_data(session, full_url, referer=base_url)
+                if err:
+                    return
+
+                mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(full_url, headers, data)
+                if val_err:
+                    log.debug(f"Skipped image {full_url}: {val_err}")
+                    return
+
+                fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(full_url).path))[0])
+                if len(fname_base) < 3:
+                    fname_base = f"img_{abs(hash(full_url))}"
+
+                count = 0
+                fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}{ext}"
+                while any(a.filename == fname for a in book_assets):
+                    count += 1
+                    fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}_{count}{ext}"
+
+                uid = f"img_{abs(hash(fname))}"
+                asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=full_url)
+                book_assets.append(asset)
+
+                img_tag['src'] = fname
+                for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
+                    if img_tag.has_attr(attr):
+                        del img_tag[attr]
+                img_tag['class'] = 'epub-image'
+
+                caption_text = ImageProcessor.find_caption(img_tag)
+                parent = img_tag.parent
+                if caption_text and parent.name != 'figure':
+                    figure = soup.new_tag('figure', attrs={'class': 'embedded-figure'})
+                    img_tag.wrap(figure)
+                    figcaption = soup.new_tag('figcaption')
+                    figcaption.string = caption_text
+                    figure.append(figcaption)
+
+            except Exception as e:
+                log.debug(f"Image process error {src}: {e}")
+
+        for img in img_tags:
+            tasks.append(_process_tag(img))
+
+        if tasks:
+            await tqdm_asyncio.gather(*tasks, desc="Optimizing Images", unit="img", leave=False)
+
+
+class ForumImageProcessor:
+    @staticmethod
+    def is_junk(url: str) -> bool:
+        if not url:
+            return True
+        if url.startswith("data:") or url.startswith("view-source:"):
+            return True
+        bad_keywords = [
+            "spacer", "1x1", "transparent", "gray.gif", "pixel.gif",
+            "placeholder", "loader", "blank.gif", "reaction_id=", "/react?", "reactions/emojione"
+        ]
+        lower_url = url.lower()
+        if any(k in lower_url for k in bad_keywords):
+            return True
+        return False
+
+    @staticmethod
+    async def _requests_fetch(session, target, img_headers, referer):
+        try:
+            import requests
+            cookie_dict = {}
+            try:
+                jar = session.cookie_jar.filter_cookies(URL(target))
+                cookie_dict = {k: v.value for k, v in jar.items()}
+            except Exception:
+                pass
+            extra = getattr(session, "_extra_cookies", None)
+            if isinstance(extra, dict):
+                cookie_dict.update(extra)
+            resp = requests.get(target, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
+            if resp.content:
+                return resp.headers, resp.content, resp.status_code
+        except Exception:
+            pass
+        return None, None, None
+
+    @staticmethod
+    def _parse_viewer_for_image(html_bytes, base_url):
+        try:
+            soup = BeautifulSoup(html_bytes, 'html.parser')
+            img = soup.find('img')
+            if img and img.get('src'):
+                return urljoin(base_url, img.get('src'))
+            link = soup.find('a', href=re.compile(r'\.(jpg|jpeg|png|webp|gif)(\?|$)', re.IGNORECASE))
+            if link and link.get('href'):
+                return urljoin(base_url, link.get('href'))
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    async def fetch_image_data(session, url, referer=None, viewer_url=None):
+        try:
+            non_retry = {401, 403, 404, 409}
+            img_headers = {
+                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            }
+            targets = []
+            if viewer_url:
+                targets.append(viewer_url)
+            targets.append(url)
+            if "/attachments/" in url and "?" in url:
+                targets.append(url.split("?", 1)[0])
+
+            for target in targets:
+                is_attachment = "/attachments/" in target
+
+                headers_r, data_r, _ = await ForumImageProcessor._requests_fetch(session, target, img_headers, referer)
+                if data_r:
+                    ctype = str(headers_r.get('Content-Type', '')) if headers_r else ''
+                    if not ctype.startswith('text/html'):
+                        return headers_r or {}, data_r, None
+                    viewer_img = ForumImageProcessor._parse_viewer_for_image(data_r, target)
+                    if viewer_img:
+                        h2, d2, _ = await ForumImageProcessor._requests_fetch(session, viewer_img, img_headers, referer or target)
+                        if d2 and not str(h2.get('Content-Type','')).startswith('text/html'):
+                            return h2 or {}, d2, None
+
+                if not is_attachment:
+                    headers, resp = await fetch_with_retry(session, target, 'bytes', referer=referer, non_retry_statuses=non_retry, extra_headers=img_headers)
+                    if headers and resp:
+                        ctype = str(headers.get('Content-Type', ''))
+                        if not ctype.startswith('text/html'):
+                            return headers, resp, None
+                        viewer_img = ForumImageProcessor._parse_viewer_for_image(resp, target)
+                        if viewer_img:
+                            h3, d3, _ = await ForumImageProcessor._requests_fetch(session, viewer_img, img_headers, referer or target)
+                            if d3 and not str(h3.get('Content-Type','')).startswith('text/html'):
+                                return h3 or {}, d3, None
+
+                if is_attachment:
+                    headers_fallback, data_fallback, _ = await ForumImageProcessor._requests_fetch(session, target, img_headers, referer)
+                    if data_fallback:
+                        return headers_fallback or {}, data_fallback, None
+
+            return None, None, "No data"
+        except Exception as e:
+            return None, None, str(e)
+
+    @staticmethod
+    async def process_images(session, soup, base_url, book_assets: list, preloaded_assets: Optional[List[Dict[str, Any]]] = None):
         preloaded_assets = preloaded_assets or []
-        # 1. UNWRAP PICTURE TAGS (Critical for E-Readers)
+        # Map existing assets (pre-seeded in driver) to URLs for quick rewrites
+        preload_map: Dict[str, ImageAsset] = {}
+        for asset in book_assets:
+            urls = set()
+            if asset.original_url and isinstance(asset.original_url, str) and asset.original_url.startswith("http"):
+                urls.add(asset.original_url)
+                if "?" in asset.original_url:
+                    urls.add(asset.original_url.split("?", 1)[0])
+            if asset.alt_urls:
+                for u in asset.alt_urls:
+                    if isinstance(u, str) and u.startswith("http"):
+                        urls.add(u)
+                        if "?" in u:
+                            urls.add(u.split("?", 1)[0])
+            for u in urls:
+                preload_map[u] = asset
+        # Add viewer/canonical hints from preloaded metadata to existing assets
+        for a in preloaded_assets:
+            hint_urls = [a.get("original_url"), a.get("viewer_url"), a.get("canonical_url")]
+            hint_urls = [u for u in hint_urls if u and isinstance(u, str) and u.startswith("http")]
+            for h in hint_urls:
+                base_h = h.split("?", 1)[0] if "?" in h else h
+                match = preload_map.get(h) or preload_map.get(base_h)
+                if match:
+                    preload_map[h] = match
+                    preload_map[base_h] = match
+
         for pic in soup.find_all('picture'):
             img = pic.find('img')
             if img:
@@ -548,26 +732,29 @@ class ImageProcessor:
                 link_href = parent_link.get('href')
 
             final_src = None
-
-            # LAZY FALLBACK LOGIC
-            if src and not ImageProcessor.is_junk(src):
+            if src and not ForumImageProcessor.is_junk(src):
                 final_src = src
             else:
                 candidates = []
-                if data_src: candidates.append(data_src)
-                if data_srcset: candidates.extend(ImageProcessor.parse_srcset(data_srcset))
-                if srcset: candidates.extend(ImageProcessor.parse_srcset(srcset))
-                if link_href: candidates.append(link_href)
+                if data_src:
+                    candidates.append(data_src)
+                if data_srcset:
+                    candidates.extend(ImageProcessor.parse_srcset(data_srcset))
+                if srcset:
+                    candidates.extend(ImageProcessor.parse_srcset(srcset))
+                if link_href:
+                    candidates.append(link_href)
 
                 for c in candidates:
-                    if not ImageProcessor.is_junk(c):
+                    if not ForumImageProcessor.is_junk(c):
                         final_src = c
                         break
 
                 if not final_src and src:
                     final_src = src
 
-            if not final_src or final_src.startswith(('data:', 'mailto:', 'javascript:')): return
+            if not final_src or final_src.startswith(('data:', 'mailto:', 'javascript:')):
+                return
 
             try:
                 if final_src.startswith("view-source:"):
@@ -577,7 +764,7 @@ class ImageProcessor:
 
                 full_url = urljoin(base_url, final_src.strip())
                 if "web.archive.org" in base_url and full_url.startswith("http://"):
-                     full_url = full_url.replace("http://", "https://", 1)
+                    full_url = full_url.replace("http://", "https://", 1)
 
                 if "/avatar" in full_url or "/avatars/" in full_url:
                     return
@@ -585,26 +772,72 @@ class ImageProcessor:
                 if not re.search(r'\.(jpe?g|png|webp|gif|bmp)(\?|$)', full_url, re.IGNORECASE) and "attachments" not in full_url and "image" not in full_url:
                     return
 
-                # XenForo attachment viewer URLs often look like /attachments/<slug>.<id>/
                 viewer_url = None
+                attachment_base = None
+                if "/attachments/" in full_url:
+                    attachment_base = full_url.split("?", 1)[0]
+
                 if link_href and re.search(r'/attachments/[^/]+\.\d+/?', link_href):
                     viewer_url = urljoin(base_url, link_href.strip())
-                elif "/attachments/" in full_url and "d3/attachments" not in full_url:
-                    viewer_url = full_url
+                elif attachment_base:
+                    viewer_url = attachment_base
 
                 attach_target = viewer_url or full_url
+                # Direct rewrite if preloaded asset exists
+                for key_candidate in (full_url, attachment_base, viewer_url):
+                    if key_candidate and key_candidate in preload_map:
+                        asset = preload_map[key_candidate]
+                        img_tag['src'] = asset.filename
+                        for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
+                            if img_tag.has_attr(attr):
+                                del img_tag[attr]
+                        img_tag['class'] = 'epub-image'
+                        caption_text = ImageProcessor.find_caption(img_tag)
+                        parent = img_tag.parent
+                        if caption_text and parent.name != 'figure':
+                            figure = soup.new_tag('figure', attrs={'class': 'embedded-figure'})
+                            img_tag.wrap(figure)
+                            figcaption = soup.new_tag('figcaption')
+                            figcaption.string = caption_text
+                            figure.append(figcaption)
+                        return
 
-                existing = next((a for a in book_assets if a.original_url == full_url), None)
+                def _matches_asset(a):
+                    if a.original_url == full_url: return True
+                    if a.original_url and "?" in a.original_url and a.original_url.split("?",1)[0] == full_url.split("?",1)[0]:
+                        return True
+                    if viewer_url and a.original_url and a.original_url == viewer_url:
+                        return True
+                    if viewer_url and a.original_url and "?" in a.original_url and a.original_url.split("?",1)[0] == viewer_url.split("?",1)[0]:
+                        return True
+                    if viewer_url and a.viewer_url and a.viewer_url == viewer_url: return True
+                    if viewer_url and a.viewer_url and "?" in a.viewer_url and a.viewer_url.split("?",1)[0] == viewer_url.split("?",1)[0]:
+                        return True
+                    canonical = getattr(a, "canonical_url", None)
+                    if canonical and canonical == full_url: return True
+                    if canonical and "?" in full_url and canonical == full_url.split("?",1)[0]: return True
+                    return False
+
+                existing = next((a for a in book_assets if _matches_asset(a)), None)
                 if existing:
                     img_tag['src'] = existing.filename
-                    for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding']:
-                         if img_tag.has_attr(attr): del img_tag[attr]
+                    for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
+                        if img_tag.has_attr(attr):
+                            del img_tag[attr]
                     return
 
-                # Use preloaded assets from source (sent by extension)
                 preload_match = None
                 for a in preloaded_assets:
-                    if a.get("original_url") == full_url or (viewer_url and a.get("viewer_url") == viewer_url):
+                    orig = a.get("original_url")
+                    view = a.get("viewer_url")
+                    canonical = a.get("canonical_url")
+                    def same(u, v):
+                        if not u or not v: return False
+                        if u == v: return True
+                        if "?" in u and u.split("?",1)[0] == v: return True
+                        if "?" in v and v.split("?",1)[0] == u: return True
+                        return False
+                    if same(orig, full_url) or same(viewer_url, view) or same(canonical, full_url) or same(canonical, viewer_url):
                         preload_match = a
                         break
 
@@ -620,7 +853,8 @@ class ImageProcessor:
                     if data_bytes:
                         fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(full_url).path))[0])
                         ext = os.path.splitext(fname_base)[1] or ".img"
-                        if len(fname_base) < 3: fname_base = f"img_{abs(hash(full_url))}"
+                        if len(fname_base) < 3:
+                            fname_base = f"img_{abs(hash(full_url))}"
                         count = 0
                         fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}{ext}"
                         while any(a.filename == fname for a in book_assets):
@@ -631,11 +865,12 @@ class ImageProcessor:
                         book_assets.append(asset)
                         img_tag['src'] = fname
                         for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
-                            if img_tag.has_attr(attr): del img_tag[attr]
+                            if img_tag.has_attr(attr):
+                                del img_tag[attr]
                         img_tag['class'] = 'epub-image'
                         return
 
-                headers, data, err = await ImageProcessor.fetch_image_data(session, attach_target, referer=base_url, viewer_url=viewer_url)
+                headers, data, err = await ForumImageProcessor.fetch_image_data(session, attach_target, referer=base_url, viewer_url=viewer_url)
                 if err:
                     return
 
@@ -645,7 +880,8 @@ class ImageProcessor:
                     return
 
                 fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(full_url).path))[0])
-                if len(fname_base) < 3: fname_base = f"img_{abs(hash(full_url))}"
+                if len(fname_base) < 3:
+                    fname_base = f"img_{abs(hash(full_url))}"
 
                 count = 0
                 fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}{ext}"
@@ -659,7 +895,8 @@ class ImageProcessor:
 
                 img_tag['src'] = fname
                 for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
-                     if img_tag.has_attr(attr): del img_tag[attr]
+                    if img_tag.has_attr(attr):
+                        del img_tag[attr]
                 img_tag['class'] = 'epub-image'
 
                 caption_text = ImageProcessor.find_caption(img_tag)
@@ -671,12 +908,14 @@ class ImageProcessor:
                     figcaption.string = caption_text
                     figure.append(figcaption)
 
-            except Exception as e: log.debug(f"Image process error {src}: {e}")
+            except Exception as e:
+                log.debug(f"Image process error {src}: {e}")
 
         for img in img_tags:
             tasks.append(_process_tag(img))
 
-        if tasks: await tqdm_asyncio.gather(*tasks, desc="Optimizing Images", unit="img", leave=False)
+        if tasks:
+            await tqdm_asyncio.gather(*tasks, desc="Optimizing Images", unit="img", leave=False)
 
 # --- Drivers ---
 
@@ -716,7 +955,7 @@ class SubstackDriver(BaseDriver):
         assets = []
         if not options.no_images:
             base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
-            await ImageProcessor.process_images(session, body_soup, base, assets, preloaded_assets=source.assets)
+            await ImageProcessor.process_images(session, body_soup, base, assets)
 
         title = data['title'] or "Substack Article"
         chapter_html = body_soup.prettify()
@@ -919,7 +1158,7 @@ class GenericDriver(BaseDriver):
              log.info("Detected Substack metadata on custom domain. Switching to SubstackDriver.")
              return await SubstackDriver().prepare_book_data(source, session, options)
         # Detect XenForo/forum markers even on non-standard paths
-        if 'data-template="thread_view"' in raw_html or 'xenforo' in raw_html.lower():
+        if source.is_forum or 'data-template="thread_view"' in raw_html or 'xenforo' in raw_html.lower():
              log.info("Detected forum/thread template. Switching to ForumDriver.")
              return await ForumDriver().prepare_book_data(source, session, options)
 
@@ -930,7 +1169,7 @@ class GenericDriver(BaseDriver):
         assets = []
         if not options.no_images:
             base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
-            await ImageProcessor.process_images(session, body_soup, base, assets, preloaded_assets=source.assets)
+            await ImageProcessor.process_images(session, body_soup, base, assets)
 
         chapter_html = body_soup.prettify()
         meta_html = f"""<div class="post-meta">
@@ -985,7 +1224,7 @@ class HackerNewsDriver(BaseDriver):
                     body = soup.body if soup.body else soup
                     if not options.no_images:
                         base = art_data.get('archive_url') if art_data.get('was_archived') else article_url
-                        await ImageProcessor.process_images(session, body, base, assets, preloaded_assets=source.assets)
+                        await ImageProcessor.process_images(session, body, base, assets)
                     art_html = body.prettify()
                     meta_info = f"<p><strong>Article Author:</strong> {art_data['author']}</p>" if art_data['author'] else ""
                     if art_data['was_archived']: meta_info += f"<p class='archive-notice'>Archived: <a href='{art_data['archive_url']}'>Link</a></p>"
@@ -1068,7 +1307,7 @@ class RedditDriver(BaseDriver):
                 decoded = html.unescape(selftext_html)
                 soup = BeautifulSoup(decoded, 'html.parser')
                 if not options.no_images:
-                    await ImageProcessor.process_images(session, soup, source.url, assets, preloaded_assets=source.assets)
+                    await ImageProcessor.process_images(session, soup, source.url, assets)
                 article_html = soup.prettify()
             elif link_url and not link_url.startswith(("https://www.reddit.com", "https://old.reddit.com", "https://redd.it")):
                 art_data = await ArticleExtractor.get_article_content(session, link_url, force_archive=options.archive)
@@ -1078,7 +1317,7 @@ class RedditDriver(BaseDriver):
                     body = soup.body if soup.body else soup
                     if not options.no_images:
                         base = art_data.get('archive_url') if art_data.get('was_archived') else link_url
-                        await ImageProcessor.process_images(session, body, base, assets, preloaded_assets=source.assets)
+                        await ImageProcessor.process_images(session, body, base, assets)
                     article_html = body.prettify()
                 else:
                     article_html = f"<p>Original link: <a href=\"{link_url}\">{link_url}</a></p>"
@@ -1177,6 +1416,50 @@ class ForumDriver(BaseDriver):
         page = 1
         seen_pages = set()
 
+        # Seed preloaded assets once so they are available for every page
+        if source.assets:
+            seeded = 0
+            for a in source.assets:
+                raw = a.get("content")
+                if isinstance(raw, str):
+                    import base64
+                    try:
+                        raw = base64.b64decode(raw)
+                    except Exception:
+                        raw = None
+                if not raw:
+                    continue
+                url_like = a.get("canonical_url") or a.get("original_url") or a.get("viewer_url") or ""
+                if not isinstance(url_like, str) or not url_like.startswith("http"):
+                    continue
+                parsed = urlparse(url_like)
+                path_val = parsed.path if parsed else ""
+                mime = a.get("media_type") or a.get("content_type") or "image/jpeg"
+                fname_base = sanitize_filename(os.path.splitext(os.path.basename(path_val))[0])
+                if len(fname_base) < 3:
+                    fname_base = f"img_{abs(hash(a.get('original_url') or a.get('viewer_url') or seeded))}"
+                ext = os.path.splitext(path_val)[1]
+                if not ext or not ext.startswith("."):
+                    ext = mimetypes.guess_extension(mime) or ".img"
+                fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}{ext}"
+                count = 0
+                while any(existing.filename == fname for existing in assets):
+                    count += 1
+                    fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}_{count}{ext}"
+                uid = f"img_{abs(hash(fname))}"
+                alt_urls = []
+                viewer = a.get("viewer_url")
+                canonical = a.get("canonical_url")
+                orig = a.get("original_url")
+                for u in (orig, viewer, canonical):
+                    if u and isinstance(u, str):
+                        alt_urls.append(u)
+                        if "?" in u:
+                            alt_urls.append(u.split("?", 1)[0])
+                assets.append(ImageAsset(uid=uid, filename=fname, media_type=mime, content=raw, original_url=url_like, alt_urls=alt_urls))
+                seeded += 1
+            log.info(f"Seeded {seeded} preloaded assets into EPUB.")
+
         while True:
             if target_pages:
                 if not pages_sequence:
@@ -1202,9 +1485,14 @@ class ForumDriver(BaseDriver):
             if not title:
                 title = self._extract_title(soup, base_url)
 
+            if source.assets and page == 1:
+                log.info(f"Preloaded assets received: {len(source.assets)}")
+                for a in source.assets[:3]:
+                    log.info(f"Asset sample original={a.get('original_url')} viewer={a.get('viewer_url')} canonical={a.get('canonical_url')} type={a.get('content_type')}")
+
             if not options.no_images:
                 base_for_imgs = final_url or base_url
-                await ImageProcessor.process_images(session, soup, base_for_imgs, assets, preloaded_assets=source.assets)
+                await ForumImageProcessor.process_images(session, soup, base_for_imgs, assets, preloaded_assets=source.assets)
 
             posts = self._extract_posts(soup)
             if posts:
@@ -1229,6 +1517,44 @@ class ForumDriver(BaseDriver):
         if not page_blocks:
             log.error("Forum extraction produced no posts.")
             return None
+
+        if source.assets:
+            log.info(f"Preloaded assets received: {len(source.assets)}")
+            for a in source.assets[:3]:
+                log.info(f"Asset sample original={a.get('original_url')} viewer={a.get('viewer_url')} canonical={a.get('canonical_url')} type={a.get('content_type')}")
+
+        # Seed preloaded assets into book_assets to avoid URL-matching misses
+        if source.assets:
+            for a in source.assets:
+                raw = a.get("content")
+                if isinstance(raw, str):
+                    import base64
+                    try:
+                        raw = base64.b64decode(raw)
+                    except Exception:
+                        raw = None
+                if not raw:
+                    continue
+                mime = a.get("media_type") or a.get("content_type") or "image/jpeg"
+                url_like = a.get("canonical_url") or a.get("original_url") or a.get("viewer_url") or ""
+                if isinstance(url_like, str):
+                    parsed = urlparse(url_like)
+                else:
+                    parsed = url_like
+                path_val = parsed.path if parsed else ""
+                fname_base = sanitize_filename(os.path.splitext(os.path.basename(path_val))[0])
+                if len(fname_base) < 3:
+                    fname_base = f"img_{abs(hash(a.get('original_url') or a.get('viewer_url') or len(assets)))}"
+                ext = os.path.splitext(fname_base)[1]
+                if not ext or not ext.startswith("."):
+                    ext = mimetypes.guess_extension(mime) or ".img"
+                fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}{ext}"
+                count = 0
+                while any(existing.filename == fname for existing in assets):
+                    count += 1
+                    fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}_{count}{ext}"
+                uid = f"img_{abs(hash(fname))}"
+                assets.append(ImageAsset(uid=uid, filename=fname, media_type=mime, content=raw, original_url=a.get("original_url") or a.get("canonical_url") or a.get("viewer_url") or ""))
 
         chapter_html = self._render_thread_html(title or "Forum Thread", source.url, page_blocks)
         chapter = Chapter(
@@ -1443,9 +1769,9 @@ class EpubWriter:
         pygments_style = HtmlFormatter(style='default').get_style_defs('.codehilite')
         base_css = """
             body { font-family: sans-serif; margin: 0.5em; background-color: #fdfdfd; line-height: 1.5; }
-            .epub-image { max-width: 100%; max-height: 60vh; height: auto; display: block; margin: 4px auto; }
-            figure { margin: 0.2em 0; text-align: center; }
-            figcaption { font-size: 0.85em; color: #666; font-style: italic; margin-top: 0.1em; }
+            .epub-image { max-width: 100%; max-height: 60vh; height: auto; display: block; margin: 2px 0; }
+            figure { margin: 0; text-align: center; }
+            figcaption { font-size: 0.8em; color: #666; font-style: italic; margin-top: 0; }
             .post-meta { background: #f5f5f5; padding: 10px; margin-bottom: 20px; border-radius: 5px; font-size: 0.9em; }
             .thread-container { margin-top: 25px; padding-top: 15px; border-top: 1px solid #ddd; }
             .comment-header { display: table; width: 100%; table-layout: auto; border-bottom: 1px solid #eee; margin-bottom: 4px; background-color: #f9f9f9; border-radius: 4px; }
@@ -1457,13 +1783,13 @@ class EpubWriter:
             .nav-btn.ghost { visibility: hidden; }
             .comment-body { margin-top: 2px; }
             pre { background: #f0f0f0; padding: 10px; overflow-x: auto; font-size: 0.9em; }
-            p { margin-top: 0; margin-bottom: 0.8em; }
-            .forum-post { border: 1px solid #e0e0e0; border-radius: 6px; padding: 8px; margin-bottom: 12px; background: #fff; }
+            p { margin-top: 0; margin-bottom: 0.4em; }
+            .forum-post { border: 1px solid #e0e0e0; border-radius: 6px; padding: 6px; margin-bottom: 8px; background: #fff; }
             .forum-post-header { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 6px; font-size: 0.95em; color: #333; }
             .forum-author { color: #222; }
             .forum-time { color: #777; font-weight: 400; font-size: 0.9em; }
             .forum-post-body { font-size: 0.97em; color: #222; }
-            .page-label { margin: 18px 0 10px 0; padding: 8px 10px; background: #eef5ff; border-left: 3px solid #4a7bd4; font-weight: 600; border-radius: 4px; }
+            .page-label { margin: 14px 0 8px 0; padding: 6px 8px; background: #eef5ff; border-left: 3px solid #4a7bd4; font-weight: 600; border-radius: 4px; }
         """ + pygments_style
         if custom_css: base_css += f"\n{custom_css}"
 
@@ -1501,32 +1827,32 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
 
     async def safe_process(source):
         async with GLOBAL_SEMAPHORE:
-             local_session = session
-             if source.cookies:
-                 local_session = aiohttp.ClientSession(timeout=REQUEST_TIMEOUT, cookies=source.cookies)
-                 setattr(local_session, "_extra_cookies", source.cookies)
-            # preload assets if provided (from extension)
-             preloaded_assets = source.assets or []
-             driver = None
-             parsed = urlparse(source.url)
-             if "news.ycombinator.com" in source.url:
-                 driver = HackerNewsDriver()
-             elif "reddit.com" in parsed.netloc or parsed.netloc.endswith("redd.it"):
-                 driver = RedditDriver()
-             elif "substack.com" in source.url or "/p/" in parsed.path:
-                 driver = SubstackDriver()
-             elif "threads" in parsed.path or "threads" in parsed.query or "threads" in source.url:
-                 driver = ForumDriver()
-             else:
-                 driver = GenericDriver()
-             try:
-                 return await driver.prepare_book_data(source, local_session, options)
-             except Exception as e:
-                 log.exception(f"Failed to process {source.url}: {e}")
-                 return None
-             finally:
-                 if local_session is not session:
-                     await local_session.close()
+            driver = None
+            parsed = urlparse(source.url)
+            if source.is_forum:
+                driver = ForumDriver()
+            elif "news.ycombinator.com" in source.url:
+                driver = HackerNewsDriver()
+            elif "reddit.com" in parsed.netloc or parsed.netloc.endswith("redd.it"):
+                driver = RedditDriver()
+            elif "substack.com" in source.url or "/p/" in parsed.path:
+                driver = SubstackDriver()
+            else:
+                driver = GenericDriver()
+
+            local_session = session
+            if isinstance(driver, ForumDriver) and source.cookies:
+                local_session = aiohttp.ClientSession(timeout=REQUEST_TIMEOUT, cookies=source.cookies)
+                setattr(local_session, "_extra_cookies", source.cookies)
+
+            try:
+                return await driver.prepare_book_data(source, local_session, options)
+            except Exception as e:
+                log.exception(f"Failed to process {source.url}: {e}")
+                return None
+            finally:
+                if local_session is not session:
+                    await local_session.close()
 
     results = await tqdm_asyncio.gather(*[safe_process(s) for s in sources], desc="Processing URLs")
     return [b for b in results if b]
@@ -1577,6 +1903,7 @@ async def async_main():
     parser.add_argument("--max-posts", type=int, default=None, help="Max forum posts to fetch")
     parser.add_argument("--pages", help="Forum pages to fetch (e.g., 1,3-5)")
     parser.add_argument("--cookie-file", help="Netscape-format cookie file for auth-gated content")
+    parser.add_argument("--forum", action="store_true", help="Treat URLs as forum threads (use forum driver)")
     parser.add_argument("--css", help="Custom CSS file")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
@@ -1604,7 +1931,7 @@ async def async_main():
     )
 
     # Load cookies once if provided
-    cookie_entries = load_cookie_file(args.cookie_file) if args.cookie_file else []
+    cookie_entries = load_cookie_file(args.cookie_file) if (args.cookie_file and args.forum) else []
 
     def cookies_for_url(u: str) -> Optional[Dict[str, str]]:
         if not cookie_entries: return None
@@ -1617,7 +1944,15 @@ async def async_main():
         return jar or None
 
     # Convert URLs to Sources (CLI doesn't support HTML injection)
-    sources = [Source(url=u, html=None, cookies=cookies_for_url(u)) for u in urls]
+    sources = []
+    for u in urls:
+        sources.append(Source(
+            url=u,
+            html=None,
+            cookies=cookies_for_url(u) if args.forum else None,
+            assets=None,
+            is_forum=args.forum
+        ))
 
     async with get_session() as session:
         processed_books = await process_urls(sources, options, session)
