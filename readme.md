@@ -72,7 +72,9 @@ uv run web_to_epub.py "https://www.trek-lite.com/index.php?threads/arcdome-1.152
 ---
 
 ## 🔄 Updates
-- **Forum attachment reliability (latest):** Extension now strips URL fragments to hit real page 2/3, runs asset fetching in the background after the popup closes, filters avatars/placeholders, guards lazy lightbox nodes, and retries attachment fetches. Solved: missing XenForo images on later pages and attachment duplication.
+- **Forum attachment reliability (latest):**
+  - **What was broken:** Page fragments (`#replies`) kept every fetch on page 1; popup closed before fetch finished; discovery crashed on lightbox nodes without `closest`; “enough assets” skipped re-fetch when only avatars/1x1s were present; 409/redirect fetches aborted; attachments on page 2/3 never entered the preload map, causing misses/dupes.
+  - **Fixes applied:** Strip fragments before building `page-N` URLs so pages 2/3 load; move all asset fetching to background after the popup closes; always re-fetch/merge assets and dedupe by URL instead of early-skipping; filter strictly to `/attachments/`, skip avatars/1x1/data GIFs; expand lightbox selectors (`[data-lb-*]`, `.bbImage`, `a.attachment`, `[data-attachment-id]`) with guards for missing `closest`; binary fetch uses `cache: reload` and retries query-stripped URLs on 409/opaque redirects. Result: all post attachments across pages are discovered and reused without duplication.
 - **Reddit Driver (new):** Reddit/old.reddit/redd.it links now fetch via the JSON API (`raw_json=1`), render self-posts or linked articles, and include threaded comments with navigation. Works in both CLI and the Firefox extension via the existing FastAPI backend.
 - **Forum Driver & Attachments:** Forum threads (e.g., XenForo) now support page ranges, asset preloading from the browser, and external images. The Firefox extension can fetch gated attachments with your session cookies and embed them into EPUBs.
 
