@@ -1777,12 +1777,7 @@ class ForumDriver(BaseDriver):
         # XenForo style messages
         containers = soup.select("article.message.message--post, li.message, article.message")
         if not containers:
-            containers = soup.find_all(
-                lambda tag: tag.get("class")
-                and (tag.has_attr("id") or tag.has_attr("data-content") or tag.has_attr("data-author"))
-                and any("message" in c for c in tag.get("class"))
-                and not any(cls in ("message-body", "message-content", "messageContent") for cls in tag.get("class"))
-            )
+            containers = soup.find_all(lambda tag: tag.get("class") and any("message" in c for c in tag.get("class")))
         for c in containers:
             pid_raw = c.get("id") or c.get("data-content") or ""
             if pid_raw in ("messageList",):
