@@ -1923,11 +1923,11 @@ def format_comment_html(comment_data, formatter, depth=0):
 class EpubWriter:
     @staticmethod
     def write(book_data: BookData, output_path: str, custom_css: str = None):
-            book = epub.EpubBook()
-            book.set_identifier(book_data.uid)
-            book.set_title(book_data.title)
-            book.set_language(book_data.language)
-            book.add_author(book_data.author)
+        book = epub.EpubBook()
+        book.set_identifier(book_data.uid)
+        book.set_title(book_data.title)
+        book.set_language(book_data.language)
+        book.add_author(book_data.author)
 
         pygments_style = HtmlFormatter(style='default').get_style_defs('.codehilite')
         base_css = """
