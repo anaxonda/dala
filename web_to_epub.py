@@ -1712,25 +1712,36 @@ class ForumDriver(BaseDriver):
 
     def _extract_posts(self, soup):
         posts = []
+        seen_ids = set()
         # XenForo style messages
-        containers = soup.select("article.message.message--post")
+        containers = soup.select("article.message.message--post, li.message, article.message")
         if not containers:
             containers = soup.find_all(lambda tag: tag.get("class") and any("message" in c for c in tag.get("class")))
         for c in containers:
-            pid = c.get("id") or c.get("data-content") or f"post_{len(posts)+1}"
-            anchor_id = sanitize_filename(pid) if pid else f"post_{len(posts)+1}"
+            pid_raw = c.get("id") or c.get("data-content") or ""
+            if pid_raw in ("messageList",):
+                continue
+            anchor_id = sanitize_filename(pid_raw) if pid_raw else f"post_{len(posts)+1}"
             num_id = None
             try:
-                m = re.search(r'(\d+)', pid)
+                m = re.search(r'(\d+)', pid_raw)
                 if m: num_id = m.group(1)
             except Exception:
                 pass
+            key = anchor_id or num_id
+            if key and key in seen_ids:
+                continue
+            seen_ids.add(key)
+
             author = None
             author_tag = c.find(lambda t: t.get("class") and any("username" in x or "author" in x for x in t.get("class")))
             if not author and c.has_attr("data-author"):
                 author = c.get("data-author")
             if author_tag:
                 author = author_tag.get_text(strip=True)
+            if author and author.endswith(","):
+                author = author.rstrip(",").strip()
+
             content_tag = c.select_one(".message-body") or c.select_one(".message-content") or c.select_one(".messageContent")
             if not content_tag:
                 content_tag = c.find(lambda t: t.get("class") and any("messageContent" in x or "bbWrapper" in x or "content" == x for x in t.get("class")))
@@ -1741,7 +1752,7 @@ class ForumDriver(BaseDriver):
             if time_tag:
                 time_val = time_tag.get("datetime") or time_tag.get("title") or time_tag.get_text(strip=True)
             posts.append({
-                "id": pid,
+                "id": pid_raw or anchor_id,
                 "anchor_id": anchor_id,
                 "numeric_id": num_id,
                 "author": author or "Anonymous",
@@ -1813,19 +1824,26 @@ class ForumDriver(BaseDriver):
                 return html_snippet
             try:
                 soup = BeautifulSoup(html_snippet, 'html.parser')
-                for a in soup.find_all("a", class_=lambda x: x and "bbCodeBlock-sourceJump" in x):
+                links = soup.find_all("a")
+                for a in links:
+                    cls = " ".join(a.get("class", [])) if a.get("class") else ""
                     target = None
-                    sel = a.get("data-content-selector")
-                    if sel and isinstance(sel, str):
-                        sel = sel.lstrip("#")
-                        if sel:
-                            target = sel
-                    if not target:
-                        href = a.get("href")
-                        if href:
-                            m = re.search(r'id=(\d+)', href)
-                            if m:
-                                target = m.group(1)
+                    if "bbCodeBlock-sourceJump" in cls or "AttributionLink" in cls:
+                        sel = a.get("data-content-selector")
+                        if sel and isinstance(sel, str):
+                            sel = sel.lstrip("#")
+                            if sel:
+                                target = sel
+                        if not target:
+                            href = a.get("href")
+                            if href:
+                                m = re.search(r'id=(\d+)', href)
+                                if m:
+                                    target = m.group(1)
+                                else:
+                                    m2 = re.search(r'post-(\d+)', href)
+                                    if m2:
+                                        target = m2.group(1)
                     if target and target in anchor_map:
                         anchor = anchor_map[target]
                         a['href'] = f"#p_{anchor}"
