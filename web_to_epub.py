@@ -659,6 +659,48 @@ class ForumImageProcessor:
     @staticmethod
     def _normalize_for_match(url: str) -> Optional[str]:
         return normalize_url_for_matching(url) or None
+
+    @staticmethod
+    def _strip_forum_img_attrs(img_tag: Tag) -> None:
+        """Remove forum/lightbox-specific attributes before styling the image."""
+        attrs_to_remove = [
+            'srcset', 'data-src', 'data-srcset', 'data-url', 'data-lazy',
+            'loading', 'decoding', 'style', 'class', 'width', 'height',
+            'data-zoom-target', 'title', 'data-lb-id', 'data-lb-src',
+            'data-lb-single-image', 'data-lb-container-zoom', 'data-lb-trigger',
+            'data-xf-init'
+        ]
+        for attr in attrs_to_remove:
+            if img_tag.has_attr(attr):
+                del img_tag[attr]
+
+    @staticmethod
+    def _cleanup_lightbox_wrappers(img_tag: Tag) -> None:
+        """Unwrap XenForo lightbox containers, leaving only img-block + image."""
+        if not img_tag:
+            return
+        wrapper = img_tag.parent
+        if not wrapper or wrapper.name != "div" or "img-block" not in (wrapper.get("class") or []):
+            return
+        container = wrapper.parent
+        if not container or container.name != "div":
+            return
+        classes = set(container.get("class") or [])
+        data_xf_init = container.get("data-xf-init", "")
+        if classes.intersection({"lazyloadPreSize", "lbContainer", "lbContainer--inline"}) or "lightbox" in data_xf_init:
+            for zoomer in container.find_all("div", class_=re.compile(r"lbContainer-zoomer")):
+                zoomer.decompose()
+            wrapper.extract()
+            container.replace_with(wrapper)
+
+    @staticmethod
+    def _finalize_image_tag(soup: BeautifulSoup, img_tag: Tag, caption_text: Optional[str]) -> None:
+        ForumImageProcessor._strip_forum_img_attrs(img_tag)
+        img_tag['class'] = 'epub-image'
+        if caption_text is None:
+            caption_text = ImageProcessor.find_caption(img_tag)
+        ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
+        ForumImageProcessor._cleanup_lightbox_wrappers(img_tag)
     @staticmethod
     def is_junk(url: str) -> bool:
         if not url:
@@ -928,12 +970,8 @@ class ForumImageProcessor:
 
                 if matched_asset:
                     img_tag['src'] = matched_asset.filename
-                    for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
-                        if img_tag.has_attr(attr):
-                            del img_tag[attr]
-                    img_tag['class'] = 'epub-image'
                     caption_text = ImageProcessor.find_caption(img_tag)
-                    ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
+                    ForumImageProcessor._finalize_image_tag(soup, img_tag, caption_text)
                     return
                 else:
                     log.warning(f"✗ No preload match for {full_url[:100]}")
@@ -957,12 +995,8 @@ class ForumImageProcessor:
                 existing = next((a for a in book_assets if _matches_asset(a)), None)
                 if existing:
                     img_tag['src'] = existing.filename
-                    for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
-                        if img_tag.has_attr(attr):
-                            del img_tag[attr]
-                    img_tag['class'] = 'epub-image'
                     caption_text = ImageProcessor.find_caption(img_tag)
-                    ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
+                    ForumImageProcessor._finalize_image_tag(soup, img_tag, caption_text)
                     return
 
                 preload_match = None
@@ -1001,12 +1035,8 @@ class ForumImageProcessor:
                         if hashed and hashed in hash_map:
                             asset = hash_map[hashed]
                             img_tag['src'] = asset.filename
-                            for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
-                                if img_tag.has_attr(attr):
-                                    del img_tag[attr]
-                            img_tag['class'] = 'epub-image'
                             caption_text = ImageProcessor.find_caption(img_tag)
-                            ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
+                            ForumImageProcessor._finalize_image_tag(soup, img_tag, caption_text)
                             return
                         fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(full_url).path))[0])
                         ext = os.path.splitext(fname_base)[1] or ".img"
@@ -1031,10 +1061,8 @@ class ForumImageProcessor:
                         for u in asset.alt_urls or []:
                             add_to_map(u, asset)
                         img_tag['src'] = fname
-                        for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
-                            if img_tag.has_attr(attr):
-                                del img_tag[attr]
-                        img_tag['class'] = 'epub-image'
+                        caption_text = ImageProcessor.find_caption(img_tag)
+                        ForumImageProcessor._finalize_image_tag(soup, img_tag, caption_text)
                         return
 
                 log.debug(f"Forum fetch image {full_url} (viewer={viewer_url}) not found in preload_map")
@@ -1051,12 +1079,8 @@ class ForumImageProcessor:
                 if hashed and hashed in hash_map:
                     asset = hash_map[hashed]
                     img_tag['src'] = asset.filename
-                    for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
-                        if img_tag.has_attr(attr):
-                            del img_tag[attr]
-                    img_tag['class'] = 'epub-image'
                     caption_text = ImageProcessor.find_caption(img_tag)
-                    ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
+                    ForumImageProcessor._finalize_image_tag(soup, img_tag, caption_text)
                     return
 
                 alt_urls = [full_url]
@@ -1088,12 +1112,8 @@ class ForumImageProcessor:
                     add_to_map(u, asset)
 
                 img_tag['src'] = fname
-                for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
-                    if img_tag.has_attr(attr):
-                        del img_tag[attr]
-                img_tag['class'] = 'epub-image'
                 caption_text = ImageProcessor.find_caption(img_tag)
-                ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
+                ForumImageProcessor._finalize_image_tag(soup, img_tag, caption_text)
 
             except Exception as e:
                 log.debug(f"Image process error {src}: {e}")
