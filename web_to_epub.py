@@ -71,8 +71,8 @@ ALLOWED_IMAGE_MIMES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
 ARCHIVE_ORG_API_BASE = "https://archive.org/wayback/available"
 
 # Image Optimization Settings
-MAX_IMAGE_DIMENSION = 1200
-JPEG_QUALITY = 75
+MAX_IMAGE_DIMENSION = 1000
+JPEG_QUALITY = 65
 
 # Concurrency Control
 GLOBAL_SEMAPHORE = asyncio.Semaphore(2)
@@ -393,8 +393,14 @@ class ImageProcessor:
     def optimize_and_get_details(url, headers, data):
         if not data:
             return None, None, None, "No Data"
+        content_type = headers.get('Content-Type', '').split(';')[0].strip().lower()
+        # Bypass for tiny assets: don't waste cycles or risk inflating size
+        if len(data) < 12 * 1024:
+            if not content_type:
+                content_type = mimetypes.guess_type(url)[0] or 'application/octet-stream'
+            ext = mimetypes.guess_extension(content_type) or '.img'
+            return content_type, ext, data, None
         if not HAS_PILLOW:
-            content_type = headers.get('Content-Type', '').split(';')[0].strip().lower()
             ext = mimetypes.guess_extension(content_type) or '.img'
             return content_type, ext, data, None
 
@@ -405,19 +411,36 @@ class ImageProcessor:
                 if img.width < 20 or img.height < 20:
                     return None, None, None, "Tracking Pixel"
 
+                # Two-step downscale for very large images
                 if img.width > MAX_IMAGE_DIMENSION or img.height > MAX_IMAGE_DIMENSION:
+                    reduce_factor = max(1, int(max(img.width, img.height) / (MAX_IMAGE_DIMENSION * 2)))
+                    if reduce_factor > 1:
+                        img = img.reduce(reduce_factor)
                     img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), PillowImage.Resampling.LANCZOS)
+
+                # Animated GIF: keep as GIF
+                if img.format == 'GIF' and getattr(img, "is_animated", False):
+                    out_io = io.BytesIO()
+                    img.save(out_io, format='GIF', optimize=True)
+                    return 'image/gif', '.gif', out_io.getvalue(), None
+
+                # Preserve small PNGs to avoid JPEG artifacts
+                if img.format == 'PNG' and len(data) < 200 * 1024:
+                    out_io = io.BytesIO()
+                    img.save(out_io, format='PNG', optimize=True)
+                    return 'image/png', '.png', out_io.getvalue(), None
 
                 output_format = 'JPEG'
                 output_mime = 'image/jpeg'
                 output_ext = '.jpg'
 
-                if img.format == 'GIF' and getattr(img, "is_animated", False):
-                    output_format = 'GIF'
-                    output_mime = 'image/gif'
-                    output_ext = '.gif'
+                # WebP path: only when Pillow supports and not animated
+                if img.format == 'WEBP':
+                    output_format = 'WEBP'
+                    output_mime = 'image/webp'
+                    output_ext = '.webp'
 
-                if output_format == 'JPEG':
+                if output_format in ('JPEG', 'WEBP'):
                     if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
                         background = PillowImage.new("RGB", img.size, (255, 255, 255))
                         if img.mode == 'P':
@@ -428,10 +451,13 @@ class ImageProcessor:
                         img = img.convert('RGB')
 
                 out_io = io.BytesIO()
+                save_params = {"optimize": True}
                 if output_format == 'JPEG':
-                    img.save(out_io, format='JPEG', quality=JPEG_QUALITY, optimize=True)
-                else:
-                    img.save(out_io, format=output_format, optimize=True)
+                    save_params["quality"] = JPEG_QUALITY
+                    save_params["subsampling"] = "4:2:0"
+                if output_format == 'WEBP':
+                    save_params["quality"] = 70
+                img.save(out_io, format=output_format, **save_params)
 
                 return output_mime, output_ext, out_io.getvalue(), None
 
