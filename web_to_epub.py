@@ -832,6 +832,13 @@ class ForumImageProcessor:
             else:
                 pic.decompose()
 
+        # Remove iframe/video wrappers; keep a link instead
+        for media in soup.find_all(['iframe']):
+            href = media.get('src') or media.get('data-src')
+            link = soup.new_tag('a', href=href or '#')
+            link.string = href or "Embedded media"
+            media.replace_with(link)
+
         img_tags = soup.find_all('img')
         tasks = []
 
@@ -2060,7 +2067,10 @@ class EpubWriter:
         pygments_style = HtmlFormatter(style='default').get_style_defs('.codehilite')
         base_css = """
             body { font-family: sans-serif; margin: 0.5em; background-color: #fdfdfd; line-height: 1.5; }
-            .epub-image { max-width: 100%; max-height: 60vh; height: auto; display: block; margin: 2px 0; }
+            .img-block { margin: 0.5em 0; page-break-inside: avoid; break-inside: avoid; -webkit-column-break-inside: avoid; text-align: center; }
+            .img-block img { max-width: 100%; max-height: 70vh; height: auto; display: block; margin: 0 auto; object-fit: contain; }
+            .img-block .caption { margin: 0.25em 0 0; font-size: 0.9em; color: #555; }
+            .epub-image { max-width: 100%; height: auto; display: block; }
             figure { margin: 0; text-align: center; }
             figcaption { font-size: 0.8em; color: #666; font-style: italic; margin-top: 0; }
             .post-meta { background: #f5f5f5; padding: 10px; margin-bottom: 20px; border-radius: 5px; font-size: 0.9em; }
