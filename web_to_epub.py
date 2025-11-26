@@ -76,6 +76,23 @@ JPEG_QUALITY = 75
 # Concurrency Control
 GLOBAL_SEMAPHORE = asyncio.Semaphore(2)
 
+def normalize_url_for_matching(url: str) -> str:
+    """Create a canonical form for URL matching."""
+    if not url or not isinstance(url, str):
+        return ""
+    cleaned = url.replace("https://", "").replace("http://", "")
+    if cleaned.startswith("www."):
+        cleaned = cleaned[4:]
+    cleaned = cleaned.split("?", 1)[0].split("#", 1)[0]
+    cleaned = cleaned.rstrip("/")
+    return cleaned.lower()
+
+def urls_match(url1: str, url2: str) -> bool:
+    """Check if two URLs represent the same resource."""
+    if not url1 or not url2:
+        return False
+    return normalize_url_for_matching(url1) == normalize_url_for_matching(url2)
+
 # --- Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
@@ -539,6 +556,16 @@ class ImageProcessor:
                     log.debug(f"Skipped image {full_url}: {val_err}")
                     return
 
+                alt_urls = []
+                if "?" in full_url:
+                    alt_urls.append(full_url.split("?", 1)[0])
+                if viewer_url:
+                    alt_urls.append(viewer_url)
+                    if "?" in viewer_url:
+                        alt_urls.append(viewer_url.split("?", 1)[0])
+                if attachment_base and attachment_base not in alt_urls:
+                    alt_urls.append(attachment_base)
+
                 fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(full_url).path))[0])
                 if len(fname_base) < 3:
                     fname_base = f"img_{abs(hash(full_url))}"
@@ -550,7 +577,7 @@ class ImageProcessor:
                     fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}_{count}{ext}"
 
                 uid = f"img_{abs(hash(fname))}"
-                asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=full_url)
+                asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=full_url, alt_urls=alt_urls or None)
                 book_assets.append(asset)
 
                 img_tag['src'] = fname
@@ -579,6 +606,9 @@ class ImageProcessor:
 
 
 class ForumImageProcessor:
+    @staticmethod
+    def _normalize_for_match(url: str) -> Optional[str]:
+        return normalize_url_for_matching(url) or None
     @staticmethod
     def is_junk(url: str) -> bool:
         if not url:
@@ -684,30 +714,37 @@ class ForumImageProcessor:
         preloaded_assets = preloaded_assets or []
         # Map existing assets (pre-seeded in driver) to URLs for quick rewrites
         preload_map: Dict[str, ImageAsset] = {}
+
+        def add_to_map(url_val: str, asset_obj: Optional[ImageAsset]):
+            if not asset_obj or not url_val:
+                return
+            norm = normalize_url_for_matching(url_val)
+            if url_val:
+                preload_map[url_val] = asset_obj
+            if norm:
+                preload_map[norm] = asset_obj
+
         for asset in book_assets:
             urls = set()
-            if asset.original_url and isinstance(asset.original_url, str) and asset.original_url.startswith("http"):
+            if asset.original_url and isinstance(asset.original_url, str):
                 urls.add(asset.original_url)
-                if "?" in asset.original_url:
-                    urls.add(asset.original_url.split("?", 1)[0])
             if asset.alt_urls:
                 for u in asset.alt_urls:
-                    if isinstance(u, str) and u.startswith("http"):
+                    if isinstance(u, str):
                         urls.add(u)
-                        if "?" in u:
-                            urls.add(u.split("?", 1)[0])
             for u in urls:
-                preload_map[u] = asset
+                add_to_map(u, asset)
+
         # Add viewer/canonical hints from preloaded metadata to existing assets
         for a in preloaded_assets:
-            hint_urls = [a.get("original_url"), a.get("viewer_url"), a.get("canonical_url")]
-            hint_urls = [u for u in hint_urls if u and isinstance(u, str) and u.startswith("http")]
+            hint_urls = [a.get("original_url"), a.get("viewer_url"), a.get("canonical_url"), a.get("url"), a.get("src")]
+            hint_urls = [u for u in hint_urls if u and isinstance(u, str)]
             for h in hint_urls:
-                base_h = h.split("?", 1)[0] if "?" in h else h
-                match = preload_map.get(h) or preload_map.get(base_h)
-                if match:
-                    preload_map[h] = match
-                    preload_map[base_h] = match
+                add_to_map(h, preload_map.get(h) or preload_map.get(normalize_url_for_matching(h)))
+
+        if preload_map:
+            sample_keys = list(preload_map.keys())[:5]
+            log.info(f"Forum preload map size={len(preload_map)} sample={sample_keys}")
 
         for pic in soup.find_all('picture'):
             img = pic.find('img')
@@ -725,6 +762,8 @@ class ForumImageProcessor:
             src = img_tag.get('src')
             srcset = img_tag.get('srcset')
             data_src = img_tag.get('data-src')
+            data_url = img_tag.get('data-url')
+            data_lazy = img_tag.get('data-lazy')
             data_srcset = img_tag.get('data-srcset')
             link_href = None
             parent_link = img_tag.find_parent('a')
@@ -736,8 +775,9 @@ class ForumImageProcessor:
                 final_src = src
             else:
                 candidates = []
-                if data_src:
-                    candidates.append(data_src)
+                for cand in (data_src, data_lazy, data_url):
+                    if cand:
+                        candidates.append(cand)
                 if data_srcset:
                     candidates.extend(ImageProcessor.parse_srcset(data_srcset))
                 if srcset:
@@ -757,6 +797,7 @@ class ForumImageProcessor:
                 return
 
             try:
+                log.debug(f"Forum img candidate src={src} data-src={data_src} data-url={data_url} data-lazy={data_lazy} srcset={srcset} data-srcset={data_srcset}")
                 if final_src.startswith("view-source:"):
                     final_src = final_src.replace("view-source:", "", 1)
                 if link_href and link_href.startswith("view-source:"):
@@ -783,39 +824,56 @@ class ForumImageProcessor:
                     viewer_url = attachment_base
 
                 attach_target = viewer_url or full_url
-                # Direct rewrite if preloaded asset exists
-                for key_candidate in (full_url, attachment_base, viewer_url):
-                    if key_candidate and key_candidate in preload_map:
-                        asset = preload_map[key_candidate]
-                        img_tag['src'] = asset.filename
-                        for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
-                            if img_tag.has_attr(attr):
-                                del img_tag[attr]
-                        img_tag['class'] = 'epub-image'
-                        caption_text = ImageProcessor.find_caption(img_tag)
-                        parent = img_tag.parent
-                        if caption_text and parent.name != 'figure':
-                            figure = soup.new_tag('figure', attrs={'class': 'embedded-figure'})
-                            img_tag.wrap(figure)
-                            figcaption = soup.new_tag('figcaption')
-                            figcaption.string = caption_text
-                            figure.append(figcaption)
-                        return
+                matched_asset = None
+                urls_to_check = [full_url]
+                if viewer_url:
+                    urls_to_check.append(viewer_url)
+                if attachment_base:
+                    urls_to_check.append(attachment_base)
+
+                for check_url in urls_to_check:
+                    if check_url in preload_map:
+                        matched_asset = preload_map[check_url]
+                        log.info(f"✓ Exact match found for {check_url[:80]}")
+                        break
+                    norm_url = normalize_url_for_matching(check_url)
+                    if norm_url and norm_url in preload_map:
+                        matched_asset = preload_map[norm_url]
+                        log.info(f"✓ Normalized match found for {check_url[:80]}")
+                        break
+
+                if matched_asset:
+                    img_tag['src'] = matched_asset.filename
+                    for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
+                        if img_tag.has_attr(attr):
+                            del img_tag[attr]
+                    img_tag['class'] = 'epub-image'
+                    caption_text = ImageProcessor.find_caption(img_tag)
+                    parent = img_tag.parent
+                    if caption_text and parent.name != 'figure':
+                        figure = soup.new_tag('figure', attrs={'class': 'embedded-figure'})
+                        img_tag.wrap(figure)
+                        figcaption = soup.new_tag('figcaption')
+                        figcaption.string = caption_text
+                        figure.append(figcaption)
+                    return
+                else:
+                    log.warning(f"✗ No preload match for {full_url[:100]}")
+
+                def _url_same(lhs, rhs):
+                    norm_l = ForumImageProcessor._normalize_for_match(lhs)
+                    norm_r = ForumImageProcessor._normalize_for_match(rhs)
+                    return norm_l and norm_r and norm_l == norm_r
 
                 def _matches_asset(a):
-                    if a.original_url == full_url: return True
-                    if a.original_url and "?" in a.original_url and a.original_url.split("?",1)[0] == full_url.split("?",1)[0]:
-                        return True
-                    if viewer_url and a.original_url and a.original_url == viewer_url:
-                        return True
-                    if viewer_url and a.original_url and "?" in a.original_url and a.original_url.split("?",1)[0] == viewer_url.split("?",1)[0]:
-                        return True
-                    if viewer_url and a.viewer_url and a.viewer_url == viewer_url: return True
-                    if viewer_url and a.viewer_url and "?" in a.viewer_url and a.viewer_url.split("?",1)[0] == viewer_url.split("?",1)[0]:
-                        return True
-                    canonical = getattr(a, "canonical_url", None)
-                    if canonical and canonical == full_url: return True
-                    if canonical and "?" in full_url and canonical == full_url.split("?",1)[0]: return True
+                    candidates = [full_url, viewer_url, attachment_base]
+                    asset_urls = [a.original_url]
+                    if getattr(a, "alt_urls", None):
+                        asset_urls.extend([u for u in a.alt_urls if u])
+                    for cand in candidates:
+                        for au in asset_urls:
+                            if _url_same(cand, au):
+                                return True
                     return False
 
                 existing = next((a for a in book_assets if _matches_asset(a)), None)
@@ -824,6 +882,15 @@ class ForumImageProcessor:
                     for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
                         if img_tag.has_attr(attr):
                             del img_tag[attr]
+                    img_tag['class'] = 'epub-image'
+                    caption_text = ImageProcessor.find_caption(img_tag)
+                    parent = img_tag.parent
+                    if caption_text and parent.name != 'figure':
+                        figure = soup.new_tag('figure', attrs={'class': 'embedded-figure'})
+                        img_tag.wrap(figure)
+                        figcaption = soup.new_tag('figcaption')
+                        figcaption.string = caption_text
+                        figure.append(figcaption)
                     return
 
                 preload_match = None
@@ -831,13 +898,20 @@ class ForumImageProcessor:
                     orig = a.get("original_url")
                     view = a.get("viewer_url")
                     canonical = a.get("canonical_url")
+                    extra = a.get("url") or a.get("src")
                     def same(u, v):
                         if not u or not v: return False
                         if u == v: return True
                         if "?" in u and u.split("?",1)[0] == v: return True
                         if "?" in v and v.split("?",1)[0] == u: return True
                         return False
-                    if same(orig, full_url) or same(viewer_url, view) or same(canonical, full_url) or same(canonical, viewer_url):
+                    if any([
+                        same(orig, full_url), same(orig, viewer_url),
+        same(orig, attachment_base),
+                        same(view, full_url), same(view, viewer_url),
+                        same(canonical, full_url), same(canonical, viewer_url), same(canonical, attachment_base),
+                        same(extra, full_url), same(extra, viewer_url), same(extra, attachment_base)
+                    ]):
                         preload_match = a
                         break
 
@@ -861,8 +935,16 @@ class ForumImageProcessor:
                             count += 1
                             fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}_{count}{ext}"
                         uid = f"img_{abs(hash(fname))}"
-                        asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=data_bytes, original_url=full_url)
+                        alt_urls = []
+                        for u in [orig, view, canonical, extra, full_url, attachment_base, viewer_url]:
+                            if u and isinstance(u, str):
+                                alt_urls.append(u)
+                                if "?" in u:
+                                    alt_urls.append(u.split("?",1)[0])
+                        asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=data_bytes, original_url=full_url, alt_urls=list(dict.fromkeys([u for u in alt_urls if u])))
                         book_assets.append(asset)
+                        for u in asset.alt_urls or []:
+                            add_to_map(u, asset)
                         img_tag['src'] = fname
                         for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
                             if img_tag.has_attr(attr):
@@ -870,6 +952,7 @@ class ForumImageProcessor:
                         img_tag['class'] = 'epub-image'
                         return
 
+                log.debug(f"Forum fetch image {full_url} (viewer={viewer_url}) not found in preload_map")
                 headers, data, err = await ForumImageProcessor.fetch_image_data(session, attach_target, referer=base_url, viewer_url=viewer_url)
                 if err:
                     return
@@ -878,6 +961,16 @@ class ForumImageProcessor:
                 if val_err:
                     log.debug(f"Skipped image {full_url}: {val_err}")
                     return
+
+                alt_urls = [full_url]
+                if "?" in full_url:
+                    alt_urls.append(full_url.split("?", 1)[0])
+                if viewer_url:
+                    alt_urls.append(viewer_url)
+                    if "?" in viewer_url:
+                        alt_urls.append(viewer_url.split("?", 1)[0])
+                if attachment_base:
+                    alt_urls.append(attachment_base)
 
                 fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(full_url).path))[0])
                 if len(fname_base) < 3:
@@ -890,8 +983,10 @@ class ForumImageProcessor:
                     fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}_{count}{ext}"
 
                 uid = f"img_{abs(hash(fname))}"
-                asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=full_url)
+                asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=full_url, alt_urls=list(dict.fromkeys([u for u in alt_urls if u])))
                 book_assets.append(asset)
+                for u in asset.alt_urls or []:
+                    add_to_map(u, asset)
 
                 img_tag['src'] = fname
                 for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
@@ -1415,6 +1510,7 @@ class ForumDriver(BaseDriver):
 
         page = 1
         seen_pages = set()
+        seen_urls = set()
 
         # Seed preloaded assets once so they are available for every page
         if source.assets:
@@ -1473,13 +1569,18 @@ class ForumDriver(BaseDriver):
                 page += 1
                 continue
 
-            html_content, final_url = await fetch_with_retry(session, self._build_page_url(base_url, page), 'text')
+            page_url = self._build_page_url(base_url, page)
+            html_content, final_url = await fetch_with_retry(session, page_url, 'text')
             if not html_content:
                 if target_pages:
                     log.warning(f"Page {page} missing.")
                     continue
                 else:
                     break
+            if final_url in seen_urls:
+                log.info(f"Final URL for page {page} already seen. Stopping to avoid loop: {final_url}")
+                break
+            seen_urls.add(final_url)
 
             soup = BeautifulSoup(html_content, 'lxml')
             if not title:
@@ -1509,7 +1610,7 @@ class ForumDriver(BaseDriver):
             if target_pages:
                 continue
 
-            has_next = self._has_next_page(soup, page)
+            has_next = self._has_next_page(soup, page, final_url)
             if not has_next:
                 break
             page += 1
@@ -1517,44 +1618,6 @@ class ForumDriver(BaseDriver):
         if not page_blocks:
             log.error("Forum extraction produced no posts.")
             return None
-
-        if source.assets:
-            log.info(f"Preloaded assets received: {len(source.assets)}")
-            for a in source.assets[:3]:
-                log.info(f"Asset sample original={a.get('original_url')} viewer={a.get('viewer_url')} canonical={a.get('canonical_url')} type={a.get('content_type')}")
-
-        # Seed preloaded assets into book_assets to avoid URL-matching misses
-        if source.assets:
-            for a in source.assets:
-                raw = a.get("content")
-                if isinstance(raw, str):
-                    import base64
-                    try:
-                        raw = base64.b64decode(raw)
-                    except Exception:
-                        raw = None
-                if not raw:
-                    continue
-                mime = a.get("media_type") or a.get("content_type") or "image/jpeg"
-                url_like = a.get("canonical_url") or a.get("original_url") or a.get("viewer_url") or ""
-                if isinstance(url_like, str):
-                    parsed = urlparse(url_like)
-                else:
-                    parsed = url_like
-                path_val = parsed.path if parsed else ""
-                fname_base = sanitize_filename(os.path.splitext(os.path.basename(path_val))[0])
-                if len(fname_base) < 3:
-                    fname_base = f"img_{abs(hash(a.get('original_url') or a.get('viewer_url') or len(assets)))}"
-                ext = os.path.splitext(fname_base)[1]
-                if not ext or not ext.startswith("."):
-                    ext = mimetypes.guess_extension(mime) or ".img"
-                fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}{ext}"
-                count = 0
-                while any(existing.filename == fname for existing in assets):
-                    count += 1
-                    fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}_{count}{ext}"
-                uid = f"img_{abs(hash(fname))}"
-                assets.append(ImageAsset(uid=uid, filename=fname, media_type=mime, content=raw, original_url=a.get("original_url") or a.get("canonical_url") or a.get("viewer_url") or ""))
 
         chapter_html = self._render_thread_html(title or "Forum Thread", source.url, page_blocks)
         chapter = Chapter(
@@ -1589,12 +1652,16 @@ class ForumDriver(BaseDriver):
     def _build_page_url(self, base_url: str, page: int) -> str:
         if page <= 1:
             return base_url
-        if re.search(r'page-\d+', base_url):
-            return re.sub(r'page-\d+', f"page-{page}", base_url)
-        if '.' in base_url.split('/')[-1] and not base_url.endswith('.html'):
-            return f"{base_url}/page-{page}"
-        joiner = '&' if '?' in base_url else '?'
-        return f"{base_url}{joiner}page={page}"
+        parsed = urlparse(base_url)
+        path = parsed.path or ""
+        if re.search(r'page-\d+', path):
+            new_path = re.sub(r'page-\d+', f"page-{page}", path)
+        elif path.endswith('/'):
+            new_path = f"{path}page-{page}"
+        else:
+            new_path = f"{path}/page-{page}"
+        rebuilt = parsed._replace(path=new_path)
+        return rebuilt.geturl()
 
     def _extract_title(self, soup, url):
         og = soup.find("meta", attrs={"property": "og:title"})
@@ -1633,10 +1700,42 @@ class ForumDriver(BaseDriver):
             })
         return posts
 
-    def _has_next_page(self, soup, current_page: int) -> bool:
+    def _extract_page_number(self, href: str) -> Optional[int]:
+        if not href: return None
+        m = re.search(r'page[-=](\d+)', href, re.IGNORECASE)
+        if m:
+            try:
+                return int(m.group(1))
+            except Exception:
+                return None
+        return None
+
+    def _has_next_page(self, soup, current_page: int, current_url: str) -> bool:
+        if current_page > 500:
+            return False
         link = soup.find("link", rel="next")
         if link and link.get("href"):
+            maybe = self._extract_page_number(link.get("href"))
+            if maybe and maybe <= current_page:
+                return False
             return True
+        numeric_pages = []
+        for el in soup.select("li.pageNav-page, a.pageNav-page"):
+            try:
+                val = int(el.get_text(strip=True))
+                numeric_pages.append(val)
+            except Exception:
+                continue
+        max_num = max(numeric_pages) if numeric_pages else None
+        if max_num and current_page < max_num:
+            return True
+        jump_next = soup.select_one("a.pageNav-jump--next, a.pageNavSimple-el--next, a[rel='next']")
+        if jump_next and jump_next.get("href"):
+            maybe = self._extract_page_number(jump_next.get("href"))
+            if maybe and maybe <= current_page:
+                return False
+            return True
+        # Some themes only expose "Next" text; avoid infinite climb by capping at known max or a hard guard.
         anchors = soup.find_all("a")
         for a in anchors:
             txt = a.get_text(strip=True).lower()

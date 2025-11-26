@@ -405,10 +405,23 @@ async function preparePayload(urls, bundleTitle) {
     for (const url of urls) {
         let html = null;
         // Find a tab that matches this URL and is fully loaded
-        const match = allTabs.find(t => t.url === url && t.status === "complete");
+        const match = allTabs.find(t => t.url === url);
 
         if (match) {
             try {
+                if (match.status !== "complete") {
+                    console.log("⏳ Waiting for tab to fully load...");
+                    await new Promise(resolve => {
+                        const listener = (tabId, changeInfo) => {
+                            if (tabId === match.id && changeInfo.status === "complete") {
+                                browser.tabs.onUpdated.removeListener(listener);
+                                resolve();
+                            }
+                        };
+                        browser.tabs.onUpdated.addListener(listener);
+                    });
+                }
+                await new Promise(resolve => setTimeout(resolve, 2000));
                 // Inject script to steal DOM
                 const results = await browser.tabs.executeScript(match.id, {
                     code: "document.documentElement.outerHTML;"
@@ -469,7 +482,7 @@ async function safeDownloadSingle() {
 
         browser.runtime.sendMessage({ action: "download", payload: payload, isBundle: false });
         showStatus("Started in background...");
-        setTimeout(() => window.close(), 1500);
+        window.close();
     } catch (e) {
         showStatus("Error: " + e.message);
         console.error(e);
@@ -492,7 +505,7 @@ async function safeDownloadBundle() {
 
         browser.runtime.sendMessage({ action: "download", payload: payload, isBundle: true });
         showStatus("Bundle started...");
-        setTimeout(() => window.close(), 1500);
+        window.close();
     } catch (e) {
         showStatus("Error: " + e.message);
         console.error(e);

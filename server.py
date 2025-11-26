@@ -62,9 +62,19 @@ async def ping(): return {"status": "ok"}
 async def convert(req: ConversionRequest):
     print(f"📥 Received request: {len(req.sources)} sources")
     if req.sources:
-        for idx, s in enumerate(req.sources[:1]):
+        for idx, s in enumerate(req.sources):
             count_assets = len(s.assets) if s.assets else 0
             print(f"Source[{idx}] assets: {count_assets}")
+            if s.assets:
+                original_count = len(s.assets)
+                s.assets = [
+                    a for a in s.assets
+                    if a.get("original_url")
+                    and not str(a.get("original_url")).endswith("/")
+                    and a.get("original_url") != s.url
+                    and "image" in str(a.get("content_type", ""))
+                ]
+                print(f"Source[{idx}] assets: {original_count} -> {len(s.assets)} (after filtering)")
 
     options = core.ConversionOptions(
         no_comments=req.no_comments,

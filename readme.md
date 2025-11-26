@@ -72,6 +72,7 @@ uv run web_to_epub.py "https://www.trek-lite.com/index.php?threads/arcdome-1.152
 ---
 
 ## 🔄 Updates
+- **Forum attachment reliability (latest):** Extension now strips URL fragments to hit real page 2/3, runs asset fetching in the background after the popup closes, filters avatars/placeholders, guards lazy lightbox nodes, and retries attachment fetches. Solved: missing XenForo images on later pages and attachment duplication.
 - **Reddit Driver (new):** Reddit/old.reddit/redd.it links now fetch via the JSON API (`raw_json=1`), render self-posts or linked articles, and include threaded comments with navigation. Works in both CLI and the Firefox extension via the existing FastAPI backend.
 - **Forum Driver & Attachments:** Forum threads (e.g., XenForo) now support page ranges, asset preloading from the browser, and external images. The Firefox extension can fetch gated attachments with your session cookies and embed them into EPUBs.
 
@@ -198,6 +199,7 @@ Reading threaded conversations linearly is difficult.
 *   **Solution:** The Firefox extension preloads assets using the live browser session:
     * Scrapes post-body images (src/srcset/data-url) from the active tab.
     * Background-fetches forum pages/attachments with cookies; follows viewer pages and parses full-size URLs, and downloads external images (e.g., Flickr).
+*   **Latest Fix (multi-page reliability):** Asset fetch now runs entirely in the background after the popup closes, strips URL fragments so pages 2/3 load, filters out avatars/1x1s, guards lazy-load lightbox nodes, and retries attachment fetches when needed so all post images make it into the EPUB without duplication.
     * Sends assets to the server; core matches them and skips re-downloading.
 *   **Result:** Full-size forum attachments embed correctly; use the extension path for gated content (CLI alone cannot replicate browser-only tokens/headers).
 

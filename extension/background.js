@@ -23,7 +23,8 @@ browser.menus.onClicked.addListener(async (info, tab) => {
 // Message Listener (From Popup)
 browser.runtime.onMessage.addListener((message) => {
     if (message.action === "download") {
-        processDownload(message.payload, message.isBundle);
+        processDownloadWithAssets(message.payload, message.isBundle);
+        return true; // keep channel open for async work
     } else if (message.action === "cancel-download") {
         cancelDownload();
     } else if (message.action === "fetch-assets") {
@@ -83,8 +84,32 @@ function getFilenameFromHeader(header) {
     return filename;
 }
 
+async function processDownloadWithAssets(payload, isBundle) {
+    console.log("🔧 Background: Processing download with asset enrichment");
+    if (payload && payload.sources) {
+        for (const src of payload.sources) {
+            if (!src.is_forum) continue;
+            const existing = Array.isArray(src.assets) ? src.assets : [];
+            console.log(`🔍 Fetching assets for ${src.url}`);
+            try {
+                const res = await fetchAssetsForPage(src.url, payload.page_spec, payload.max_pages);
+                if (res && res.assets) {
+                    console.log(`✓ Fetched ${res.assets.length} assets in background`);
+                    const byUrl = new Map();
+                    existing.forEach(a => { if (a && a.original_url) byUrl.set(a.original_url, a); });
+                    res.assets.forEach(a => { if (a && a.original_url && !byUrl.has(a.original_url)) existing.push(a); });
+                    src.assets = existing;
+                }
+            } catch (err) {
+                console.error("Background asset fetch failed:", err);
+            }
+        }
+    }
+    await processDownloadCore(payload, isBundle);
+}
+
 // The Main Download Logic
-async function processDownload(payload, isBundle) {
+async function processDownloadCore(payload, isBundle) {
     if (currentController) {
         currentController.abort();
         currentController = null;
@@ -94,18 +119,6 @@ async function processDownload(payload, isBundle) {
     browser.browserAction.setBadgeBackgroundColor({ color: "#FFA500" }); // Orange
 
     try {
-        // Background asset fetch if requested
-        if (payload.fetch_assets && payload.sources) {
-            for (const src of payload.sources) {
-                if (!src.is_forum) continue;
-                if (src.assets && src.assets.length) continue;
-                const res = await fetchAssetsForPage(src.url, payload.page_spec, payload.max_pages);
-                if (res && res.assets) {
-                    src.assets = res.assets;
-                }
-            }
-        }
-
         const response = await fetch("http://127.0.0.1:8000/convert", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -177,9 +190,11 @@ function cancelDownload() {
 }
 
 async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
+    console.log("🔍 fetchAssetsForPage called with:", threadUrl);
     const assets = [];
     try {
-        const normBase = threadUrl.replace(/\/page-\d+/i, "").replace(/([?&])page=\d+/i, "$1").replace(/[?&]$/, "");
+        const normBase = threadUrl.replace(/#.*$/, "").replace(/\/page-\d+/i, "").replace(/([?&])page=\d+/i, "$1").replace(/[?&]$/, "");
+        console.log("📍 Normalized base URL:", normBase);
         const currentPageMatch = threadUrl.match(/page-(\d+)/i) || threadUrl.match(/[?&]page=(\d+)/i);
         const currentPage = currentPageMatch ? parseInt(currentPageMatch[1], 10) : 1;
         const hasExplicitPages = page_spec && page_spec.length;
@@ -199,7 +214,7 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
             const html = await fetchWithCookies(url, threadUrl);
             if (!html) continue;
             const found = parseAttachmentsFromHtml(html, url);
-            console.debug("attachments found", found.slice(0, 3).map(x => x.url));
+            console.log(`📎 Page ${page}: Found ${found.length} attachments`);
             for (const att of found) {
                 let fullData = null;
 
@@ -286,25 +301,26 @@ async function fetchWithCookies(url, referer) {
 
 async function fetchBinaryMaybeHtml(url, referer) {
     try {
-        let target = url;
-        let resp = await fetch(target, {
-            credentials: "include",
-            headers: {
-                "Referer": referer || target,
-                "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
-            },
-            cache: "no-store"
-        });
-        if (!resp.ok && resp.status === 409 && target.includes("?")) {
-            target = target.split("?")[0];
-            resp = await fetch(target, {
+        const attemptFetch = async (targetUrl) => {
+            return await fetch(targetUrl, {
                 credentials: "include",
                 headers: {
-                    "Referer": referer || target,
+                    "Referer": referer || targetUrl,
                     "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"
                 },
-                cache: "no-store"
+                cache: "reload"
             });
+        };
+
+        let target = url;
+        let resp = await attemptFetch(target);
+        if (!resp.ok && resp.status === 409 && target.includes("?")) {
+            target = target.split("?")[0];
+            resp = await attemptFetch(target);
+        }
+        if (!resp.ok && resp.type === "opaqueredirect" && target.includes("?")) {
+            target = target.split("?")[0];
+            resp = await attemptFetch(target);
         }
         const ct = resp.headers.get("Content-Type") || "application/octet-stream";
         const allowOnError = ct.startsWith("image/");
@@ -329,58 +345,101 @@ async function fetchBinaryMaybeHtml(url, referer) {
 }
 
 function parseAttachmentsFromHtml(html, baseUrl) {
+    console.log("🔎 parseAttachmentsFromHtml called, HTML length:", html ? html.length : 0);
     const list = [];
+    const seen = new Set();
     try {
         const doc = new DOMParser().parseFromString(html, "text/html");
-        const anchors = doc.querySelectorAll("a[href*='/attachments/']");
-        anchors.forEach(a => {
-            const viewer = a.href ? new URL(a.href, baseUrl).href : null;
-            const img = a.querySelector('img');
-            const src = img ? (img.getAttribute("data-src") || img.getAttribute("src")) : null;
-            const srcset = img ? (img.getAttribute("data-srcset") || img.getAttribute("srcset")) : null;
-            let candidate = src;
-            if (srcset) {
-                const best = pickLargestFromSrcset(srcset, baseUrl);
-                if (best) candidate = best;
+        // ONLY process images that are actual forum post content
+        const messageImages = doc.querySelectorAll(".message-body img, .messageContent img, .bbWrapper img, .bbImage img");
+        const containers = doc.querySelectorAll("article.message, .message--post, [data-lb-id]");
+        console.log(`🖼️ Found ${messageImages.length} images in message bodies`);
+        console.log(`📦 Found ${containers.length} message containers`);
+
+        const processImg = (img) => {
+            try {
+                const src = img.getAttribute("data-src") || img.getAttribute("src");
+                const srcset = img.getAttribute("data-srcset") || img.getAttribute("srcset");
+                const dataUrl = img.getAttribute("data-url");
+
+                // Skip avatars, reactions, smilies
+                if (!src) return;
+                const srcLower = src.toLowerCase();
+                if (srcLower.includes("/avatar") ||
+                    srcLower.includes("/reaction") ||
+                    srcLower.includes("/smilies") ||
+                    srcLower.includes("/emoji") ||
+                    srcLower.startsWith("data:image/gif") ||
+                    srcLower.includes("/d3/avatars/")) {
+                    return;
+                }
+
+                let parentLink = null;
+                if (typeof img.closest === "function") {
+                    parentLink = img.closest('a');
+                }
+                const viewer = parentLink && parentLink.href ? new URL(parentLink.href, baseUrl).href : null;
+
+                // Collect URL variants
+                const urls = new Set();
+                try { if (src) urls.add(new URL(src, baseUrl).href); } catch (e) {}
+                try { if (dataUrl) urls.add(new URL(dataUrl, baseUrl).href); } catch (e) {}
+                if (viewer) urls.add(viewer);
+                if (img.dataset && img.dataset.lbPlaceholder) {
+                    try { urls.add(new URL(img.dataset.lbPlaceholder, baseUrl).href); } catch (e) {}
+                }
+
+                // Parse srcset
+                if (srcset) {
+                    srcset.split(',').forEach(part => {
+                        const url = part.trim().split(/\s+/)[0];
+                        try {
+                            urls.add(new URL(url, baseUrl).href);
+                        } catch(e) {}
+                    });
+                }
+
+                const canonical = viewer ? viewer.split("?")[0] : src.split("?")[0];
+                const primary = urls.size ? Array.from(urls)[0] : (src ? new URL(src, baseUrl).href : null);
+                if (!primary) return;
+                // Only keep attachment-like URLs
+                const hasAttachment = Array.from(urls).some(u => typeof u === "string" && u.includes("/attachments/"));
+                if (!hasAttachment) return;
+                const key = primary.split("#")[0].split("?")[0];
+                if (seen.has(key)) return;
+                seen.add(key);
+                list.push({
+                    url: primary,
+                    viewer_url: viewer,
+                    canonical_url: canonical,
+                    all_urls: Array.from(urls),
+                    filename: src.split('/').pop()
+                });
+            } catch (e) {
+                console.warn("processImg failed", e);
             }
-            if (!viewer && !src) return;
-            const absSrc = candidate ? new URL(candidate, baseUrl).href : viewer;
-            if (!absSrc.startsWith("http")) return;
-            const viewerClean = viewer ? viewer.split("?")[0] : null;
-            list.push({url: absSrc, viewer_url: viewerClean || viewer, filename: (absSrc || '').split('/').pop()});
+        };
+
+        messageImages.forEach(img => processImg(img));
+        // Fallbacks: lightbox/attachment wrappers
+        const lbNodes = doc.querySelectorAll("[data-lb-trigger-target], [data-lb-id], [data-attachment-id], a.attachment, .bbImage, a[data-lb-src], a[data-lb-placeholder]");
+        lbNodes.forEach(node => {
+            const candSrc = node.getAttribute("data-src") || node.getAttribute("href") || node.getAttribute("data-lb-src") || node.getAttribute("data-lb-placeholder");
+            if (candSrc) {
+                const fakeImg = { getAttribute: (k) => k === "src" ? candSrc : null, closest: () => null, dataset: node.dataset || {} };
+                processImg(fakeImg);
+            }
+        });
+        containers.forEach(container => {
+            const imgs = container.querySelectorAll("img");
+            console.log(`  Container has ${imgs.length} images`);
+            imgs.forEach(img => {
+                console.log("    Image src:", img.getAttribute("src") || img.getAttribute("data-src") || "");
+                processImg(img);
+            });
         });
 
-        // Fallback: images with attachment src/data-src even without anchors
-        const imgs = doc.querySelectorAll("img");
-        imgs.forEach(img => {
-            const src = img.getAttribute("data-src") || img.getAttribute("src");
-            const srcset = img.getAttribute("data-srcset") || img.getAttribute("srcset");
-            let candidate = src;
-            if (srcset) {
-                const best = pickLargestFromSrcset(srcset, baseUrl);
-                if (best) candidate = best;
-            }
-            if (!candidate || !candidate.includes("/attachments/")) return;
-            try {
-                const absSrc = new URL(candidate, baseUrl).href;
-                if (!absSrc.startsWith("http")) return;
-                const viewerClean = absSrc.includes("?") ? absSrc.split("?")[0] : null;
-                list.push({url: absSrc, viewer_url: viewerClean, filename: (absSrc || '').split('/').pop()});
-            } catch (_) {}
-        });
-
-        // Fallback: elements with data-src pointing at attachments (e.g., lightbox containers)
-        const dataSrcNodes = doc.querySelectorAll("[data-src*='/attachments/']");
-        dataSrcNodes.forEach(node => {
-            const ds = node.getAttribute("data-src");
-            if (!ds) return;
-            try {
-                const absSrc = new URL(ds, baseUrl).href;
-                if (!absSrc.startsWith("http")) return;
-                const viewerClean = absSrc.includes("?") ? absSrc.split("?")[0] : null;
-                list.push({url: absSrc, viewer_url: viewerClean, filename: (absSrc || '').split('/').pop()});
-            } catch (_) {}
-        });
+        console.log(`Found ${list.length} forum post images`);
     } catch (e) {
         console.warn("parseAttachmentsFromHtml failed", e);
     }
