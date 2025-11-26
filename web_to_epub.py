@@ -24,6 +24,7 @@ import logging
 import random
 import json
 import html
+import hashlib
 from urllib.parse import urlparse, parse_qs, urljoin, quote
 from datetime import datetime
 import time
@@ -714,6 +715,15 @@ class ForumImageProcessor:
         preloaded_assets = preloaded_assets or []
         # Map existing assets (pre-seeded in driver) to URLs for quick rewrites
         preload_map: Dict[str, ImageAsset] = {}
+        hash_map: Dict[str, ImageAsset] = {}
+
+        def _hash_bytes(data: bytes) -> Optional[str]:
+            if not data:
+                return None
+            try:
+                return hashlib.sha1(data).hexdigest()
+            except Exception:
+                return None
 
         def add_to_map(url_val: str, asset_obj: Optional[ImageAsset]):
             if not asset_obj or not url_val:
@@ -734,6 +744,9 @@ class ForumImageProcessor:
                         urls.add(u)
             for u in urls:
                 add_to_map(u, asset)
+            h = _hash_bytes(asset.content)
+            if h:
+                hash_map[h] = asset
 
         # Add viewer/canonical hints from preloaded metadata to existing assets
         for a in preloaded_assets:
@@ -925,6 +938,15 @@ class ForumImageProcessor:
                         except Exception:
                             data_bytes = None
                     if data_bytes:
+                        hashed = _hash_bytes(data_bytes)
+                        if hashed and hashed in hash_map:
+                            asset = hash_map[hashed]
+                            img_tag['src'] = asset.filename
+                            for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
+                                if img_tag.has_attr(attr):
+                                    del img_tag[attr]
+                            img_tag['class'] = 'epub-image'
+                            return
                         fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(full_url).path))[0])
                         ext = os.path.splitext(fname_base)[1] or ".img"
                         if len(fname_base) < 3:
@@ -943,6 +965,8 @@ class ForumImageProcessor:
                                     alt_urls.append(u.split("?",1)[0])
                         asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=data_bytes, original_url=full_url, alt_urls=list(dict.fromkeys([u for u in alt_urls if u])))
                         book_assets.append(asset)
+                        if hashed:
+                            hash_map[hashed] = asset
                         for u in asset.alt_urls or []:
                             add_to_map(u, asset)
                         img_tag['src'] = fname
@@ -960,6 +984,16 @@ class ForumImageProcessor:
                 mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(full_url, headers, data)
                 if val_err:
                     log.debug(f"Skipped image {full_url}: {val_err}")
+                    return
+
+                hashed = _hash_bytes(final_data)
+                if hashed and hashed in hash_map:
+                    asset = hash_map[hashed]
+                    img_tag['src'] = asset.filename
+                    for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
+                        if img_tag.has_attr(attr):
+                            del img_tag[attr]
+                    img_tag['class'] = 'epub-image'
                     return
 
                 alt_urls = [full_url]
@@ -985,6 +1019,8 @@ class ForumImageProcessor:
                 uid = f"img_{abs(hash(fname))}"
                 asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=full_url, alt_urls=list(dict.fromkeys([u for u in alt_urls if u])))
                 book_assets.append(asset)
+                if hashed:
+                    hash_map[hashed] = asset
                 for u in asset.alt_urls or []:
                     add_to_map(u, asset)
 
@@ -1620,6 +1656,7 @@ class ForumDriver(BaseDriver):
             return None
 
         chapter_html = self._render_thread_html(title or "Forum Thread", source.url, page_blocks)
+        assets, chapter_html = self._dedupe_assets(assets, chapter_html)
         chapter = Chapter(
             title=title or "Forum Thread",
             filename="thread.xhtml",
@@ -1765,6 +1802,33 @@ class ForumDriver(BaseDriver):
         chunks.append("</body></html>")
         return "".join(chunks)
 
+    def _dedupe_assets(self, assets: List[ImageAsset], html: str) -> Tuple[List[ImageAsset], str]:
+        """Remove duplicate image assets by content hash and rewrite HTML src to canonical filenames."""
+        seen: Dict[str, ImageAsset] = {}
+        keep: List[ImageAsset] = []
+        replace_map: Dict[str, str] = {}
+
+        for a in assets:
+            if not a.content:
+                keep.append(a)
+                continue
+            try:
+                h = hashlib.sha1(a.content).hexdigest()
+            except Exception:
+                keep.append(a)
+                continue
+            if h in seen:
+                replace_map[a.filename] = seen[h].filename
+            else:
+                seen[h] = a
+                keep.append(a)
+
+        if replace_map and html:
+            for old, new in replace_map.items():
+                html = html.replace(old, new)
+
+        return keep, html
+
 # --- Global Logic: Tree Enrichment ---
 
 def _enrich_comment_tree(roots: List[Dict]) -> List[Dict]:
@@ -1859,11 +1923,11 @@ def format_comment_html(comment_data, formatter, depth=0):
 class EpubWriter:
     @staticmethod
     def write(book_data: BookData, output_path: str, custom_css: str = None):
-        book = epub.EpubBook()
-        book.set_identifier(book_data.uid)
-        book.set_title(book_data.title)
-        book.set_language(book_data.language)
-        book.add_author(book_data.author)
+            book = epub.EpubBook()
+            book.set_identifier(book_data.uid)
+            book.set_title(book_data.title)
+            book.set_language(book_data.language)
+            book.add_author(book_data.author)
 
         pygments_style = HtmlFormatter(style='default').get_style_defs('.codehilite')
         base_css = """
