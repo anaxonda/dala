@@ -1695,6 +1695,15 @@ class ForumDriver(BaseDriver):
             return base_url
         parsed = urlparse(base_url)
         path = parsed.path or ""
+        query = parsed.query or ""
+        # Handle XenForo style index.php?threads/slug[/page-N]
+        if query and query.startswith("threads/"):
+            q = query
+            if re.search(r'page-\d+', q):
+                q = re.sub(r'page-\d+', f"page-{page}", q)
+            else:
+                q = q.rstrip('/') + f"/page-{page}"
+            return parsed._replace(query=q).geturl()
         if re.search(r'page-\d+', path):
             new_path = re.sub(r'page-\d+', f"page-{page}", path)
         elif path.endswith('/'):
