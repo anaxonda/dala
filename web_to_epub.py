@@ -760,6 +760,17 @@ class ForumImageProcessor:
                 preload_map[url_val.rstrip("/")] = asset_obj
             if norm and norm.endswith("/"):
                 preload_map[norm.rstrip("/")] = asset_obj
+            # Secondary: query-stripped attachment mapping
+            try:
+                parsed = urlparse(url_val)
+                if "/attachments/" in parsed.path:
+                    base_url = url_val.split("?", 1)[0]
+                    preload_map[base_url] = asset_obj
+                    norm_base = normalize_url_for_matching(base_url)
+                    if norm_base:
+                        preload_map[norm_base] = asset_obj
+            except Exception:
+                pass
 
         for asset in book_assets:
             urls = set()
