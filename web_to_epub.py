@@ -452,6 +452,36 @@ class ImageProcessor:
         return None
 
     @staticmethod
+    def wrap_in_img_block(soup: BeautifulSoup, img_tag: Tag, caption_text: Optional[str]) -> None:
+        """Wrap an image in a minimal div.img-block with optional caption."""
+        if not img_tag or not soup:
+            return
+        parent = img_tag.parent
+        # If inside a figure, harvest figcaption then unwrap
+        if parent and parent.name == "figure":
+            if not caption_text:
+                figcap = parent.find("figcaption")
+                if figcap:
+                    caption_text = figcap.get_text(strip=True)
+            parent.unwrap()
+
+        parent = img_tag.parent
+        if parent and parent.name == "div" and "img-block" in (parent.get("class") or []):
+            if caption_text and not parent.find("p", class_="caption"):
+                cap = soup.new_tag("p", attrs={"class": "caption"})
+                cap.string = caption_text
+                parent.append(cap)
+            return
+
+        wrapper = soup.new_tag("div", attrs={"class": "img-block"})
+        img_tag.replace_with(wrapper)
+        wrapper.append(img_tag)
+        if caption_text:
+            cap = soup.new_tag("p", attrs={"class": "caption"})
+            cap.string = caption_text
+            wrapper.append(cap)
+
+    @staticmethod
     def is_junk(url: str) -> bool:
         """Determines if an image URL is a known placeholder or tracking pixel."""
         if not url:
@@ -586,15 +616,8 @@ class ImageProcessor:
                     if img_tag.has_attr(attr):
                         del img_tag[attr]
                 img_tag['class'] = 'epub-image'
-
                 caption_text = ImageProcessor.find_caption(img_tag)
-                parent = img_tag.parent
-                if caption_text and parent.name != 'figure':
-                    figure = soup.new_tag('figure', attrs={'class': 'embedded-figure'})
-                    img_tag.wrap(figure)
-                    figcaption = soup.new_tag('figcaption')
-                    figcaption.string = caption_text
-                    figure.append(figcaption)
+                ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
 
             except Exception as e:
                 log.debug(f"Image process error {src}: {e}")
@@ -866,13 +889,7 @@ class ForumImageProcessor:
                             del img_tag[attr]
                     img_tag['class'] = 'epub-image'
                     caption_text = ImageProcessor.find_caption(img_tag)
-                    parent = img_tag.parent
-                    if caption_text and parent.name != 'figure':
-                        figure = soup.new_tag('figure', attrs={'class': 'embedded-figure'})
-                        img_tag.wrap(figure)
-                        figcaption = soup.new_tag('figcaption')
-                        figcaption.string = caption_text
-                        figure.append(figcaption)
+                    ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
                     return
                 else:
                     log.warning(f"✗ No preload match for {full_url[:100]}")
@@ -901,13 +918,7 @@ class ForumImageProcessor:
                             del img_tag[attr]
                     img_tag['class'] = 'epub-image'
                     caption_text = ImageProcessor.find_caption(img_tag)
-                    parent = img_tag.parent
-                    if caption_text and parent.name != 'figure':
-                        figure = soup.new_tag('figure', attrs={'class': 'embedded-figure'})
-                        img_tag.wrap(figure)
-                        figcaption = soup.new_tag('figcaption')
-                        figcaption.string = caption_text
-                        figure.append(figcaption)
+                    ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
                     return
 
                 preload_match = None
@@ -950,6 +961,8 @@ class ForumImageProcessor:
                                 if img_tag.has_attr(attr):
                                     del img_tag[attr]
                             img_tag['class'] = 'epub-image'
+                            caption_text = ImageProcessor.find_caption(img_tag)
+                            ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
                             return
                         fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(full_url).path))[0])
                         ext = os.path.splitext(fname_base)[1] or ".img"
@@ -998,6 +1011,8 @@ class ForumImageProcessor:
                         if img_tag.has_attr(attr):
                             del img_tag[attr]
                     img_tag['class'] = 'epub-image'
+                    caption_text = ImageProcessor.find_caption(img_tag)
+                    ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
                     return
 
                 alt_urls = [full_url]
@@ -1033,15 +1048,8 @@ class ForumImageProcessor:
                     if img_tag.has_attr(attr):
                         del img_tag[attr]
                 img_tag['class'] = 'epub-image'
-
                 caption_text = ImageProcessor.find_caption(img_tag)
-                parent = img_tag.parent
-                if caption_text and parent.name != 'figure':
-                    figure = soup.new_tag('figure', attrs={'class': 'embedded-figure'})
-                    img_tag.wrap(figure)
-                    figcaption = soup.new_tag('figcaption')
-                    figcaption.string = caption_text
-                    figure.append(figcaption)
+                ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
 
             except Exception as e:
                 log.debug(f"Image process error {src}: {e}")
