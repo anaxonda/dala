@@ -72,6 +72,10 @@ uv run web_to_epub.py "https://www.trek-lite.com/index.php?threads/arcdome-1.152
 ---
 
 ## 🔄 Updates
+- **Forum image HTML simplification (latest):**
+  - **Problem:** XenForo lightbox markup (`lazyloadPreSize`, `lbContainer*`, zoomer stubs, `data-lb-*`, `data-zoom-target`, empty `title`) leaked into the EPUB, leaving nested wrappers and non-reader-safe attributes.
+  - **Fix:** Added forum-specific cleanup in `ForumImageProcessor` to strip lightbox attrs, unwrap XenForo containers, and remove zoomer divs while still running the same asset mapping/dedup logic.
+  - **Result:** EPUB now emits minimal image HTML (`<div class="img-block"><img class="epub-image" src="..."></div>` plus caption when found) without breaking filename mapping or preload reuse.
 - **Forum attachment reliability (latest):**
   - **What was broken:** Page fragments (`#replies`) kept every fetch on page 1; popup closed before fetch finished; discovery crashed on lightbox nodes without `closest`; “enough assets” skipped re-fetch when only avatars/1x1s were present; 409/redirect fetches aborted; attachments on page 2/3 never entered the preload map, causing misses/dupes.
   - **Fixes applied:** Strip fragments before building `page-N` URLs so pages 2/3 load; move all asset fetching to background after the popup closes; always re-fetch/merge assets and dedupe by URL instead of early-skipping; filter strictly to `/attachments/`, skip avatars/1x1/data GIFs; expand lightbox selectors (`[data-lb-*]`, `.bbImage`, `a.attachment`, `[data-attachment-id]`) with guards for missing `closest`; binary fetch uses `cache: reload` and retries query-stripped URLs on 409/opaque redirects. Result: all post attachments across pages are discovered and reused without duplication.
