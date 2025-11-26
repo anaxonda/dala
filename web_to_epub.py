@@ -1714,6 +1714,13 @@ class ForumDriver(BaseDriver):
             containers = soup.find_all(lambda tag: tag.get("class") and any("message" in c for c in tag.get("class")))
         for c in containers:
             pid = c.get("id") or c.get("data-content") or f"post_{len(posts)+1}"
+            anchor_id = sanitize_filename(pid) if pid else f"post_{len(posts)+1}"
+            num_id = None
+            try:
+                m = re.search(r'(\d+)', pid)
+                if m: num_id = m.group(1)
+            except Exception:
+                pass
             author = None
             author_tag = c.find(lambda t: t.get("class") and any("username" in x or "author" in x for x in t.get("class")))
             if not author and c.has_attr("data-author"):
@@ -1731,6 +1738,8 @@ class ForumDriver(BaseDriver):
                 time_val = time_tag.get("datetime") or time_tag.get("title") or time_tag.get_text(strip=True)
             posts.append({
                 "id": pid,
+                "anchor_id": anchor_id,
+                "numeric_id": num_id,
                 "author": author or "Anonymous",
                 "html": str(content_tag),
                 "time": time_val
@@ -1783,20 +1792,63 @@ class ForumDriver(BaseDriver):
         return False
 
     def _render_thread_html(self, title, url, page_blocks: List[Tuple[int, List[Dict[str, Any]]]]):
+        anchor_map: Dict[str, str] = {}
+        for _, posts in page_blocks:
+            for p in posts:
+                anchor = p.get("anchor_id") or sanitize_filename(p.get("id") or "")
+                pid_raw = p.get("id")
+                num = p.get("numeric_id")
+                if pid_raw:
+                    anchor_map[pid_raw] = anchor
+                if num:
+                    anchor_map[num] = anchor
+                    anchor_map[f"post-{num}"] = anchor
+
+        def rewrite_quote_links(html_snippet: str) -> str:
+            if not html_snippet:
+                return html_snippet
+            try:
+                soup = BeautifulSoup(html_snippet, 'html.parser')
+                for a in soup.find_all("a", class_=lambda x: x and "bbCodeBlock-sourceJump" in x):
+                    target = None
+                    sel = a.get("data-content-selector")
+                    if sel and isinstance(sel, str):
+                        sel = sel.lstrip("#")
+                        if sel:
+                            target = sel
+                    if not target:
+                        href = a.get("href")
+                        if href:
+                            m = re.search(r'id=(\d+)', href)
+                            if m:
+                                target = m.group(1)
+                    if target and target in anchor_map:
+                        anchor = anchor_map[target]
+                        a['href'] = f"#p_{anchor}"
+                        if a.has_attr("data-xf-click"):
+                            del a["data-xf-click"]
+                        if a.has_attr("data-content-selector"):
+                            del a["data-content-selector"]
+                return str(soup)
+            except Exception:
+                return html_snippet
+
         chunks = [f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head><body>"""]
         chunks.append(f"<h1>{title}</h1><div class='post-meta'><p><strong>Source:</strong> <a href=\"{url}\">{url}</a></p></div>")
         post_counter = 1
         for page_no, posts in page_blocks:
             chunks.append(f"<div class='page-label' id='page_{page_no}'>Page {page_no}</div>")
             for post in posts:
-                pid = sanitize_filename(post.get("id") or f"post_{post_counter}")
+                anchor_id = post.get("anchor_id") or sanitize_filename(post.get("id") or f"post_{post_counter}")
+                pid = anchor_id
                 author = html.escape(post.get("author") or "Anonymous")
                 when = html.escape(post.get("time") or "")
                 chunks.append(f"<div class='forum-post' id='p_{pid}'>")
                 chunks.append(f"<div class='forum-post-header'><span class='forum-author'>{author}</span>")
                 if when: chunks.append(f"<span class='forum-time'>{when}</span>")
                 chunks.append("</div>")
-                chunks.append(f"<div class='forum-post-body'>{post.get('html','')}</div>")
+                body_html = rewrite_quote_links(post.get('html',''))
+                chunks.append(f"<div class='forum-post-body'>{body_html}</div>")
                 chunks.append("</div>")
                 post_counter += 1
         chunks.append("</body></html>")
