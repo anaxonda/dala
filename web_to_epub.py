@@ -881,6 +881,21 @@ class ForumImageProcessor:
                 return
 
             try:
+                # Strip wrappers and inline sizing that add whitespace/splits
+                for ancestor in list(img_tag.parents):
+                    if not isinstance(ancestor, Tag): continue
+                    cls = ancestor.get("class") or []
+                    cls_set = set(cls)
+                    if any(x.startswith("lbContainer") for x in cls_set) or "lazyloadPreSize" in cls_set or "bbMediaWrapper" in cls_set or "bbMediaWrapper-inner" in cls_set:
+                        if ancestor.has_attr("style"):
+                            del ancestor["style"]
+                        if ancestor.name in ("div", "span"):
+                            img_tag.extract()
+                            ancestor.replace_with(img_tag)
+                for attr in ["width", "height", "style"]:
+                    if img_tag.has_attr(attr):
+                        del img_tag[attr]
+
                 log.debug(f"Forum img candidate src={src} data-src={data_src} data-url={data_url} data-lazy={data_lazy} srcset={srcset} data-srcset={data_srcset}")
                 if final_src.startswith("view-source:"):
                     final_src = final_src.replace("view-source:", "", 1)
