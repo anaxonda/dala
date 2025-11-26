@@ -70,9 +70,11 @@ async def convert(req: ConversionRequest):
                 s.assets = [
                     a for a in s.assets
                     if a.get("original_url")
-                    and not str(a.get("original_url")).endswith("/")
                     and a.get("original_url") != s.url
-                    and "image" in str(a.get("content_type", ""))
+                    and (
+                        "image" in str(a.get("content_type", "")).lower()
+                        or "/attachments/" in str(a.get("original_url"))
+                    )
                 ]
                 print(f"Source[{idx}] assets: {original_count} -> {len(s.assets)} (after filtering)")
 

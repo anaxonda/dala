@@ -733,6 +733,10 @@ class ForumImageProcessor:
                 preload_map[url_val] = asset_obj
             if norm:
                 preload_map[norm] = asset_obj
+            if url_val.endswith("/"):
+                preload_map[url_val.rstrip("/")] = asset_obj
+            if norm and norm.endswith("/"):
+                preload_map[norm.rstrip("/")] = asset_obj
 
         for asset in book_assets:
             urls = set()
