@@ -394,6 +394,8 @@ class ArticleExtractor:
 class ImageProcessor:
     @staticmethod
     async def fetch_image_data(session, url, referer=None):
+        if url:
+            url = url.strip()
         image_headers = {
             "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
@@ -408,6 +410,7 @@ class ImageProcessor:
                     targets.append(f"https://commons.wikimedia.org/wiki/Special:Redirect/file/{fname}")
                     targets.append(f"https://commons.wikimedia.org/wiki/Special:FilePath/{fname}")
                     targets.append(f"https://commons.wikimedia.org/wiki/Special:FilePath/{fname}?download=1")
+                    targets.append(url + "?download=1")
         except Exception:
             pass
 
