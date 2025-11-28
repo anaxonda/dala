@@ -396,30 +396,35 @@ class ImageProcessor:
     async def fetch_image_data(session, url, referer=None):
         if url:
             url = url.strip()
+        parsed = urlparse(url)
+        # Wikimedia: single-shot with file-page referer (matches curl success)
+        if parsed.netloc and "upload.wikimedia.org" in parsed.netloc:
+            fname = os.path.basename(parsed.path)
+            commons_ref = f"https://commons.wikimedia.org/wiki/File:{fname}" if fname else "https://commons.wikimedia.org/wiki/"
+            headers = {
+                "User-Agent": "Mozilla/5.0",
+                "Referer": commons_ref,
+                "Accept": "*/*",
+            }
+            targets = [url]
+            if fname:
+                targets.append(f"{url}?download=1")
+            for tgt in targets:
+                try:
+                    async with session.get(tgt, headers=headers, allow_redirects=True) as resp:
+                        if resp.status == 200:
+                            data = await resp.read()
+                            return resp.headers, data, None
+                except Exception:
+                    continue
+            return None, None, "Wikimedia blocked"
+
+        # Default path: try with provided referer, origin, then none
         image_headers = {
             "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
-        parsed = urlparse(url)
-        # Wikimedia: single-shot with file-page referer (matches curl success)
-        if parsed.netloc and "upload.wikimedia.org" in parsed.netloc:
-            fname = os.path.basename(parsed.path)
-            commons_ref = None
-            if fname:
-                commons_ref = f"https://commons.wikimedia.org/wiki/File:{fname}"
-            refs = [commons_ref or f"{parsed.scheme}://{parsed.netloc}", referer, None]
-            for ref in refs:
-                try:
-                    headers, _ = await fetch_with_retry(session, url, 'headers', referer=ref, extra_headers=image_headers, non_retry_statuses={401,403})
-                    data, _ = await fetch_with_retry(session, url, 'bytes', referer=ref, extra_headers=image_headers, non_retry_statuses={401,403})
-                    if headers and data:
-                        return headers, data, None
-                except Exception as e:
-                    continue
-            return None, None, "Wikimedia blocked"
-
-        # Default path: try with provided referer, origin, then none
         refs = []
         if referer: refs.append(referer)
         try:
