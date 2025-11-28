@@ -407,6 +407,7 @@ class ImageProcessor:
                 if fname:
                     targets.append(f"https://commons.wikimedia.org/wiki/Special:Redirect/file/{fname}")
                     targets.append(f"https://commons.wikimedia.org/wiki/Special:FilePath/{fname}")
+                    targets.append(f"https://commons.wikimedia.org/wiki/Special:FilePath/{fname}?download=1")
         except Exception:
             pass
 
@@ -435,8 +436,8 @@ class ImageProcessor:
 
             for ref in refs:
                 try:
-                    headers, _ = await fetch_with_retry(session, target, 'headers', referer=ref, extra_headers=image_headers)
-                    data, _ = await fetch_with_retry(session, target, 'bytes', referer=ref, extra_headers=image_headers)
+                    headers, _ = await fetch_with_retry(session, target, 'headers', referer=ref, extra_headers=image_headers, non_retry_statuses={401,403})
+                    data, _ = await fetch_with_retry(session, target, 'bytes', referer=ref, extra_headers=image_headers, non_retry_statuses={401,403})
                     if headers and data:
                         return headers, data, None
                     last_err = "No headers" if not headers else "No data"
