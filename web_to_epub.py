@@ -401,52 +401,46 @@ class ImageProcessor:
             "Accept-Language": "en-US,en;q=0.5",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
-        targets = [url]
-        try:
-            parsed = urlparse(url)
-            if parsed.netloc and "upload.wikimedia.org" in parsed.netloc:
-                fname = os.path.basename(parsed.path)
-                if fname:
-                    targets.append(f"https://commons.wikimedia.org/wiki/Special:Redirect/file/{fname}")
-                    targets.append(f"https://commons.wikimedia.org/wiki/Special:FilePath/{fname}")
-                    targets.append(f"https://commons.wikimedia.org/wiki/Special:FilePath/{fname}?download=1")
-                    targets.append(url + "?download=1")
-        except Exception:
-            pass
-
-        last_err = "No data"
-        for target in targets:
-            refs = [None]
-            if referer:
-                refs.append(referer)
-            try:
-                parsed_t = urlparse(target)
-                if parsed_t.scheme and parsed_t.netloc:
-                    origin = f"{parsed_t.scheme}://{parsed_t.netloc}"
-                    if origin not in refs:
-                        refs.append(origin)
-                    if "upload.wikimedia.org" in parsed_t.netloc:
-                        commons_root = "https://commons.wikimedia.org/wiki/"
-                        if commons_root not in refs:
-                            refs.append(commons_root)
-                        fname = os.path.basename(parsed_t.path)
-                        if fname:
-                            file_page = commons_root + f"File:{fname}"
-                            if file_page not in refs:
-                                refs.append(file_page)
-            except Exception:
-                pass
-
+        parsed = urlparse(url)
+        # Wikimedia: single-shot with file-page referer (matches curl success)
+        if parsed.netloc and "upload.wikimedia.org" in parsed.netloc:
+            fname = os.path.basename(parsed.path)
+            commons_ref = None
+            if fname:
+                commons_ref = f"https://commons.wikimedia.org/wiki/File:{fname}"
+            refs = [commons_ref or f"{parsed.scheme}://{parsed.netloc}", referer, None]
             for ref in refs:
                 try:
-                    headers, _ = await fetch_with_retry(session, target, 'headers', referer=ref, extra_headers=image_headers, non_retry_statuses={401,403})
-                    data, _ = await fetch_with_retry(session, target, 'bytes', referer=ref, extra_headers=image_headers, non_retry_statuses={401,403})
+                    headers, _ = await fetch_with_retry(session, url, 'headers', referer=ref, extra_headers=image_headers, non_retry_statuses={401,403})
+                    data, _ = await fetch_with_retry(session, url, 'bytes', referer=ref, extra_headers=image_headers, non_retry_statuses={401,403})
                     if headers and data:
                         return headers, data, None
-                    last_err = "No headers" if not headers else "No data"
                 except Exception as e:
-                    last_err = str(e)
                     continue
+            return None, None, "Wikimedia blocked"
+
+        # Default path: try with provided referer, origin, then none
+        refs = []
+        if referer: refs.append(referer)
+        try:
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+            if origin not in refs:
+                refs.append(origin)
+        except Exception:
+            pass
+        refs.append(None)
+
+        last_err = "No data"
+        for ref in refs:
+            try:
+                headers, _ = await fetch_with_retry(session, url, 'headers', referer=ref, extra_headers=image_headers, non_retry_statuses={401,403})
+                data, _ = await fetch_with_retry(session, url, 'bytes', referer=ref, extra_headers=image_headers, non_retry_statuses={401,403})
+                if headers and data:
+                    return headers, data, None
+                last_err = "No headers" if not headers else "No data"
+            except Exception as e:
+                last_err = str(e)
+                continue
         return None, None, last_err
 
     @staticmethod
