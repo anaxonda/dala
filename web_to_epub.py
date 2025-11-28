@@ -508,6 +508,58 @@ class ImageProcessor:
             wrapper.append(cap)
 
     @staticmethod
+    def _cleanup_generic_wrapper(img_tag: Tag, caption_text: Optional[str]) -> None:
+        """Flatten layout wrappers and dedupe captions for generic images."""
+        if not img_tag:
+            return
+        wrapper = img_tag.parent
+        if not wrapper or wrapper.name != "div" or "img-block" not in (wrapper.get("class") or []):
+            return
+
+        cap_text = caption_text
+        cap_p = wrapper.find("p", class_="caption")
+        if cap_text is None and cap_p:
+            cap_text = cap_p.get_text(strip=True) or None
+
+        fig = wrapper.find_parent("figure")
+        if fig:
+            if cap_text is None:
+                figcap = fig.find("figcaption")
+                if figcap:
+                    cap_text = figcap.get_text(strip=True)
+            for fc in fig.find_all("figcaption"):
+                fc.decompose()
+            fig.unwrap()
+            if cap_text:
+                if not cap_p:
+                    cap_p = wrapper.new_tag("p", attrs={"class": "caption"})
+                    cap_p.string = cap_text
+                    wrapper.append(cap_p)
+                else:
+                    cap_p.string = cap_text
+
+        parent = wrapper.parent
+        if parent and cap_text:
+            for sib in list(parent.find_all(['span', 'p'], recursive=False)):
+                if sib is wrapper:
+                    continue
+                txt = sib.get_text(strip=True)
+                if txt == cap_text:
+                    sib.decompose()
+
+        current = wrapper
+        parent = current.parent
+        while parent and parent.name == "div":
+            meaningful_children = [c for c in parent.contents if not (isinstance(c, str) and c.strip() == "")]
+            tag_children = [c for c in meaningful_children if isinstance(c, Tag)]
+            attrs_ok = not parent.attrs or all(k.startswith("data-") for k in parent.attrs.keys())
+            if len(tag_children) == 1 and tag_children[0] is current and attrs_ok:
+                parent.unwrap()
+                parent = current.parent
+            else:
+                break
+
+    @staticmethod
     def is_junk(url: str) -> bool:
         """Determines if an image URL is a known placeholder or tracking pixel."""
         if not url:
@@ -517,7 +569,7 @@ class ImageProcessor:
 
         bad_keywords = [
             "spacer", "1x1", "transparent", "gray.gif", "pixel.gif",
-            "placeholder", "loader", "blank.gif"
+            "placeholder", "loader", "blank.gif", "grey-placeholder", "gray-placeholder"
         ]
         lower_url = url.lower()
         if any(k in lower_url for k in bad_keywords):
@@ -585,7 +637,7 @@ class ImageProcessor:
                         final_src = c
                         break
 
-                if not final_src and src:
+                if not final_src and src and not ImageProcessor.is_junk(src):
                     final_src = src
 
             if not final_src or final_src.startswith(('data:', 'mailto:', 'javascript:')):
@@ -599,9 +651,13 @@ class ImageProcessor:
                 existing = next((a for a in book_assets if a.original_url == full_url), None)
                 if existing:
                     img_tag['src'] = existing.filename
-                    for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding']:
+                    for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
                         if img_tag.has_attr(attr):
                             del img_tag[attr]
+                    img_tag['class'] = 'epub-image'
+                    caption_text = ImageProcessor.find_caption(img_tag)
+                    ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
+                    ImageProcessor._cleanup_generic_wrapper(img_tag, caption_text)
                     return
 
                 # Build fetch candidates from src and any srcset entries (plus queryless variants)
@@ -610,12 +666,17 @@ class ImageProcessor:
                     if u and u not in candidate_urls:
                         candidate_urls.append(u)
 
-                _add_candidate(full_url)
-                if "?" in full_url:
-                    _add_candidate(full_url.split("?", 1)[0])
+                if not ImageProcessor.is_junk(full_url):
+                    _add_candidate(full_url)
+                    if "?" in full_url:
+                        _add_candidate(full_url.split("?", 1)[0])
                 for srcset_str in filter(None, [data_srcset, srcset]):
                     for candidate in ImageProcessor.parse_srcset(srcset_str):
+                        if ImageProcessor.is_junk(candidate):
+                            continue
                         cand_full = urljoin(base_url, candidate)
+                        if ImageProcessor.is_junk(cand_full):
+                            continue
                         _add_candidate(cand_full)
                         if "?" in cand_full:
                             _add_candidate(cand_full.split("?", 1)[0])
@@ -663,6 +724,7 @@ class ImageProcessor:
                 img_tag['class'] = 'epub-image'
                 caption_text = ImageProcessor.find_caption(img_tag)
                 ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
+                ImageProcessor._cleanup_generic_wrapper(img_tag, caption_text)
 
             except Exception as e:
                 log.debug(f"Image process error {src}: {e}")
