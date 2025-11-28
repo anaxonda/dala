@@ -413,11 +413,15 @@ class ImageProcessor:
                 targets.append(f"{url}?download=1")
             for tgt in targets:
                 try:
+                    log.debug(f"Wikimedia fetch attempt tgt={tgt} referer={headers.get('Referer')}")
                     async with session.get(tgt, headers=headers, allow_redirects=True, timeout=REQUEST_TIMEOUT) as resp:
                         if resp.status == 200:
                             data = await resp.read()
                             return resp.headers, data, None
-                except Exception:
+                        else:
+                            log.debug(f"Wikimedia fetch status {resp.status} for {tgt}")
+                except Exception as e:
+                    log.debug(f"Wikimedia fetch error for {tgt}: {e}")
                     continue
             return None, None, "Wikimedia blocked"
 
