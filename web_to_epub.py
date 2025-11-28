@@ -421,6 +421,31 @@ class ImageProcessor:
                 except Exception as e:
                     log.debug(f"Wikimedia fetch error for {tgt}: {e}")
                     continue
+            # Fallback: fetch the Commons file page and extract og:image or first upload URL
+            try:
+                page_html, _ = await fetch_with_retry(session, commons_ref, 'text', referer=commons_ref, extra_headers={"User-Agent": headers["User-Agent"]})
+                if page_html:
+                    soup = BeautifulSoup(page_html, 'html.parser')
+                    og = soup.find("meta", property="og:image")
+                    fallback_src = og.get("content") if og else None
+                    if not fallback_src:
+                        link = soup.find("link", href=re.compile(r"upload\.wikimedia\.org/.+\.(png|jpg|jpeg|webp|gif)", re.IGNORECASE))
+                        if link and link.get("href"):
+                            fallback_src = link.get("href")
+                    if fallback_src:
+                        try:
+                            log.debug(f"Wikimedia fallback via file page og:image {fallback_src}")
+                            async with session.get(fallback_src, headers=headers, allow_redirects=True, timeout=REQUEST_TIMEOUT) as resp2:
+                                if resp2.status == 200:
+                                    data2 = await resp2.read()
+                                    return resp2.headers, data2, None
+                                else:
+                                    log.debug(f"Wikimedia fallback status {resp2.status} for {fallback_src}")
+                        except Exception as e:
+                            log.debug(f"Wikimedia fallback error for {fallback_src}: {e}")
+            except Exception as e:
+                log.debug(f"Wikimedia page fetch error for {commons_ref}: {e}")
+
             log.warning(f"Wikimedia blocked for {url} (targets tried={targets})")
             return None, None, "Wikimedia blocked"
 
