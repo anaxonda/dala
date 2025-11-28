@@ -1214,9 +1214,11 @@ class SubstackDriver(BaseDriver):
              com_chap = Chapter(title="Comments", filename=f"comments_{post_id}.xhtml", content_html=full_com_html, uid=f"com_{post_id}", is_comments=True)
              chapters.append(com_chap)
 
-        toc_structure = [epub.Link(art_chap.filename, "Article", art_chap.uid)]
-        if com_chap:
-             toc_structure.append(epub.Link(com_chap.filename, "Comments", com_chap.uid))
+        toc_structure = []
+        if art_chap and com_chap:
+             toc_structure.append((epub.Link(art_chap.filename, "Article", art_chap.uid), [epub.Link(com_chap.filename, "Comments", com_chap.uid)]))
+        elif art_chap:
+             toc_structure.append(epub.Link(art_chap.filename, "Article", art_chap.uid))
 
         return BookData(title=title, author=data['author'] or "Substack", uid=f"urn:substack:{post_id or abs(hash(url))}", language='en', description=f"Substack Post {url}", source_url=url, chapters=chapters, images=assets, toc_structure=toc_structure)
 
@@ -1469,8 +1471,12 @@ class HackerNewsDriver(BaseDriver):
              chapters.append(com_chap)
 
         toc_structure = []
-        if art_chap: toc_structure.append(epub.Link(art_chap.filename, "Article", art_chap.uid))
-        if com_chap: toc_structure.append(epub.Link(com_chap.filename, "Comments", com_chap.uid))
+        if art_chap and com_chap:
+            toc_structure.append((epub.Link(art_chap.filename, "Article", art_chap.uid), [epub.Link(com_chap.filename, "Comments", com_chap.uid)]))
+        elif art_chap:
+            toc_structure.append(epub.Link(art_chap.filename, "Article", art_chap.uid))
+        elif com_chap:
+            toc_structure.append(epub.Link(com_chap.filename, "Comments", com_chap.uid))
 
         return BookData(title=title, author=author, uid=f"urn:hn:{item_id}", language='en', description=f"HN Thread {item_id}", source_url=url, chapters=chapters, images=assets, toc_structure=toc_structure)
 
@@ -1562,7 +1568,12 @@ class RedditDriver(BaseDriver):
 
         toc_links = []
         if art_chap: toc_links.append(epub.Link(art_chap.filename, "Post", art_chap.uid))
-        if com_chap: toc_links.append(epub.Link(com_chap.filename, "Comments", com_chap.uid))
+        if art_chap and com_chap:
+            toc_links = [(epub.Link(art_chap.filename, "Post", art_chap.uid), [epub.Link(com_chap.filename, "Comments", com_chap.uid)])]
+        elif art_chap:
+            toc_links = [epub.Link(art_chap.filename, "Post", art_chap.uid)]
+        elif com_chap:
+            toc_links = [epub.Link(com_chap.filename, "Comments", com_chap.uid)]
 
         desc = f"Reddit thread r/{subreddit}" if subreddit else "Reddit thread"
         return BookData(title=title, author=author, uid=f"urn:reddit:{post_id}", language='en', description=desc, source_url=source.url, chapters=chapters, images=assets, toc_structure=toc_links)
