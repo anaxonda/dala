@@ -399,38 +399,50 @@ class ImageProcessor:
             "Accept-Language": "en-US,en;q=0.5",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
-        refs = [None]  # try without Referer first
-        if referer:
-            refs.append(referer)
+        targets = [url]
         try:
             parsed = urlparse(url)
-            if parsed.scheme and parsed.netloc:
-                origin = f"{parsed.scheme}://{parsed.netloc}"
-                if origin not in refs:
-                    refs.append(origin)
-                if "upload.wikimedia.org" in parsed.netloc:
-                    commons_root = "https://commons.wikimedia.org/wiki/"
-                    if commons_root not in refs:
-                        refs.append(commons_root)
-                    fname = os.path.basename(parsed.path)
-                    if fname:
-                        file_page = commons_root + f"File:{fname}"
-                        if file_page not in refs:
-                            refs.append(file_page)
+            if parsed.netloc and "upload.wikimedia.org" in parsed.netloc:
+                fname = os.path.basename(parsed.path)
+                if fname:
+                    targets.append(f"https://commons.wikimedia.org/wiki/Special:Redirect/file/{fname}")
+                    targets.append(f"https://commons.wikimedia.org/wiki/Special:FilePath/{fname}")
         except Exception:
             pass
 
         last_err = "No data"
-        for ref in refs:
+        for target in targets:
+            refs = [None]
+            if referer:
+                refs.append(referer)
             try:
-                headers, _ = await fetch_with_retry(session, url, 'headers', referer=ref, extra_headers=image_headers)
-                data, _ = await fetch_with_retry(session, url, 'bytes', referer=ref, extra_headers=image_headers)
-                if headers and data:
-                    return headers, data, None
-                last_err = "No headers" if not headers else "No data"
-            except Exception as e:
-                last_err = str(e)
-                continue
+                parsed_t = urlparse(target)
+                if parsed_t.scheme and parsed_t.netloc:
+                    origin = f"{parsed_t.scheme}://{parsed_t.netloc}"
+                    if origin not in refs:
+                        refs.append(origin)
+                    if "upload.wikimedia.org" in parsed_t.netloc:
+                        commons_root = "https://commons.wikimedia.org/wiki/"
+                        if commons_root not in refs:
+                            refs.append(commons_root)
+                        fname = os.path.basename(parsed_t.path)
+                        if fname:
+                            file_page = commons_root + f"File:{fname}"
+                            if file_page not in refs:
+                                refs.append(file_page)
+            except Exception:
+                pass
+
+            for ref in refs:
+                try:
+                    headers, _ = await fetch_with_retry(session, target, 'headers', referer=ref, extra_headers=image_headers)
+                    data, _ = await fetch_with_retry(session, target, 'bytes', referer=ref, extra_headers=image_headers)
+                    if headers and data:
+                        return headers, data, None
+                    last_err = "No headers" if not headers else "No data"
+                except Exception as e:
+                    last_err = str(e)
+                    continue
         return None, None, last_err
 
     @staticmethod
