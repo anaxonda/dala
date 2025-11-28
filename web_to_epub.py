@@ -404,14 +404,16 @@ class ImageProcessor:
             headers = {
                 "User-Agent": "Mozilla/5.0",
                 "Referer": commons_ref,
+                "Origin": "https://commons.wikimedia.org",
                 "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.5",
             }
             targets = [url]
             if fname:
                 targets.append(f"{url}?download=1")
             for tgt in targets:
                 try:
-                    async with session.get(tgt, headers=headers, allow_redirects=True) as resp:
+                    async with session.get(tgt, headers=headers, allow_redirects=True, timeout=REQUEST_TIMEOUT) as resp:
                         if resp.status == 200:
                             data = await resp.read()
                             return resp.headers, data, None
