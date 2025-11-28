@@ -949,22 +949,6 @@ class ForumImageProcessor:
                 elif attachment_base:
                     viewer_url = attachment_base
 
-                # Prepare fallback candidate URLs (src first, then srcset variants) to recover from 403/404/image-host quirks
-                candidate_urls = []
-                def _add_candidate(u: Optional[str]):
-                    if u and u not in candidate_urls:
-                        candidate_urls.append(u)
-
-                _add_candidate(full_url)
-                if "?" in full_url:
-                    _add_candidate(full_url.split("?", 1)[0])
-                for srcset_str in filter(None, [data_srcset, srcset]):
-                    for candidate in ImageProcessor.parse_srcset(srcset_str):
-                        cand_full = urljoin(base_url, candidate)
-                        _add_candidate(cand_full)
-                        if "?" in cand_full:
-                            _add_candidate(cand_full.split("?", 1)[0])
-
                 attach_target = viewer_url or full_url
                 matched_asset = None
                 urls_to_check = [full_url]
@@ -1082,24 +1066,14 @@ class ForumImageProcessor:
                         return
 
                 log.debug(f"Forum fetch image {full_url} (viewer={viewer_url}) not found in preload_map")
-                mime = ext = final_data = None
-                chosen_url = None
-                for cand in candidate_urls:
-                    headers, data, err = await ForumImageProcessor.fetch_image_data(session, cand, referer=base_url, viewer_url=viewer_url if cand == full_url else None)
-                    if err or not data or not headers:
-                        continue
-                    m2, e2, d2, val_err = ImageProcessor.optimize_and_get_details(cand, headers, data)
-                    if val_err:
-                        log.debug(f"Skipped image {cand}: {val_err}")
-                        continue
-                    mime, ext, final_data, chosen_url = m2, e2, d2, cand
-                    break
-
-                if not final_data:
-                    log.debug(f"Failed to fetch/validate image after candidates: {candidate_urls}")
+                headers, data, err = await ForumImageProcessor.fetch_image_data(session, attach_target, referer=base_url, viewer_url=viewer_url)
+                if err:
                     return
 
-                effective_url = chosen_url or full_url
+                mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(full_url, headers, data)
+                if val_err:
+                    log.debug(f"Skipped image {full_url}: {val_err}")
+                    return
 
                 hashed = _hash_bytes(final_data)
                 if hashed and hashed in hash_map:
@@ -1118,12 +1092,10 @@ class ForumImageProcessor:
                         alt_urls.append(viewer_url.split("?", 1)[0])
                 if attachment_base:
                     alt_urls.append(attachment_base)
-                if candidate_urls:
-                    alt_urls.extend(candidate_urls)
 
-                fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(effective_url).path))[0])
+                fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(full_url).path))[0])
                 if len(fname_base) < 3:
-                    fname_base = f"img_{abs(hash(effective_url))}"
+                    fname_base = f"img_{abs(hash(full_url))}"
 
                 count = 0
                 fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}{ext}"
