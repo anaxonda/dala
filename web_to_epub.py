@@ -604,28 +604,47 @@ class ImageProcessor:
                             del img_tag[attr]
                     return
 
-                headers, data, err = await ImageProcessor.fetch_image_data(session, full_url, referer=base_url)
-                if err:
-                    return
+                # Build fetch candidates from src and any srcset entries (plus queryless variants)
+                candidate_urls = []
+                def _add_candidate(u: Optional[str]):
+                    if u and u not in candidate_urls:
+                        candidate_urls.append(u)
 
-                mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(full_url, headers, data)
-                if val_err:
-                    log.debug(f"Skipped image {full_url}: {val_err}")
+                _add_candidate(full_url)
+                if "?" in full_url:
+                    _add_candidate(full_url.split("?", 1)[0])
+                for srcset_str in filter(None, [data_srcset, srcset]):
+                    for candidate in ImageProcessor.parse_srcset(srcset_str):
+                        cand_full = urljoin(base_url, candidate)
+                        _add_candidate(cand_full)
+                        if "?" in cand_full:
+                            _add_candidate(cand_full.split("?", 1)[0])
+
+                mime = ext = final_data = None
+                effective_url = None
+                for cand in candidate_urls:
+                    headers, data, err = await ImageProcessor.fetch_image_data(session, cand, referer=base_url)
+                    if err or not headers or not data:
+                        continue
+                    m2, e2, d2, val_err = ImageProcessor.optimize_and_get_details(cand, headers, data)
+                    if val_err:
+                        log.debug(f"Skipped image {cand}: {val_err}")
+                        continue
+                    mime, ext, final_data, effective_url = m2, e2, d2, cand
+                    break
+
+                if not final_data:
+                    log.debug(f"Failed to fetch/validate image after candidates: {candidate_urls}")
                     return
 
                 alt_urls = []
-                if "?" in full_url:
-                    alt_urls.append(full_url.split("?", 1)[0])
-                if viewer_url:
-                    alt_urls.append(viewer_url)
-                    if "?" in viewer_url:
-                        alt_urls.append(viewer_url.split("?", 1)[0])
-                if attachment_base and attachment_base not in alt_urls:
-                    alt_urls.append(attachment_base)
+                for u in candidate_urls:
+                    if u:
+                        alt_urls.append(u)
 
-                fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(full_url).path))[0])
+                fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(effective_url).path))[0])
                 if len(fname_base) < 3:
-                    fname_base = f"img_{abs(hash(full_url))}"
+                    fname_base = f"img_{abs(hash(effective_url))}"
 
                 count = 0
                 fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}{ext}"
@@ -634,7 +653,7 @@ class ImageProcessor:
                     fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}_{count}{ext}"
 
                 uid = f"img_{abs(hash(fname))}"
-                asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=full_url, alt_urls=alt_urls or None)
+                asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=effective_url or full_url, alt_urls=alt_urls or None)
                 book_assets.append(asset)
 
                 img_tag['src'] = fname
