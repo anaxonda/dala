@@ -621,26 +621,27 @@ class ImageProcessor:
 
             final_src = None
 
+            candidates = []
+            if data_src:
+                candidates.append(data_src)
+            if data_srcset:
+                candidates.extend(ImageProcessor.parse_srcset(data_srcset))
+            if srcset:
+                candidates.extend(ImageProcessor.parse_srcset(srcset))
+
             if src and not ImageProcessor.is_junk(src):
                 final_src = src
             else:
-                candidates = []
-                if data_src:
-                    candidates.append(data_src)
-                if data_srcset:
-                    candidates.extend(ImageProcessor.parse_srcset(data_srcset))
-                if srcset:
-                    candidates.extend(ImageProcessor.parse_srcset(srcset))
-
                 for c in candidates:
                     if not ImageProcessor.is_junk(c):
                         final_src = c
                         break
-
                 if not final_src and src and not ImageProcessor.is_junk(src):
                     final_src = src
 
             if not final_src or final_src.startswith(('data:', 'mailto:', 'javascript:')):
+                if src and ImageProcessor.is_junk(src) and not any(not ImageProcessor.is_junk(c) for c in candidates):
+                    img_tag.decompose()
                 return
 
             try:
