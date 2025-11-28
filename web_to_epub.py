@@ -399,17 +399,17 @@ class ImageProcessor:
             "Accept-Language": "en-US,en;q=0.5",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
-        refs = []
+        refs = [None]  # try without Referer first
         if referer:
             refs.append(referer)
         try:
             parsed = urlparse(url)
             if parsed.scheme and parsed.netloc:
-                refs.append(f"{parsed.scheme}://{parsed.netloc}")
+                origin = f"{parsed.scheme}://{parsed.netloc}"
+                if origin not in refs:
+                    refs.append(origin)
         except Exception:
             pass
-        if not refs:
-            refs = [None]
 
         last_err = "No data"
         for ref in refs:
@@ -1687,6 +1687,9 @@ class RedditDriver(BaseDriver):
                     for a in com_soup.find_all('a'):
                         href = a.get('href')
                         if href and re.search(r'\.(jpe?g|png|webp|gif)(\?|$)', href, re.IGNORECASE):
+                            # Skip non-file wiki pages masquerading with extensions
+                            if "://commons.wikimedia.org/wiki/" in href:
+                                continue
                             img = com_soup.new_tag('img', src=href, alt=a.get_text(strip=True) or "Image")
                             a.replace_with(img)
                     await ImageProcessor.process_images(session, com_soup, source.url, assets)
