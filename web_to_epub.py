@@ -394,16 +394,35 @@ class ArticleExtractor:
 class ImageProcessor:
     @staticmethod
     async def fetch_image_data(session, url, referer=None):
+        image_headers = {
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        refs = []
+        if referer:
+            refs.append(referer)
         try:
-            headers, _ = await fetch_with_retry(session, url, 'headers', referer=referer)
-            if not headers:
-                return None, None, "No headers"
-            data, _ = await fetch_with_retry(session, url, 'bytes', referer=referer)
-            if not data:
-                return headers, None, "No data"
-            return headers, data, None
-        except Exception as e:
-            return None, None, str(e)
+            parsed = urlparse(url)
+            if parsed.scheme and parsed.netloc:
+                refs.append(f"{parsed.scheme}://{parsed.netloc}")
+        except Exception:
+            pass
+        if not refs:
+            refs = [None]
+
+        last_err = "No data"
+        for ref in refs:
+            try:
+                headers, _ = await fetch_with_retry(session, url, 'headers', referer=ref, extra_headers=image_headers)
+                data, _ = await fetch_with_retry(session, url, 'bytes', referer=ref, extra_headers=image_headers)
+                if headers and data:
+                    return headers, data, None
+                last_err = "No headers" if not headers else "No data"
+            except Exception as e:
+                last_err = str(e)
+                continue
+        return None, None, last_err
 
     @staticmethod
     def optimize_and_get_details(url, headers, data):
