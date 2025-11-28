@@ -404,9 +404,7 @@ class ImageProcessor:
             headers = {
                 "User-Agent": "Mozilla/5.0",
                 "Referer": commons_ref,
-                "Origin": "https://commons.wikimedia.org",
                 "Accept": "*/*",
-                "Accept-Language": "en-US,en;q=0.5",
             }
             targets = [url]
             if fname:
