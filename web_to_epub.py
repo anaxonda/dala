@@ -1607,6 +1607,7 @@ class RedditDriver(BaseDriver):
             link_url = post_data.get("url")
             article_html = ""
             chapter_title = title
+            is_image_link = link_url and re.search(r'\.(jpe?g|png|webp|gif)(\?|$)', link_url, re.IGNORECASE)
 
             if selftext_html:
                 decoded = html.unescape(selftext_html)
@@ -1614,6 +1615,15 @@ class RedditDriver(BaseDriver):
                 if not options.no_images:
                     await ImageProcessor.process_images(session, soup, source.url, assets)
                 article_html = soup.prettify()
+            elif is_image_link:
+                img_html = f"""<div class="img-block"><img class="epub-image" src="{link_url}" alt="{title}"/></div>"""
+                soup = BeautifulSoup(img_html, 'html.parser')
+                if not options.no_images:
+                    await ImageProcessor.process_images(session, soup, link_url, assets)
+                article_html = soup.prettify()
+                context = f"<p><strong>Reddit Link:</strong> <a href=\"{source.url}\">{source.url}</a></p>"
+                meta_html = ArticleExtractor.build_meta_block(link_url, {"author": None, "date": None, "sitename": urlparse(link_url).netloc}, context=context)
+                article_html = f"{meta_html}<hr/>{article_html}"
             elif link_url and not link_url.startswith(("https://www.reddit.com", "https://old.reddit.com", "https://redd.it")):
                 art_data = await ArticleExtractor.get_article_content(session, link_url, force_archive=options.archive)
                 if art_data['success']:
@@ -1651,6 +1661,19 @@ class RedditDriver(BaseDriver):
                 chunks.append(format_comment_html(comment, fmt))
                 chunks.append("</div>")
             comments_html = "".join(chunks)
+
+            if comments_html and not options.no_images:
+                try:
+                    com_soup = BeautifulSoup(comments_html, 'html.parser')
+                    for a in com_soup.find_all('a'):
+                        href = a.get('href')
+                        if href and re.search(r'\.(jpe?g|png|webp|gif)(\?|$)', href, re.IGNORECASE):
+                            img = com_soup.new_tag('img', src=href, alt=a.get_text(strip=True) or "Image")
+                            a.replace_with(img)
+                    await ImageProcessor.process_images(session, com_soup, source.url, assets)
+                    comments_html = com_soup.prettify()
+                except Exception as e:
+                    log.debug(f"Reddit comment image embed failed: {e}")
 
             if comments_html:
                 full_com_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Comments</title><link rel="stylesheet" href="style/default.css"/></head><body>
