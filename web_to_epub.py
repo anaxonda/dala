@@ -402,7 +402,7 @@ class ImageProcessor:
             fname = os.path.basename(parsed.path)
             commons_ref = f"https://commons.wikimedia.org/wiki/File:{fname}" if fname else "https://commons.wikimedia.org/wiki/"
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": "PersonalEpubMaker/1.0 (reading project; contact: epub.research@proton.me)",
                 "Referer": commons_ref,
                 "Accept": "*/*",
             }
