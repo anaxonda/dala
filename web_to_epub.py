@@ -259,6 +259,22 @@ async def fetch_with_retry(session, url, response_type='json', allow_redirects=T
 
 class ArticleExtractor:
     @staticmethod
+    def build_meta_block(url: str, data: dict, context: Optional[str] = None) -> str:
+        """Shared article metadata block with source, author, date, site, archive info."""
+        author = data.get('author') or 'Unknown'
+        date = data.get('date') or 'Unknown'
+        site = data.get('sitename') or urlparse(url).netloc or 'Unknown'
+        rows = [
+            f"<p><strong>Article Source:</strong> <a href=\"{url}\">{url}</a></p>",
+            f"<p><strong>Article Author:</strong> {author} | <strong>Article Date:</strong> {date} | <strong>Site:</strong> {site}</p>",
+        ]
+        if context:
+            rows.append(context)
+        if data.get('was_archived') and data.get('archive_url'):
+            rows.append(f"<p class=\"archive-notice\">Archived: <a href=\"{data['archive_url']}\">{data['archive_url']}</a></p>")
+        return "<div class=\"post-meta\">" + "".join(rows) + "</div>"
+
+    @staticmethod
     def extract_from_html(html_content, url):
         try:
             metadata = trafilatura.extract_metadata(html_content)
@@ -1248,8 +1264,7 @@ class SubstackDriver(BaseDriver):
 
         title = data['title'] or "Substack Article"
         chapter_html = body_soup.prettify()
-        meta_html = f"""<div class="post-meta"><p><strong>Original URL:</strong> <a href="{url}">{url}</a></p>
-        <p><strong>Author:</strong> {data['author'] or 'Unknown'} | <strong>Date:</strong> {data['date'] or 'Unknown'} | <strong>Site:</strong> {data['sitename'] or 'Unknown'}</p></div>"""
+        meta_html = ArticleExtractor.build_meta_block(url, data)
 
         chapters = []
         final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head>
@@ -1463,12 +1478,7 @@ class GenericDriver(BaseDriver):
             await ImageProcessor.process_images(session, body_soup, base, assets)
 
         chapter_html = body_soup.prettify()
-        meta_html = f"""<div class="post-meta">
-            <p><strong>Original URL:</strong> <a href="{url}">{url}</a></p>
-            <p><strong>Author:</strong> {data['author'] or 'Unknown'} | <strong>Date:</strong> {data['date'] or 'Unknown'} | <strong>Site:</strong> {data['sitename'] or 'Unknown'}</p>
-        </div>"""
-        if data['was_archived']:
-            meta_html += f"""<p class="archive-notice">Retrieved from Archive.org: <a href="{data['archive_url']}">{data['archive_url']}</a></p>"""
+        meta_html = ArticleExtractor.build_meta_block(url, data)
 
         final_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head>
         <body><h1>{title}</h1>{meta_html}<hr/>{chapter_html}</body></html>"""
@@ -1517,15 +1527,15 @@ class HackerNewsDriver(BaseDriver):
                         base = art_data.get('archive_url') if art_data.get('was_archived') else article_url
                         await ImageProcessor.process_images(session, body, base, assets)
                     art_html = body.prettify()
-                    meta_info = f"<p><strong>Article Author:</strong> {art_data['author']}</p>" if art_data['author'] else ""
-                    if art_data['was_archived']: meta_info += f"<p class='archive-notice'>Archived: <a href='{art_data['archive_url']}'>Link</a></p>"
-                    art_html = f"{meta_info}<hr/>{art_html}"
+                    context = f"<p><strong>HN Source:</strong> <a href=\"{url}\">{title}</a></p>"
+                    meta_html = ArticleExtractor.build_meta_block(article_url, art_data, context=context)
+                    art_html = f"{meta_html}<hr/>{art_html}"
                 else: art_html = f"<p>Could not fetch article: <a href='{article_url}'>{article_url}</a></p>"
             elif post_text: art_html = f"<div>{post_text}</div>"
             else: art_html = ""
 
             final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{art_title}</title><link rel="stylesheet" href="style/default.css"/></head><body>
-            <h1>{art_title}</h1><div class="post-meta"><p><strong>HN Source:</strong> <a href="{url}">{title}</a></p></div>{art_html}</body></html>"""
+            <h1>{art_title}</h1>{art_html}</body></html>"""
 
             art_chap = Chapter(title=art_title, filename="article.xhtml", content_html=final_art_html, uid="article", is_article=True)
             chapters.append(art_chap)
@@ -1614,16 +1624,16 @@ class RedditDriver(BaseDriver):
                         base = art_data.get('archive_url') if art_data.get('was_archived') else link_url
                         await ImageProcessor.process_images(session, body, base, assets)
                     article_html = body.prettify()
+                    context = f"<p><strong>Reddit Link:</strong> <a href=\"{source.url}\">{source.url}</a></p>"
+                    meta_html = ArticleExtractor.build_meta_block(link_url, art_data, context=context)
+                    article_html = f"{meta_html}<hr/>{article_html}"
                 else:
                     article_html = f"<p>Original link: <a href=\"{link_url}\">{link_url}</a></p>"
             else:
                 article_html = f"<p>Original thread: <a href=\"{source.url}\">{source.url}</a></p>"
 
-            meta_bits = [f"<p><strong>Subreddit:</strong> r/{subreddit}</p>" if subreddit else ""]
-            meta_bits.append(f"<p><strong>Reddit Link:</strong> <a href=\"{source.url}\">{source.url}</a></p>")
-            meta_html = "".join(meta_bits)
             final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{chapter_title}</title><link rel="stylesheet" href="style/default.css"/></head>
-            <body><h1>{chapter_title}</h1><div class="post-meta">{meta_html}</div><hr/>{article_html}</body></html>"""
+            <body><h1>{chapter_title}</h1>{article_html}</body></html>"""
 
             art_chap = Chapter(title=chapter_title, filename="article.xhtml", content_html=final_art_html, uid=f"reddit_art_{post_id}", is_article=True)
             chapters.append(art_chap)
