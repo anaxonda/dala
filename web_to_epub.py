@@ -423,6 +423,7 @@ class ImageProcessor:
                 except Exception as e:
                     log.debug(f"Wikimedia fetch error for {tgt}: {e}")
                     continue
+            log.warning(f"Wikimedia blocked for {url} (targets tried={targets})")
             return None, None, "Wikimedia blocked"
 
         # Default path: try with provided referer, origin, then none
