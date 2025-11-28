@@ -408,8 +408,15 @@ class ImageProcessor:
                 origin = f"{parsed.scheme}://{parsed.netloc}"
                 if origin not in refs:
                     refs.append(origin)
-                if "upload.wikimedia.org" in parsed.netloc and "https://commons.wikimedia.org/wiki/" not in refs:
-                    refs.append("https://commons.wikimedia.org/wiki/")
+                if "upload.wikimedia.org" in parsed.netloc:
+                    commons_root = "https://commons.wikimedia.org/wiki/"
+                    if commons_root not in refs:
+                        refs.append(commons_root)
+                    fname = os.path.basename(parsed.path)
+                    if fname:
+                        file_page = commons_root + f"File:{fname}"
+                        if file_page not in refs:
+                            refs.append(file_page)
         except Exception:
             pass
 
