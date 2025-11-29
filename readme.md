@@ -24,6 +24,8 @@ uv run web_to_epub.py [URL]
 ```
 - Supports single articles, HN threads, Substack posts (including custom domains), Reddit threads (old/new/redd.it), and forum threads (e.g., XenForo).
 - Bundle multiple URLs: `uv run web_to_epub.py -i links.txt --bundle --bundle-title "Morning Read"`
+- Run local server for the extension: `uv run server.py`
+- Install the signed Firefox add-on (unlisted, current): `extension/web-ext-artifacts/79556425c64b4e2c9b57-2.3.xpi` via “Install Add-on From File…” in `about:addons`.
 
 ## Options & Flags
 
@@ -137,15 +139,12 @@ The extension needs a backend to build the EPUB.
 3.  Click **"Load Temporary Add-on..."**.
 4.  Navigate to the `epub-extension/` folder in this project.
 5.  Select `manifest.json`.
-   - Or load the signed XPI (`extension/web-ext-artifacts/79556425c64b4e2c9b57-2.3.xpi`) via “Install Add-on From File…” in `about:addons` (unlisted AMO-signed).
+   - Or install the signed XPI (`extension/web-ext-artifacts/79556425c64b4e2c9b57-2.3.xpi`) via “Install Add-on From File…” in `about:addons` (unlisted AMO-signed).
 
 ### Step 3: Using the Extension
-*   **Download Page:** Click the extension icon -> "Download Page".
-*   **Queue/Bundle:**
-    1.  Right-click any link or page -> **"Add to EPUB Queue"**.
-    2.  Open extension popup -> Go to **"Queue"** tab.
-    3.  Click **"Download Bundle"**.
-*   **Add Tabs:** You can bulk-add all open tabs or currently selected (Shift+Click) tabs via the popup.
+*   **Download Page:** Click the extension icon -> "Download Page", or right-click and choose **"Download Page to EPUB"**.
+*   **Queue/Bundle:** Right-click to **"Add to EPUB Queue"**, or paste/edit URLs directly in the Queue textarea (one per line), then **Download Bundle**.
+*   **Add Tabs:** Use **+ Current / + Selected / + All** in the Queue tab to import open tabs.
 
 ---
 
