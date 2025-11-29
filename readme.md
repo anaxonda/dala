@@ -137,6 +137,7 @@ The extension needs a backend to build the EPUB.
 3.  Click **"Load Temporary Add-on..."**.
 4.  Navigate to the `epub-extension/` folder in this project.
 5.  Select `manifest.json`.
+   - Or load the signed XPI (`extension/web-ext-artifacts/79556425c64b4e2c9b57-2.3.xpi`) via “Install Add-on From File…” in `about:addons` (unlisted AMO-signed).
 
 ### Step 3: Using the Extension
 *   **Download Page:** Click the extension icon -> "Download Page".
