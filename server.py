@@ -17,6 +17,7 @@
 import uvicorn
 import os
 import tempfile
+import shutil
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -123,6 +124,16 @@ async def convert(req: ConversionRequest):
         core.EpubWriter.write(final_book, tmp_path)
         filename = f"{core.sanitize_filename(final_book.title)}.epub"
         print(f"✅ Sending: {filename}")
+
+        # If running inside Termux with shared storage mounted, drop a copy to Downloads
+        termux_dl = "/data/data/com.termux/files/home/storage/downloads"
+        if os.path.isdir(termux_dl):
+            try:
+                dst = os.path.join(termux_dl, filename)
+                shutil.copy2(tmp_path, dst)
+                print(f"📥 Copied EPUB to Termux downloads: {dst}")
+            except Exception as copy_err:
+                print(f"⚠️  Could not copy to Termux downloads: {copy_err}")
 
         return FileResponse(path=tmp_path, filename=filename, media_type='application/epub+zip')
 

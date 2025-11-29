@@ -5,28 +5,37 @@ browser.runtime.onInstalled.addListener(() => {
         updateBadge();
     });
 
-    browser.menus.create({
-        id: "add-to-queue",
-        title: "Add to EPUB Queue",
-        contexts: ["page", "link"]
-    });
-    browser.menus.create({
-        id: "download-page",
-        title: "Download Page to EPUB",
-        contexts: ["page", "link"]
-    });
+    // Some Firefox Android builds omit menus; guard to keep background alive
+    const menus = browser.menus || browser.contextMenus;
+    if (menus) {
+        menus.create({
+            id: "add-to-queue",
+            title: "Add to EPUB Queue",
+            contexts: ["page", "link"]
+        });
+        menus.create({
+            id: "download-page",
+            title: "Download Page to EPUB",
+            contexts: ["page", "link"]
+        });
+    } else {
+        console.warn("Context menus unavailable on this platform");
+    }
 });
 
 // Context Menu Action
-browser.menus.onClicked.addListener(async (info, tab) => {
-    if (info.menuItemId === "add-to-queue") {
-        const url = info.linkUrl || tab.url;
-        await addToQueue(url);
-    } else if (info.menuItemId === "download-page") {
-        const url = info.linkUrl || tab.url;
-        await downloadSingleFromContext(url);
-    }
-});
+const menusApi = browser.menus || browser.contextMenus;
+if (menusApi && menusApi.onClicked) {
+    menusApi.onClicked.addListener(async (info, tab) => {
+        if (info.menuItemId === "add-to-queue") {
+            const url = info.linkUrl || tab.url;
+            await addToQueue(url);
+        } else if (info.menuItemId === "download-page") {
+            const url = info.linkUrl || tab.url;
+            await downloadSingleFromContext(url);
+        }
+    });
+}
 
 // Message Listener (From Popup)
 browser.runtime.onMessage.addListener((message) => {
@@ -134,6 +143,24 @@ function getFilenameFromHeader(header) {
     return filename;
 }
 
+async function openEpubInTab(blob, filename) {
+    try {
+        const buffer = await blob.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        const chunkSize = 8192;
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+        }
+        const base64 = btoa(binary);
+        const dataUrl = `data:application/epub+zip;base64,${base64}`;
+        await browser.tabs.create({ url: dataUrl });
+        console.warn(`Opened EPUB in tab for manual save: ${filename}`);
+    } catch (e) {
+        console.error("Failed to open EPUB blob in tab", e);
+    }
+}
+
 async function processDownloadWithAssets(payload, isBundle) {
     console.log("🔧 Background: Processing download with asset enrichment");
     if (payload && payload.sources) {
@@ -191,12 +218,34 @@ async function processDownloadCore(payload, isBundle) {
         const cleanSub = rawSub.replace(/[/\\\\]+/g, '');
         const targetPath = cleanSub ? `${cleanSub}/${filename}` : filename;
 
-        await browser.downloads.download({
-            url: url,
-            filename: targetPath,
-            saveAs: false,
-            conflictAction: 'uniquify'
-        });
+        const canDownload = browser.downloads && typeof browser.downloads.download === "function";
+        const isAndroid = /Android/i.test((navigator && navigator.userAgent) || "");
+        let downloaded = false;
+
+        if (canDownload) {
+            try {
+                await browser.downloads.download({
+                    url: url,
+                    filename: targetPath,
+                    saveAs: false,
+                    conflictAction: 'uniquify'
+                });
+                downloaded = true;
+            } catch (e) {
+                console.warn("downloads API failed; will open blob in new tab", e);
+            }
+        } else {
+            console.warn("downloads API unavailable; will open blob in new tab");
+        }
+
+        if (!downloaded) {
+            await openEpubInTab(blob, filename);
+        } else if (isAndroid) {
+            // Some Android builds acknowledge downloads but fail silently; also open tab as backup
+            await openEpubInTab(blob, filename);
+        }
+
+        URL.revokeObjectURL(url);
 
         browser.browserAction.setBadgeText({ text: "OK" });
         browser.browserAction.setBadgeBackgroundColor({ color: "green" });
