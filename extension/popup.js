@@ -42,6 +42,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const maxPagesInput = document.getElementById('opt-maxpages');
         if (pagesInput) pagesInput.onchange = saveOptions;
         if (maxPagesInput) maxPagesInput.onchange = saveOptions;
+        const subfolderInput = document.getElementById('opt-subfolder');
+        if (subfolderInput) subfolderInput.onchange = saveOptions;
         const cancelBtn = document.getElementById('btn-cancel');
         if (cancelBtn) cancelBtn.onclick = () => {
             browser.runtime.sendMessage({ action: "cancel-download" });
@@ -99,7 +101,8 @@ async function saveOptions() {
         include_cookies: document.getElementById('opt-cookies').checked,
         forum: document.getElementById('opt-forum').checked,
         pages: (document.getElementById('opt-pages')?.value || "").trim(),
-        max_pages: document.getElementById('opt-maxpages')?.value || ""
+        max_pages: document.getElementById('opt-maxpages')?.value || "",
+        subfolder: (document.getElementById('opt-subfolder')?.value || "").trim()
     };
     await browser.storage.local.set({ savedOptions: options });
 }
@@ -119,6 +122,9 @@ async function restoreOptions() {
         if (res.savedOptions.max_pages !== undefined) {
             document.getElementById('opt-maxpages').value = res.savedOptions.max_pages;
         }
+        if (res.savedOptions.subfolder !== undefined) {
+            document.getElementById('opt-subfolder').value = res.savedOptions.subfolder;
+        }
     }
 }
 
@@ -131,7 +137,8 @@ function getOptions() {
         include_cookies: document.getElementById('opt-cookies').checked,
         forum: document.getElementById('opt-forum').checked,
         pages: (document.getElementById('opt-pages')?.value || "").trim(),
-        max_pages: (document.getElementById('opt-maxpages')?.value || "").trim()
+        max_pages: (document.getElementById('opt-maxpages')?.value || "").trim(),
+        subfolder: (document.getElementById('opt-subfolder')?.value || "").trim()
     };
 }
 

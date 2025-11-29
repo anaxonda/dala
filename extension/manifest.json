@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
-  "name": "Web to EPUB Pro",
-  "version": "2.1",
+  "name": "dala",
+  "version": "2.2",
   "description": "Batch download web articles to EPUB via local server.",
   "icons": { "48": "icon.png" },
   "permissions": [

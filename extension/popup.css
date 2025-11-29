@@ -27,6 +27,7 @@ body { width: 340px; font-family: system-ui, sans-serif; margin: 0; background: 
 .input-group { margin-bottom: 15px; }
 .input-group label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
 input[type="text"] { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+input[type="number"] { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
 
 /* QUEUE LIST */
 .queue-actions { display: flex; gap: 5px; margin-bottom: 10px; flex-wrap: wrap; }

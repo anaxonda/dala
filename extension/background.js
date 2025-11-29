@@ -186,10 +186,13 @@ async function processDownloadCore(payload, isBundle) {
 
         // Use Robust Header Parsing
         const filename = getFilenameFromHeader(response.headers.get('Content-Disposition'));
+        const res = await browser.storage.local.get("savedOptions");
+        const subfolder = (res.savedOptions && res.savedOptions.subfolder) ? res.savedOptions.subfolder : "WebToEpub";
+        const targetPath = subfolder ? `${subfolder.replace(/[/\\\\]+/g, '')}/${filename}` : filename;
 
         await browser.downloads.download({
             url: url,
-            filename: "WebToEpub/" + filename,
+            filename: targetPath,
             saveAs: false,
             conflictAction: 'uniquify'
         });
