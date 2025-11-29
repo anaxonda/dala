@@ -21,6 +21,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (currentTab && isValidUrl(currentTab.url)) addToQueue(currentTab.url);
         };
         document.getElementById('btn-clear').onclick = clearQueue;
+        const queueEditor = document.getElementById('queue-editor');
+        if (queueEditor) {
+            queueEditor.addEventListener('input', debounce(saveQueueFromEditor, 300));
+        }
 
         // Bulk Actions
         document.getElementById('btn-add-selected').onclick = importSelectedTabs;
@@ -321,34 +325,14 @@ async function importAllTabs() {
 async function refreshQueue() {
     const res = await browser.storage.local.get("urlQueue");
     const queue = res.urlQueue || [];
-    const list = document.getElementById('queue-list');
-
+    const editor = document.getElementById('queue-editor');
     if(document.getElementById('queue-count')) {
         document.getElementById('queue-count').textContent = `(${queue.length})`;
     }
-
-    list.innerHTML = '';
-    if (queue.length === 0) {
-        list.innerHTML = '<div class="empty-state">Queue is empty</div>';
-        return;
+    if (editor) {
+        editor.value = queue.join("\n");
     }
-
-    queue.forEach((url, index) => {
-        const div = document.createElement('div');
-        div.className = 'queue-item';
-        // &times; is the HTML entity for the multiplication X
-        div.innerHTML = `<span>${url}</span><button class="btn-remove" data-idx="${index}">&times;</button>`;
-        list.appendChild(div);
-    });
-
-    document.querySelectorAll('.btn-remove').forEach(btn => {
-        btn.onclick = async (e) => {
-            const idx = parseInt(e.target.dataset.idx);
-            queue.splice(idx, 1);
-            await browser.storage.local.set({ urlQueue: queue });
-            refreshQueue();
-        };
-    });
+    updateBadgeCount(queue.length);
 }
 
 async function addToQueue(url) {
@@ -364,6 +348,31 @@ async function addToQueue(url) {
 async function clearQueue() {
     await browser.storage.local.set({ urlQueue: [] });
     refreshQueue();
+}
+
+async function saveQueueFromEditor() {
+    const editor = document.getElementById('queue-editor');
+    if (!editor) return;
+    const lines = editor.value.split('\n').map(l => l.trim()).filter(l => l);
+    const uniq = Array.from(new Set(lines.filter(isValidUrl)));
+    await browser.storage.local.set({ urlQueue: uniq });
+    if(document.getElementById('queue-count')) {
+        document.getElementById('queue-count').textContent = `(${uniq.length})`;
+    }
+    updateBadgeCount(uniq.length);
+}
+
+function updateBadgeCount(count) {
+    browser.browserAction.setBadgeText({ text: count > 0 ? count.toString() : "" });
+    browser.browserAction.setBadgeBackgroundColor({ color: "#e85a4f" });
+}
+
+function debounce(fn, delay) {
+    let t = null;
+    return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), delay);
+    };
 }
 
 // --- UI HELPERS ---
@@ -491,6 +500,7 @@ async function safeDownloadSingle() {
 
 async function safeDownloadBundle() {
     try {
+        await saveQueueFromEditor();
         const res = await browser.storage.local.get("urlQueue");
         const queue = res.urlQueue || [];
 

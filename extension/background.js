@@ -10,6 +10,11 @@ browser.runtime.onInstalled.addListener(() => {
         title: "Add to EPUB Queue",
         contexts: ["page", "link"]
     });
+    browser.menus.create({
+        id: "download-page",
+        title: "Download Page to EPUB",
+        contexts: ["page", "link"]
+    });
 });
 
 // Context Menu Action
@@ -17,6 +22,9 @@ browser.menus.onClicked.addListener(async (info, tab) => {
     if (info.menuItemId === "add-to-queue") {
         const url = info.linkUrl || tab.url;
         await addToQueue(url);
+    } else if (info.menuItemId === "download-page") {
+        const url = info.linkUrl || tab.url;
+        await downloadSingleFromContext(url);
     }
 });
 
@@ -42,6 +50,48 @@ async function addToQueue(url) {
         await browser.storage.local.set({ urlQueue: queue });
         updateBadge();
     }
+}
+
+function parsePageSpecInput(spec) {
+    if (!spec) return null;
+    const parts = spec.split(',').map(p => p.trim()).filter(Boolean);
+    const pages = new Set();
+    for (const part of parts) {
+        if (part.includes('-')) {
+            const [a, b] = part.split('-').map(x => parseInt(x, 10));
+            if (!isNaN(a) && !isNaN(b)) {
+                const start = Math.min(a, b);
+                const end = Math.max(a, b);
+                for (let i = start; i <= end; i++) pages.add(i);
+            }
+        } else {
+            const n = parseInt(part, 10);
+            if (!isNaN(n) && n > 0) pages.add(n);
+        }
+    }
+    const arr = Array.from(pages).sort((a, b) => a - b);
+    return arr.length ? arr : null;
+}
+
+async function downloadSingleFromContext(url) {
+    if (!url || !url.startsWith("http")) return;
+    const optsRes = await browser.storage.local.get("savedOptions");
+    const opts = optsRes.savedOptions || {};
+    const page_spec = parsePageSpecInput(opts.pages);
+    const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
+    const is_forum = !!opts.forum;
+    const payload = {
+        sources: [{ url, html: null, cookies: null, assets: [], is_forum }],
+        bundle_title: null,
+        no_comments: !!opts.no_comments,
+        no_article: !!opts.no_article,
+        no_images: !!opts.no_images,
+        archive: !!opts.archive,
+        max_pages,
+        page_spec: page_spec && page_spec.length ? page_spec : null,
+        fetch_assets: false
+    };
+    await processDownloadWithAssets(payload, false);
 }
 
 function updateBadge() {

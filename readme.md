@@ -72,6 +72,19 @@ uv run web_to_epub.py "https://www.trek-lite.com/index.php?threads/arcdome-1.152
 ---
 
 ## 🔄 Updates
+- **UI & queue polish (latest):**
+  - Popup queue is now an editable textarea: paste/edit URLs directly; changes auto-save and the queue persists across downloads.
+  - Added context-menu action “Download Page to EPUB” for immediate conversion of the current page/link; queue remains untouched.
+- **Metadata consistency:**
+  - Unified article meta block across drivers (Article Source/Author/Date/Site; archive notice where applicable). HN/Reddit external articles now show consistent metadata alongside thread context.
+- **Image cleanup:**
+  - Generic image processing strips placeholders (grey-placeholder), flattens wrappers, dedupes captions, and enforces `<div class="img-block"><img class="epub-image">` with a single caption when present.
+  - Figures/spans are unwrapped; duplicate captions removed.
+- **Reddit media fixes:**
+  - Image-link posts (`i.redd.it/...png`) render as the article with embedded images.
+  - Comment image links are inlined and fetched (skipping non-file wiki pages).
+- **Wikimedia fetch tuning:**
+  - Wikimedia images fetched with Commons referer + project UA; targeted fallbacks added and logging when blocked (ongoing).
 - **Forum image HTML simplification (latest):**
   - **Problem:** XenForo lightbox markup (`lazyloadPreSize`, `lbContainer*`, zoomer stubs, `data-lb-*`, `data-zoom-target`, empty `title`) leaked into the EPUB, leaving nested wrappers and non-reader-safe attributes.
   - **Fix:** Added forum-specific cleanup in `ForumImageProcessor` to strip lightbox attrs, unwrap XenForo containers, and remove zoomer divs while still running the same asset mapping/dedup logic.

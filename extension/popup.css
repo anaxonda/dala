@@ -32,26 +32,19 @@ input[type="text"] { width: 100%; padding: 8px; border: 1px solid #ddd; border-r
 .queue-actions { display: flex; gap: 5px; margin-bottom: 10px; flex-wrap: wrap; }
 .group-right { display: flex; gap: 5px; margin-left: auto; }
 
-.queue-list {
-    height: 160px; overflow-y: auto; background: #fff;
-    border: 1px solid #ddd; border-radius: 4px; margin-bottom: 15px;
+.queue-editor {
+    width: 100%;
+    height: 160px;
+    resize: vertical;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 12px;
+    box-sizing: border-box;
+    background: #fff;
 }
-.queue-item {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 6px 10px; border-bottom: 1px solid #eee; font-size: 12px;
-}
-.queue-item:nth-child(even) { background: #f9f9f9; }
-.queue-item span {
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    max-width: 260px; color: #333;
-}
-.btn-remove {
-    cursor: pointer; color: #888; font-size: 16px; font-weight: bold;
-    border: none; background: none; padding: 0 5px;
-}
-.btn-remove:hover { color: red; }
-
-.empty-state { padding: 20px; text-align: center; color: #999; font-size: 12px; }
+.helper-text { font-size: 11px; color: #666; margin-top: 4px; }
 
 /* BUTTONS */
 .action-btn { width: 100%; padding: 12px; background: #e85a4f; color: white; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; }
