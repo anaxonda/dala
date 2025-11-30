@@ -1,14 +1,16 @@
 {
   "manifest_version": 2,
   "name": "dala",
-  "version": "2.3",
+  "version": "2.3.1",
   "description": "Batch download web articles to EPUB via local server.",
   "browser_specific_settings": {
     "gecko": {
       "id": "{b1ea0604-2407-425b-beb4-b9c81d3671d6}"
     }
   },
-  "icons": { "48": "icon.png" },
+  "icons": {
+    "48": "icon.png"
+  },
   "permissions": [
     "activeTab",
     "tabs",
@@ -23,7 +25,9 @@
     "<all_urls>"
   ],
   "background": {
-    "scripts": ["background.js"]
+    "scripts": [
+      "background.js"
+    ]
   },
   "browser_action": {
     "default_icon": "icon.png",
