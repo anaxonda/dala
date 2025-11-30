@@ -16,8 +16,8 @@ show_status() {
     clear
 
     echo -e "${BLUE}======================================"
-    echo "      EPUB Server Status"
-    echo "======================================${NC}"
+    echo -e "      EPUB Server Status"
+    echo -e "======================================${NC}"
     echo ""
     echo "Time: $(date '+%Y-%m-%d %H:%M:%S')"
     echo ""
@@ -65,19 +65,19 @@ show_status() {
 
     echo ""
     echo -e "${BLUE}======================================"
-    echo "Options:"
-    echo "  ${GREEN}[Enter]${NC} - Close"
-    echo "  ${GREEN}[l]${NC} - View full logs (less)"
-    echo "  ${GREEN}[t]${NC} - Tail logs (follow)"
-    echo "  ${GREEN}[r]${NC} - Refresh status"
-    echo "  ${GREEN}[c]${NC} - Clear screen"
+    echo -e "Options:"
+    echo -e "  ${GREEN}[Enter]${NC} - Close"
+    echo -e "  ${GREEN}[l]${NC} - View full logs (less)"
+    echo -e "  ${GREEN}[t]${NC} - Tail logs (follow)"
+    echo -e "  ${GREEN}[r]${NC} - Refresh status"
+    echo -e "  ${GREEN}[c]${NC} - Clear screen"
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-        echo "  ${YELLOW}[s]${NC} - Stop server"
+        echo -e "  ${YELLOW}[s]${NC} - Stop server"
     else
-        echo "  ${GREEN}[S]${NC} - Start server"
+        echo -e "  ${GREEN}[S]${NC} - Start server"
     fi
-    echo "  ${GREEN}[h]${NC} - Show help"
-    echo "======================================${NC}"
+    echo -e "  ${GREEN}[h]${NC} - Show help"
+    echo -e "======================================${NC}"
     echo ""
 }
 
@@ -85,8 +85,8 @@ show_status() {
 show_help() {
     clear
     echo -e "${BLUE}======================================"
-    echo "      Help & Information"
-    echo "======================================${NC}"
+    echo -e "      Help & Information"
+    echo -e "======================================${NC}"
     echo ""
     echo "Status Script - Manages EPUB server"
     echo ""
@@ -95,9 +95,9 @@ show_help() {
     echo "  Log:  $LOG_FILE"
     echo ""
     echo "Related Scripts:"
-    echo "  Start:  ~/bin/start-server.sh"
-    echo "  Stop:   ~/bin/stop-server.sh"
-    echo "  Status: ~/bin/status-server.sh"
+    echo "  Start:  ~/dala/android/dala_start.sh"
+    echo "  Stop:   ~/dala/android/dala_stop.sh"
+    echo "  Status: ~/dala/android/dala_status.sh"
     echo ""
     echo "Navigation:"
     echo "  - Use single key commands"
@@ -144,19 +144,19 @@ while true; do
             if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
                 # Server is running, stop it
                 echo "Stopping server..."
-                if [ -f ~/bin/stop-server.sh ]; then
-                    ~/bin/stop-server.sh
+                if [ -f ~/dala/android/dala_stop.sh ]; then
+                    ~/dala/android/dala_stop.sh
                 else
-                    echo "Stop script not found at ~/bin/stop-server.sh"
+                    echo "Stop script not found at ~/dala/android/dala_stop.sh"
                 fi
                 sleep 2
             else
                 # Server not running, start it
                 echo "Starting server..."
-                if [ -f ~/bin/start-server.sh ]; then
-                    ~/bin/start-server.sh
+                if [ -f ~/dala/android/dala_start.sh ]; then
+                    ~/dala/android/dala_start.sh
                 else
-                    echo "Start script not found at ~/bin/start-server.sh"
+                    echo "Start script not found at ~/dala/android/dala_start.sh"
                 fi
                 sleep 2
             fi
