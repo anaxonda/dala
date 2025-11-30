@@ -39,7 +39,9 @@ from itertools import islice
 
 # --- Dependency Imports ---
 try:
-    import aiohttp
+import aiohttp
+import socket
+from aiohttp.resolver import ThreadedResolver
     from ebooklib import epub
     import trafilatura
     from pygments import highlight
@@ -201,7 +203,13 @@ def load_cookie_file(path: str) -> List[Dict[str, str]]:
 
 @asynccontextmanager
 async def get_session():
-    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT) as session:
+    # Use threaded DNS to avoid pycares issues on Termux/Android and force IPv4 where needed
+    connector = aiohttp.TCPConnector(
+        resolver=ThreadedResolver(),
+        ttl_dns_cache=300,
+        family=socket.AF_INET
+    )
+    async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT, connector=connector) as session:
         yield session
 
 async def fetch_with_retry(session, url, response_type='json', allow_redirects=True, referer=None, non_retry_statuses: Optional[set] = None, extra_headers: Optional[Dict[str, str]] = None):
