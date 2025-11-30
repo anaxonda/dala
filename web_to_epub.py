@@ -39,9 +39,9 @@ from itertools import islice
 
 # --- Dependency Imports ---
 try:
-import aiohttp
-import socket
-from aiohttp.resolver import ThreadedResolver
+    import aiohttp
+    import socket
+    from aiohttp.resolver import ThreadedResolver
     from ebooklib import epub
     import trafilatura
     from pygments import highlight
