@@ -66,8 +66,13 @@ except ImportError:
 HN_API_BASE_URL = "https://hacker-news.firebaseio.com/v0/"
 HN_ITEM_URL_BASE = "https://news.ycombinator.com/item?id="
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=45)
+IMAGE_TIMEOUT = aiohttp.ClientTimeout(total=5)
 MAX_RETRIES = 5
+IMG_MAX_RETRIES = 1
 RETRY_DELAY = 2.0
+IMG_RETRY_DELAY = 1.5
+IMG_MAX_CANDIDATES = 2
+IMG_MAX_PER_IMAGE_SEC = 6
 IMAGE_DIR_IN_EPUB = "images"
 ALLOWED_IMAGE_MIMES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
 ARCHIVE_ORG_API_BASE = "https://archive.org/wayback/available"
@@ -212,9 +217,20 @@ async def get_session():
     async with aiohttp.ClientSession(timeout=REQUEST_TIMEOUT, connector=connector) as session:
         yield session
 
-async def fetch_with_retry(session, url, response_type='json', allow_redirects=True, referer=None, non_retry_statuses: Optional[set] = None, extra_headers: Optional[Dict[str, str]] = None):
+async def fetch_with_retry(
+    session,
+    url,
+    response_type='json',
+    allow_redirects=True,
+    referer=None,
+    non_retry_statuses: Optional[set] = None,
+    extra_headers: Optional[Dict[str, str]] = None,
+    max_retries: int = MAX_RETRIES,
+    backoff: float = RETRY_DELAY,
+    timeout=None
+):
     final_url = url
-    for attempt in range(MAX_RETRIES):
+    for attempt in range(max_retries):
         try:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -226,12 +242,12 @@ async def fetch_with_retry(session, url, response_type='json', allow_redirects=T
             if extra_headers:
                 headers.update(extra_headers)
 
-            async with session.get(url, allow_redirects=allow_redirects, headers=headers, timeout=REQUEST_TIMEOUT) as response:
+            async with session.get(url, allow_redirects=allow_redirects, headers=headers, timeout=timeout or REQUEST_TIMEOUT) as response:
                 final_url = str(response.url)
 
                 if response.status == 429:
                     retry_after = int(response.headers.get("Retry-After", 10))
-                    wait_time = max(retry_after, RETRY_DELAY * (2 ** attempt))
+                    wait_time = max(retry_after, backoff * (2 ** attempt))
                     log.warning(f"Rate limit hit (429). Cooling down for {wait_time}s...")
                     await asyncio.sleep(wait_time)
                     continue
@@ -253,14 +269,14 @@ async def fetch_with_retry(session, url, response_type='json', allow_redirects=T
                 else: return response, final_url
 
         except (aiohttp.ClientError, asyncio.TimeoutError, UnicodeDecodeError) as e:
-            wait = RETRY_DELAY * (2 ** attempt)
-            log.warning(f"Attempt {attempt + 1}/{MAX_RETRIES} failed for {url}: {e}. Retrying in {wait}s.")
-            if attempt + 1 == MAX_RETRIES: return None, url
+            wait = backoff * (2 ** attempt)
+            log.warning(f"Attempt {attempt + 1}/{max_retries} failed for {url}: {e}. Retrying in {wait}s.")
+            if attempt + 1 == max_retries: return None, url
             await asyncio.sleep(wait)
         except Exception as e:
             log.error(f"Unexpected error for {url}: {e}")
-            if attempt + 1 == MAX_RETRIES: return None, url
-            await asyncio.sleep(RETRY_DELAY * (2 ** attempt))
+            if attempt + 1 == max_retries: return None, url
+            await asyncio.sleep(backoff * (2 ** attempt))
     return None, url
 
 # --- Article Extraction Logic ---
@@ -451,8 +467,16 @@ class ImageProcessor:
         last_err = "No data"
         for ref in refs:
             try:
-                headers, _ = await fetch_with_retry(session, url, 'headers', referer=ref, extra_headers=image_headers, non_retry_statuses={401,403})
-                data, _ = await fetch_with_retry(session, url, 'bytes', referer=ref, extra_headers=image_headers, non_retry_statuses={401,403})
+                headers, _ = await fetch_with_retry(
+                    session, url, 'headers', referer=ref, extra_headers=image_headers,
+                    non_retry_statuses={400,401,403,404,451}, max_retries=IMG_MAX_RETRIES,
+                    backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT
+                )
+                data, _ = await fetch_with_retry(
+                    session, url, 'bytes', referer=ref, extra_headers=image_headers,
+                    non_retry_statuses={400,401,403,404,451}, max_retries=IMG_MAX_RETRIES,
+                    backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT
+                )
                 if headers and data:
                     return headers, data, None
                 last_err = "No headers" if not headers else "No data"
@@ -538,8 +562,11 @@ class ImageProcessor:
 
     @staticmethod
     def find_caption(element_tag):
-        if element_tag.parent and element_tag.parent.name == 'figure':
-            cap = element_tag.parent.find('figcaption')
+        if not element_tag:
+            return None
+        fig = element_tag.find_parent('figure')
+        if fig:
+            cap = fig.find('figcaption')
             if cap:
                 return cap.get_text(strip=True)
         nxt = element_tag.find_next_sibling(['p', 'div', 'span', 'figcaption'])
@@ -554,22 +581,15 @@ class ImageProcessor:
         """Wrap an image in a minimal div.img-block with optional caption."""
         if not img_tag or not soup:
             return
-        parent = img_tag.parent
-        # If inside a figure, harvest figcaption then unwrap
-        if parent and parent.name == "figure":
+        # If inside a figure (possibly nested), harvest figcaption then unwrap
+        fig = img_tag.find_parent("figure")
+        if fig:
             if not caption_text:
-                figcap = parent.find("figcaption")
+                figcap = fig.find("figcaption")
                 if figcap:
                     caption_text = figcap.get_text(strip=True)
-            parent.unwrap()
-
-        parent = img_tag.parent
-        if parent and parent.name == "div" and "img-block" in (parent.get("class") or []):
-            if caption_text and not parent.find("p", class_="caption"):
-                cap = soup.new_tag("p", attrs={"class": "caption"})
-                cap.string = caption_text
-                parent.append(cap)
-            return
+                    figcap.decompose()
+            fig.unwrap()
 
         wrapper = soup.new_tag("div", attrs={"class": "img-block"})
         img_tag.replace_with(wrapper)
@@ -578,6 +598,48 @@ class ImageProcessor:
             cap = soup.new_tag("p", attrs={"class": "caption"})
             cap.string = caption_text
             wrapper.append(cap)
+
+        # Remove nearby figcaptions and unwrap noisy containers above the img-block
+        parent = wrapper.parent
+        while parent and parent.name in ("div", "section"):
+            # drop sibling figcaptions at this level
+            for fc in list(parent.find_all("figcaption", recursive=False)):
+                fc.decompose()
+            meaningful = [c for c in parent.contents if not (isinstance(c, str) and not c.strip())]
+            dataid = (parent.get("data-testid") or "").lower()
+            if len(meaningful) == 1 and meaningful[0] is wrapper and (dataid.startswith("imageblock") or dataid.startswith("photoviewer")):
+                parent.unwrap()
+                parent = wrapper.parent
+                continue
+            break
+
+        # As a final cleanup, remove any figcaption siblings immediately after the wrapper
+        sib = wrapper.next_sibling
+        while sib and isinstance(sib, str) and not sib.strip():
+            sib = sib.next_sibling
+        if hasattr(sib, "name") and sib.name == "figcaption":
+            sib.decompose()
+
+        # Also remove any descendant figcaptions left under the same immediate parent
+        parent = wrapper.parent
+        if parent:
+            for fc in list(parent.find_all("figcaption", recursive=False)):
+                fc.decompose()
+
+        # Clean up outer wrappers/figcaptions from NYT/others
+        parent = wrapper.parent
+        while parent and parent.name in ("div", "section"):
+            # drop sibling figcaptions under this parent
+            for fc in list(parent.find_all("figcaption", recursive=False)):
+                fc.decompose()
+            # unwrap known noisy containers that only hold our block
+            children = [c for c in parent.contents if not (isinstance(c, str) and not c.strip())]
+            dataid = (parent.get("data-testid") or "").lower()
+            if len(children) == 1 and children[0] is wrapper and (dataid.startswith("imageblock") or dataid.startswith("photoviewer")):
+                parent.unwrap()
+                parent = wrapper.parent
+                continue
+            break
 
     @staticmethod
     def _cleanup_generic_wrapper(img_tag: Tag, caption_text: Optional[str]) -> None:
@@ -641,7 +703,8 @@ class ImageProcessor:
 
         bad_keywords = [
             "spacer", "1x1", "transparent", "gray.gif", "pixel.gif",
-            "placeholder", "loader", "blank.gif", "grey-placeholder", "gray-placeholder"
+            "placeholder", "loader", "blank.gif", "grey-placeholder", "gray-placeholder",
+            "arc-authors", "author-bio", "avatar"
         ]
         lower_url = url.lower()
         if any(k in lower_url for k in bad_keywords):
@@ -673,6 +736,18 @@ class ImageProcessor:
 
     @staticmethod
     async def process_images(session, soup, base_url, book_assets: list):
+        # Flatten/remove known wrapper containers and stray labels (NYT et al.) before processing
+        for wrapper in list(soup.find_all("div")):
+            dataid = (wrapper.get("data-testid") or "").lower()
+            if dataid.startswith(("imageblock", "photoviewer")):
+                meaningful = [c for c in wrapper.contents if not (isinstance(c, str) and not c.strip())]
+                if len(meaningful) == 1:
+                    wrapper.unwrap()
+        for label in soup.find_all("span"):
+            if (label.get_text(strip=True) or "").lower() == "image":
+                # drop decorative "Image" labels around photos
+                label.decompose()
+
         for pic in soup.find_all('picture'):
             img = pic.find('img')
             if img:
@@ -721,6 +796,7 @@ class ImageProcessor:
                 if "web.archive.org" in base_url and full_url.startswith("http://"):
                     full_url = full_url.replace("http://", "https://", 1)
 
+                started = asyncio.get_event_loop().time()
                 existing = next((a for a in book_assets if a.original_url == full_url), None)
                 if existing:
                     img_tag['src'] = existing.filename
@@ -756,7 +832,10 @@ class ImageProcessor:
 
                 mime = ext = final_data = None
                 effective_url = None
-                for cand in candidate_urls:
+                for cand in candidate_urls[:IMG_MAX_CANDIDATES]:
+                    if asyncio.get_event_loop().time() - started > IMG_MAX_PER_IMAGE_SEC:
+                        log.debug(f"Image timeout for {src} after {IMG_MAX_PER_IMAGE_SEC}s")
+                        break
                     headers, data, err = await ImageProcessor.fetch_image_data(session, cand, referer=base_url)
                     if err or not headers or not data:
                         continue
@@ -807,6 +886,10 @@ class ImageProcessor:
 
         if tasks:
             await tqdm_asyncio.gather(*tasks, desc="Optimizing Images", unit="img", leave=False)
+
+        # Remove any remaining figcaptions after images are wrapped/captioned
+        for fc in list(soup.find_all("figcaption")):
+            fc.decompose()
 
 
 class ForumImageProcessor:
