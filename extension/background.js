@@ -106,6 +106,7 @@ async function downloadSingleFromContext(url) {
     const page_spec = parsePageSpecInput(opts.pages);
     const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
     const is_forum = !!opts.forum;
+    const termux_copy_dir = (opts.termux_copy_dir || "").trim() || null;
     const payload = {
         sources: [{ url, html: null, cookies: null, assets: [], is_forum }],
         bundle_title: null,
@@ -115,7 +116,8 @@ async function downloadSingleFromContext(url) {
         archive: !!opts.archive,
         max_pages,
         page_spec: page_spec && page_spec.length ? page_spec : null,
-        fetch_assets: false
+        fetch_assets: false,
+        termux_copy_dir
     };
     await processDownloadWithAssets(payload, false);
 }
@@ -211,6 +213,19 @@ async function processDownloadCore(payload, isBundle) {
     currentController = new AbortController();
     browser.browserAction.setBadgeText({ text: "..." });
     browser.browserAction.setBadgeBackgroundColor({ color: "#FFA500" }); // Orange
+
+    // Ensure termux copy dir is included if configured
+    try {
+        if (!payload.termux_copy_dir) {
+            const res = await browser.storage.local.get("savedOptions");
+            const termuxDir = (res.savedOptions && typeof res.savedOptions.termux_copy_dir === "string") ? res.savedOptions.termux_copy_dir.trim() : "";
+            if (termuxDir) {
+                payload.termux_copy_dir = termuxDir;
+            }
+        }
+    } catch (_) {
+        // ignore; not critical
+    }
 
     try {
         const response = await fetch("http://127.0.0.1:8000/convert", {
