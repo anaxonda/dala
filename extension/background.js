@@ -55,7 +55,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
         }
         const target = message.url;
         if (target && target.startsWith("http")) {
-            downloadFromShortcut(target, message.html || null);
+            downloadFromShortcut(target, message.html || null, sender && sender.tab);
         }
     } else if (message.action === "shortcut-queue") {
         if (sender && sender.tab && sender.tab.id) {
@@ -68,7 +68,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
     }
 });
 
-async function downloadFromShortcut(url, html) {
+async function downloadFromShortcut(url, html, tab) {
     if (!url || !url.startsWith("http")) return;
     const optsRes = await browser.storage.local.get("savedOptions");
     const opts = optsRes.savedOptions || {};
@@ -76,6 +76,25 @@ async function downloadFromShortcut(url, html) {
     const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
     const is_forum = !!opts.forum;
     const termux_copy_dir = (opts.termux_copy_dir || "").trim() || null;
+    // Collect cookies for same-origin image fetches (optional but helps with hotlink protection)
+    let tabCookies = null;
+    try {
+        if (tab && tab.id && tab.url && tab.url.startsWith("http")) {
+            const urlObj = new URL(tab.url);
+            const rawCookies = await browser.cookies.getAll({ url: `${urlObj.protocol}//${urlObj.host}` });
+            if (rawCookies && rawCookies.length) {
+                tabCookies = rawCookies.map(c => ({
+                    name: c.name,
+                    value: c.value,
+                    domain: c.domain,
+                    path: c.path
+                }));
+            }
+        }
+    } catch (e) {
+        // ignore cookie errors
+    }
+
     const payload = {
         sources: [{ url, html: html || null, cookies: null, assets: [], is_forum }],
         bundle_title: null,
@@ -86,6 +105,7 @@ async function downloadFromShortcut(url, html) {
         max_pages,
         page_spec: page_spec && page_spec.length ? page_spec : null,
         fetch_assets: false,
+        tab_cookies: tabCookies,
         termux_copy_dir
     };
     await processDownloadWithAssets(payload, false);
