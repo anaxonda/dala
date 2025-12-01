@@ -302,6 +302,37 @@ class ArticleExtractor:
         return "<div class=\"post-meta\">" + "".join(rows) + "</div>"
 
     @staticmethod
+    async def _requests_fetch(session, url):
+        try:
+            import requests
+            cookie_dict = {}
+            try:
+                jar = session.cookie_jar.filter_cookies(URL(url))
+                cookie_dict = {k: v.value for k, v in jar.items()}
+            except Exception:
+                pass
+            extra = getattr(session, "_extra_cookies", None)
+            if isinstance(extra, dict):
+                cookie_dict.update(extra)
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+            }
+
+            loop = asyncio.get_running_loop()
+            def _do_req():
+                return requests.get(url, headers=headers, cookies=cookie_dict, timeout=20, allow_redirects=True)
+            
+            resp = await loop.run_in_executor(None, _do_req)
+            if resp.status_code == 200 and resp.text:
+                return resp.text, resp.url
+        except Exception as e:
+            log.debug(f"Article requests fetch failed for {url}: {e}")
+        return None, None
+
+    @staticmethod
     def extract_from_html(html_content, url):
         try:
             metadata = trafilatura.extract_metadata(html_content)
@@ -364,6 +395,7 @@ class ArticleExtractor:
                 if attr not in allowed_attrs and not attr.startswith('data-'):
                     del tag[attr]
             if tag.name == 'div' and not tag.get_text(strip=True) and not tag.find(['img', 'figure']):
+                if tag.has_attr('id'): continue # Preserve potential placeholders
                 tag.decompose()
 
     @staticmethod
@@ -404,7 +436,15 @@ class ArticleExtractor:
                     if not result['success']: result['html'] = raw_html
             return result
 
-        raw_html, final_url = await fetch_with_retry(session, url, 'text')
+        # Treat 403 as non-retryable to fast-fail to archive fallback
+        raw_html, final_url = await fetch_with_retry(session, url, 'text', non_retry_statuses={403})
+
+        if not raw_html:
+             log.warning(f"aiohttp failed for {url}, trying requests fallback...")
+             req_html, req_url = await ArticleExtractor._requests_fetch(session, url)
+             if req_html:
+                 raw_html = req_html
+                 final_url = req_url
 
         if raw_html:
              extracted = await loop.run_in_executor(None, ArticleExtractor.extract_from_html, raw_html, url)
@@ -496,7 +536,8 @@ class ImageProcessor:
         refs.append(None)
 
         last_err = "No data"
-        for ref in refs:
+        aiohttp_fail_reason = None
+        for attempt_idx, ref in enumerate(refs):
             try:
                 headers, _ = await fetch_with_retry(
                     session, url, 'headers', referer=ref, extra_headers=image_headers,
@@ -511,12 +552,29 @@ class ImageProcessor:
                 if headers and data:
                     return headers, data, None
                 last_err = "No headers" if not headers else "No data"
+                # If we get here, it implies fetch_with_retry returned None (failed after retries or hit non_retry_status)
+                # Mark specific reasons for immediate fallback after first ref attempt
+                if (attempt_idx == 0 and last_err == "No data") or (headers and headers.get("status") == "403"):
+                    aiohttp_fail_reason = "403 or Timeout on first aiohttp attempt"
+                    break # Break out of referer loop
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                last_err = str(e)
+                if attempt_idx == 0: # If the first attempt fails with ClientError/Timeout
+                    aiohttp_fail_reason = "ClientError or Timeout on first aiohttp attempt"
+                    break # Break out of referer loop
+                continue
             except Exception as e:
                 last_err = str(e)
+                if attempt_idx == 0:
+                    aiohttp_fail_reason = "Unexpected error on first aiohttp attempt"
+                    break
                 continue
 
-        # Fallback: Try requests if aiohttp failed
-        log.warning(f"aiohttp failed for {url}, trying requests fallback...")
+        if aiohttp_fail_reason:
+            log.warning(f"aiohttp failed fast for {url} ({aiohttp_fail_reason}), trying requests fallback...")
+        elif not (headers and data):
+            log.warning(f"aiohttp exhausted all referers for {url}, trying requests fallback...")
+
         h_req, d_req, status_req = await ImageProcessor._requests_fetch(session, url, image_headers, referer)
         if d_req and (not status_req or status_req < 400):
             return h_req or {}, d_req, None
@@ -799,19 +857,26 @@ class ImageProcessor:
         return pairs
 
     @staticmethod
-    def _extract_wapo_origin(url: str) -> Optional[str]:
+    def _extract_origin_from_proxy(url: str) -> Optional[str]:
+        """Extracts the original source URL from common image proxy patterns."""
         try:
             parsed = urlparse(url)
-            if "washingtonpost.com" in (parsed.netloc or "") and "/wp-apps/imrs.php" in (parsed.path or ""):
-                qs = dict((k, v[0]) for k, v in parse_qs(parsed.query).items() if v)
-                return qs.get("src")
+            qs = dict((k, v[0]) for k, v in parse_qs(parsed.query).items() if v)
+            # Common proxy patterns
+            if "imrs.php" in (parsed.path or "") or "resizer" in (parsed.path or parsed.netloc) or "proxy" in (parsed.path or parsed.netloc):
+                return qs.get("src") or qs.get("url") or qs.get("original")
+            # Next.js images often use query params for sizing but actual src is direct
+            if parsed.netloc and qs.keys() & {"w", "q", "fit", "h", "fm"}: # common Next.js image optimizer params
+                # If the path looks like a direct image and not a generic proxy path
+                if re.search(r'\.(jpe?g|png|webp|gif|svg)$', parsed.path, re.IGNORECASE):
+                    return parsed._replace(query=None).geturl()
         except Exception:
             return None
         return None
 
     @staticmethod
-    async def seed_wapo_from_nextdata(raw_html: str, body_soup, base_url, book_assets: list, session) -> None:
-        """Parse WaPo __NEXT_DATA__ for image URLs and inject as img-blocks if none were captured."""
+    async def _seed_images_from_nextjs_data(raw_html: str, body_soup: BeautifulSoup, base_url: str, book_assets: list, session) -> None:
+        """Parses __NEXT_DATA__ for image URLs and injects them into the article body or appends them."""
         try:
             if not raw_html:
                 return
@@ -820,10 +885,43 @@ class ImageProcessor:
             if not script or not script.string:
                 return
             data = json.loads(script.string)
-            elems = data.get("props", {}).get("pageProps", {}).get("globalContent", {}).get("content_elements", []) or []
-            log.debug(f"WaPo __NEXT_DATA__ images to consider: {len(elems)}")
+            
+            # 1. Try standard Arc XP / WaPo path first (Most reliable)
+            props = data.get("props", {}).get("pageProps", {})
+            elems = props.get("globalContent", {}).get("content_elements", [])
+
+            # 2. If not found, look for *any* key named 'content_elements' that is a list
+            if not elems:
+                candidates = []
+                def _find_content_lists(node):
+                    if isinstance(node, dict):
+                        for k, v in node.items():
+                            if k == "content_elements" and isinstance(v, list) and len(v) > 0:
+                                candidates.append(v)
+                            else:
+                                _find_content_lists(v)
+                    elif isinstance(node, list):
+                        for item in node:
+                            _find_content_lists(item)
+                
+                _find_content_lists(props)
+                # Pick the longest list found (heuristic: main article is longer than sidebars)
+                if candidates:
+                    candidates.sort(key=len, reverse=True)
+                    elems = candidates[0]
+
+            if not elems:
+                log.debug("No content_elements found in __NEXT_DATA__")
+                return
+
+            log.debug(f"Targeted __NEXT_DATA__ content elements: {len(elems)}")
             added = 0
             for el in elems:
+                if not isinstance(el, dict):
+                    continue
+                if el.get("type") != "image":
+                    continue
+                # Prefer direct URL (el.get("url"))
                 if not isinstance(el, dict):
                     continue
                 if el.get("type") != "image":
@@ -832,11 +930,16 @@ class ImageProcessor:
                 if not url:
                     continue
                 caption = el.get("credits_caption_display") or el.get("caption") or el.get("caption_display") or ""
-                # Prefer origin URL directly
-                origin = url
-                headers, data_bytes, err = await ImageProcessor.fetch_image_data(session, origin, referer=base_url)
+                # Prefer direct URL (el.get("url"))
+                origin = el.get("url")
+                if not origin: continue
+
+                # Try to extract a cleaner origin from the found URL first, then use it
+                extracted_origin = ImageProcessor._extract_origin_from_proxy(origin) or origin
+
+                headers, data_bytes, err = await ImageProcessor.fetch_image_data(session, extracted_origin, referer=base_url)
                 if err or not headers or not data_bytes:
-                    log.debug(f"WaPo __NEXT_DATA__ fetch failed for {origin}: {err}")
+                    log.debug(f"Next.js image fetch failed for {extracted_origin}: {err}")
                     continue
                 mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(origin, headers, data_bytes)
                 if val_err or not final_data:
@@ -851,16 +954,32 @@ class ImageProcessor:
                 uid = f"img_{abs(hash(fname))}"
                 asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=origin, alt_urls=[origin])
                 book_assets.append(asset)
-                # inject into DOM
-                img_tag = body_soup.new_tag("img", attrs={"src": fname, "class": "epub-image"})
-                cap_text = caption.strip() if caption else None
-                ImageProcessor.wrap_in_img_block(body_soup, img_tag, cap_text)
-                added += 1
+                # Try to find a placeholder in the body_soup by content ID
+                target_div = body_soup.find("div", id=el.get("_id"))
+                if target_div:
+                    # Construct the image block according to guidelines
+                    img_block_wrapper = body_soup.new_tag("div", attrs={"class": "img-block"})
+                    img_tag = body_soup.new_tag("img", attrs={"src": fname, "class": "epub-image"})
+                    img_block_wrapper.append(img_tag)
+                    if cap_text:
+                        cap = body_soup.new_tag("p", attrs={"class": "caption"})
+                        cap.string = cap_text
+                        img_block_wrapper.append(cap)
+                    target_div.replace_with(img_block_wrapper)
+                    log.debug(f"Injected WaPo image {origin} into placeholder {el.get('_id')}")
+                    added += 1
+                else:
+                    # Fallback to appending if no specific placeholder is found
+                    img_tag = body_soup.new_tag("img", attrs={"src": fname, "class": "epub-image"})
+                    cap_text = caption.strip() if caption else None
+                    ImageProcessor.wrap_in_img_block(body_soup, img_tag, cap_text)
+                    log.debug(f"Appended WaPo image {origin} (no specific placeholder found)")
+                    added += 1
             if added:
                 # remove any leftover figcaptions after injection
                 for fc in list(body_soup.find_all("figcaption")):
                     fc.decompose()
-                log.info(f"Seeded {added} WaPo images from __NEXT_DATA__")
+                log.info(f"Seeded {added} Next.js images from __NEXT_DATA__")
         except Exception as e:
             log.debug(f"WaPo __NEXT_DATA__ seed failed: {e}")
 
@@ -915,7 +1034,7 @@ class ImageProcessor:
                     if parsed_set:
                         final_src = parsed_set[0] if not final_src else final_src
                         # extract origin from widest entry
-                        wapo_origin_seed = ImageProcessor._extract_wapo_origin(parsed_set[0])
+                        wapo_origin_seed = ImageProcessor._extract_origin_from_proxy(parsed_set[0])
                         break
 
             if src and not ImageProcessor.is_junk(src):
@@ -963,8 +1082,7 @@ class ImageProcessor:
                         if u not in candidate_urls:
                             candidate_urls.append(u)
 
-                is_wapo_proxy = "washingtonpost.com" in full_url and "/wp-apps/imrs.php" in full_url
-                origin_src = ImageProcessor._extract_wapo_origin(full_url) if is_wapo_proxy else None
+                origin_src = ImageProcessor._extract_origin_from_proxy(full_url)
 
                 # Seed lede image candidates if available
                 lede_img = None
@@ -980,14 +1098,14 @@ class ImageProcessor:
                             for w, u in ImageProcessor.parse_srcset_with_width(lede_img[srcset_attr]):
                                 _add_candidate(urljoin(base_url, u), prepend=True)
 
-                if is_wapo_proxy and origin_src:
-                    # Prefer origin first; do not bother with proxy unless origin fails
+                # Always prefer direct origin if found from proxy
+                if origin_src:
                     _add_candidate(origin_src, prepend=True)
-                    _add_candidate(full_url, prepend=False)
-                else:
-                    if not ImageProcessor.is_junk(full_url):
-                        _add_candidate(full_url, prepend=True)
-                        if "?" in full_url and not ("washingtonpost.com" in full_url and "/wp-apps/imrs.php" in full_url):
+                
+                # Add the full URL, and its query-stripped version if it contains a query string
+                if not ImageProcessor.is_junk(full_url):
+                    _add_candidate(full_url, prepend=True)
+                    if "?" in full_url:
                             _add_candidate(full_url.split("?", 1)[0])
 
                 for srcset_str in filter(None, [data_srcset, srcset]):
@@ -995,16 +1113,15 @@ class ImageProcessor:
                     for width, candidate in parsed_set:
                         cand_full = urljoin(base_url, candidate)
                         _add_candidate(cand_full, prepend=width >= 600)
-                        if "washingtonpost.com" in cand_full and "/wp-apps/imrs.php" in cand_full:
-                            origin_cand = ImageProcessor._extract_wapo_origin(cand_full)
-                            if origin_cand:
-                                _add_candidate(origin_cand, prepend=True)
+                        origin_cand = ImageProcessor._extract_origin_from_proxy(cand_full)
+                        if origin_cand:
+                            _add_candidate(origin_cand, prepend=True)
                         if not ("washingtonpost.com" in cand_full and "/wp-apps/imrs.php" in cand_full) and "?" in cand_full:
                             _add_candidate(cand_full.split("?", 1)[0])
 
-                # Final pass: ensure origin versions of any imrs proxies are prepended
+                # Final pass: ensure origin versions of any known proxies are prepended
                 for u in list(candidate_urls):
-                    origin = ImageProcessor._extract_wapo_origin(u)
+                    origin = ImageProcessor._extract_origin_from_proxy(u)
                     if origin:
                         _add_candidate(origin, prepend=True)
                 log.debug(f"Candidate URLs for img: {candidate_urls}")
@@ -1794,23 +1911,25 @@ class GenericDriver(BaseDriver):
         if not options.no_images:
             base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
             await ImageProcessor.process_images(session, body_soup, base, assets)
-            if not assets:
-                raw_full = data.get('raw_html_for_metadata') or source.html or ''
-                await ImageProcessor.seed_wapo_from_nextdata(raw_full, body_soup, base, assets, session)
-            # If we downloaded assets but no <img> tags survived extraction, inject them now at top
+            # If no images found by general scraping, try to seed from __NEXT_DATA__ (Next.js sites)
+            if not assets and raw_html and "__NEXT_DATA__" in raw_html:
+                log.info("No images found by scraping. Attempting to seed from __NEXT_DATA__.")
+                await ImageProcessor._seed_images_from_nextjs_data(raw_html, body_soup, base, assets, session)
+            # If we downloaded assets but no <img> tags survived extraction, inject them now at bottom
             if assets and not body_soup.find('img'):
                 for asset in assets:
                     wrapper = body_soup.new_tag("div", attrs={"class": "img-block"})
                     img_tag = body_soup.new_tag("img", attrs={"src": asset.filename, "class": "epub-image"})
                     wrapper.append(img_tag)
-                    first_p = body_soup.find('p')
-                    if first_p:
-                        first_p.insert_before(wrapper)
-                    else:
-                        body_soup.insert(0, wrapper)
+                    body_soup.append(wrapper)
                 # remove any figcaptions after injection
                 for fc in list(body_soup.find_all("figcaption")):
                     fc.decompose()
+
+        # Final cleanup: remove any remaining empty divs (unused placeholders)
+        for tag in body_soup.find_all('div'):
+            if not tag.get_text(strip=True) and not tag.find(['img', 'figure']):
+                tag.decompose()
 
         chapter_html = body_soup.prettify()
         meta_html = ArticleExtractor.build_meta_block(url, data)

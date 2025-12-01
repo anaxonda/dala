@@ -227,6 +227,12 @@ Reading threaded conversations linearly is difficult.
     * Sends assets to the server; core matches them and skips re-downloading.
 *   **Result:** Full-size forum attachments embed correctly; use the extension path for gated content (CLI alone cannot replicate browser-only tokens/headers).
 
+### 6. Anti-Bot Defenses & "Fast Fail"
+*   **Problem:** Many sites (WaPo, etc.) block `aiohttp` requests with 403 Forbidden or timeouts (fingerprinting), causing long delays.
+*   **Image Strategy:** If `aiohttp` fails on the first attempt (403/timeout) for an image, the downloader **immediately** breaks the retry loop and falls back to a synchronous `requests` fetch, which often bypasses WAFs.
+*   **Article Strategy:** If the main article fetch returns 403, the tool **fails fast** (skipping 5 retries) and immediately falls back to the Internet Archive (Wayback Machine). This drastically reduces wait times for protected content.
+*   **Next.js Hydration:** For sites (like WaPo) that serve empty HTML shells, the tool parses `__NEXT_DATA__` JSON to find image content elements and injects them into placeholder `div`s (matching by ID) or appends them to the article body.
+
 ### Forum Pipeline (Current)
 *   **Input:** Extension flags `is_forum`, passes cookies plus preloaded assets (base64 content with original/viewer/canonical URLs, queryless variants allowed), optional page ranges (`pages`, `max_pages`).
 *   **Pre-seed:** All preloaded assets are decoded once and added to `book_assets` with URL variants so they are available for every page before HTML processing.
