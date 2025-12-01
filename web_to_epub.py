@@ -469,19 +469,41 @@ class ImageProcessor:
         last_err = "No data"
         for ref in refs:
             try:
+                non_retry = {400,401,404,451}
                 headers, _ = await fetch_with_retry(
                     session, url, 'headers', referer=ref, extra_headers=image_headers,
-                    non_retry_statuses={400,401,403,404,451}, max_retries=IMG_MAX_RETRIES,
+                    non_retry_statuses=non_retry, max_retries=IMG_MAX_RETRIES,
                     backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT
                 )
-                data, _ = await fetch_with_retry(
+                data, status = await fetch_with_retry(
                     session, url, 'bytes', referer=ref, extra_headers=image_headers,
-                    non_retry_statuses={400,401,403,404,451}, max_retries=IMG_MAX_RETRIES,
-                    backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT
+                    non_retry_statuses=non_retry, max_retries=IMG_MAX_RETRIES,
+                    backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT, return_status=True
                 )
                 if headers and data:
                     return headers, data, None
                 last_err = "No headers" if not headers else "No data"
+
+                # Hotlink fallback: on 403, retry once with stronger headers and page referer
+                if status == 403 or (parsed.path or "").startswith("/wp-content/uploads/"):
+                    strong_headers = {
+                        **image_headers,
+                        "Referer": referer or url,
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    }
+                    try:
+                        headers2, _ = await fetch_with_retry(
+                            session, url, 'headers', referer=referer, extra_headers=strong_headers,
+                            non_retry_statuses=non_retry, max_retries=1, backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT
+                        )
+                        data2, _ = await fetch_with_retry(
+                            session, url, 'bytes', referer=referer, extra_headers=strong_headers,
+                            non_retry_statuses=non_retry, max_retries=1, backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT
+                        )
+                        if headers2 and data2:
+                            return headers2, data2, None
+                    except Exception:
+                        pass
             except Exception as e:
                 last_err = str(e)
                 continue
