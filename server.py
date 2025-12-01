@@ -55,6 +55,7 @@ class ConversionRequest(BaseModel):
     max_pages: Optional[int] = None
     max_posts: Optional[int] = None
     page_spec: Optional[List[int]] = None
+    termux_copy_dir: Optional[str] = None
 
 @app.get("/ping")
 async def ping(): return {"status": "ok"}
@@ -126,7 +127,7 @@ async def convert(req: ConversionRequest):
         print(f"✅ Sending: {filename}")
 
         # If running inside Termux with shared storage mounted, drop a copy to Downloads
-        termux_dl = "/data/data/com.termux/files/home/storage/downloads"
+        termux_dl = (req.termux_copy_dir or "").strip() or "/data/data/com.termux/files/home/storage/downloads"
         if os.path.isdir(termux_dl):
             try:
                 dst = os.path.join(termux_dl, filename)

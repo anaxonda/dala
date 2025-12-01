@@ -42,8 +42,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const maxPagesInput = document.getElementById('opt-maxpages');
         if (pagesInput) pagesInput.onchange = saveOptions;
         if (maxPagesInput) maxPagesInput.onchange = saveOptions;
-        const subfolderInput = document.getElementById('opt-subfolder');
-        if (subfolderInput) subfolderInput.onchange = saveOptions;
         const cancelBtn = document.getElementById('btn-cancel');
         if (cancelBtn) cancelBtn.onclick = () => {
             browser.runtime.sendMessage({ action: "cancel-download" });
@@ -104,6 +102,7 @@ async function checkServer() {
 
 // --- OPTIONS ---
 async function saveOptions() {
+    const existing = (await browser.storage.local.get("savedOptions")).savedOptions || {};
     const options = {
         no_comments: document.getElementById('opt-nocomments').checked,
         no_article: document.getElementById('opt-noarticle').checked,
@@ -112,10 +111,9 @@ async function saveOptions() {
         include_cookies: document.getElementById('opt-cookies').checked,
         forum: document.getElementById('opt-forum').checked,
         pages: (document.getElementById('opt-pages')?.value || "").trim(),
-        max_pages: document.getElementById('opt-maxpages')?.value || "",
-        subfolder: (document.getElementById('opt-subfolder')?.value || "").trim()
+        max_pages: document.getElementById('opt-maxpages')?.value || ""
     };
-    await browser.storage.local.set({ savedOptions: options });
+    await browser.storage.local.set({ savedOptions: { ...existing, ...options } });
 }
 
 async function restoreOptions() {
@@ -133,9 +131,6 @@ async function restoreOptions() {
         if (res.savedOptions.max_pages !== undefined) {
             document.getElementById('opt-maxpages').value = res.savedOptions.max_pages;
         }
-        if (res.savedOptions.subfolder !== undefined) {
-            document.getElementById('opt-subfolder').value = res.savedOptions.subfolder;
-        }
     }
 }
 
@@ -148,8 +143,7 @@ function getOptions() {
         include_cookies: document.getElementById('opt-cookies').checked,
         forum: document.getElementById('opt-forum').checked,
         pages: (document.getElementById('opt-pages')?.value || "").trim(),
-        max_pages: (document.getElementById('opt-maxpages')?.value || "").trim(),
-        subfolder: (document.getElementById('opt-subfolder')?.value || "").trim()
+        max_pages: (document.getElementById('opt-maxpages')?.value || "").trim()
     };
 }
 
@@ -412,6 +406,7 @@ function showStatus(msg) {
 // --- PAYLOAD BUILDER (THE HYBRID ENGINE) ---
 // Combines URLs with raw HTML from open tabs to bypass paywalls
 async function preparePayload(urls, bundleTitle) {
+    const savedOpts = (await browser.storage.local.get("savedOptions")).savedOptions || {};
     const options = getOptions();
     const sources = [];
     const page_spec = parsePageSpecInput(options.pages);
@@ -486,7 +481,8 @@ async function preparePayload(urls, bundleTitle) {
         archive: options.archive,
         max_pages: max_pages,
         page_spec: page_spec && page_spec.length ? page_spec : null,
-        fetch_assets: shouldFetchAssets
+        fetch_assets: shouldFetchAssets,
+        termux_copy_dir: (savedOpts.termux_copy_dir || "").trim() || null
     };
 }
 

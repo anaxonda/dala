@@ -31,6 +31,18 @@
     <input type="text" id="queue-shortcut" placeholder="ctrl+shift+q" autocomplete="off">
     <div class="hint">Press the desired combo while this field is focused.</div>
   </div>
+  <hr />
+  <h2>Downloads</h2>
+  <div class="row">
+    <label for="download-subfolder">Download Subfolder (inside default downloads)</label>
+    <input type="text" id="download-subfolder" placeholder="WebToEpub" autocomplete="off">
+    <div class="hint">Optional. Leave blank to use the default downloads root.</div>
+  </div>
+  <div class="row">
+    <label for="download-termux">Termux copy dir</label>
+    <input type="text" id="download-termux" placeholder="/data/data/com.termux/files/home/storage/downloads" autocomplete="off">
+    <div class="hint">Used on Android/Termux to drop a copy. Leave blank for default.</div>
+  </div>
   <script src="options.js"></script>
 </body>
 </html>

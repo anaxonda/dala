@@ -126,7 +126,16 @@
     });
   }
 
+  function setupToastListener() {
+    browser.runtime.onMessage.addListener((message) => {
+      if (message && message.action === "shortcut-toast" && message.message) {
+        showToast(message.message);
+      }
+    });
+  }
+
   loadSettings();
   setupStorageListener();
+  setupToastListener();
   document.addEventListener("keydown", handleKeydown, true);
 })();

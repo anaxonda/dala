@@ -37,8 +37,11 @@ if (menusApi && menusApi.onClicked) {
     });
 }
 
-// Message Listener (From Popup)
-browser.runtime.onMessage.addListener((message) => {
+let currentController = null;
+let lastShortcutTabId = null;
+
+// Message Listener (From Popup/Content)
+browser.runtime.onMessage.addListener((message, sender) => {
     if (message.action === "download") {
         processDownloadWithAssets(message.payload, message.isBundle);
         return true; // keep channel open for async work
@@ -47,19 +50,23 @@ browser.runtime.onMessage.addListener((message) => {
     } else if (message.action === "fetch-assets") {
         return fetchAssetsForPage(message.url, message.page_spec, message.max_pages);
     } else if (message.action === "shortcut-download") {
+        if (sender && sender.tab && sender.tab.id) {
+            lastShortcutTabId = sender.tab.id;
+        }
         const target = message.url;
         if (target && target.startsWith("http")) {
             downloadSingleFromContext(target);
         }
     } else if (message.action === "shortcut-queue") {
+        if (sender && sender.tab && sender.tab.id) {
+            lastShortcutTabId = sender.tab.id;
+        }
         const target = message.url;
         if (target && target.startsWith("http")) {
             addToQueue(target);
         }
     }
 });
-
-let currentController = null;
 
 async function addToQueue(url) {
     const res = await browser.storage.local.get("urlQueue");
@@ -259,6 +266,46 @@ async function processDownloadCore(payload, isBundle) {
 
         browser.browserAction.setBadgeText({ text: "OK" });
         browser.browserAction.setBadgeBackgroundColor({ color: "green" });
+
+        // Notify page (if shortcut initiated) for inline toast feedback
+        try {
+            const targetTabId = lastShortcutTabId;
+            lastShortcutTabId = null;
+            const sendToastToTab = async (tabId) => {
+                if (!tabId) return;
+                try {
+                    await browser.tabs.sendMessage(tabId, { action: "shortcut-toast", message: "Downloaded" });
+                } catch (e) {
+                    // Fallback: inject a minimal toast directly
+                    const code = `
+                      (() => {
+                        try {
+                          const existing = document.getElementById("epub-shortcut-toast");
+                          if (existing) existing.remove();
+                          const el = document.createElement("div");
+                          el.id = "epub-shortcut-toast";
+                          el.textContent = "Downloaded";
+                          el.style.cssText = "position:fixed;top:16px;right:16px;background:#4CAF50;color:white;padding:10px 14px;border-radius:4px;z-index:2147483647;font-size:13px;box-shadow:0 2px 6px rgba(0,0,0,0.25);";
+                          document.body.appendChild(el);
+                          setTimeout(() => { el.remove(); }, 2500);
+                        } catch(_) {}
+                      })();`;
+                    try { await browser.tabs.executeScript(tabId, { code }); } catch (_) {}
+                }
+            };
+            if (targetTabId) {
+                await sendToastToTab(targetTabId);
+            } else {
+                const tabs = await browser.tabs.query({active: true, currentWindow: true});
+                if (tabs && tabs[0]) {
+                    await sendToastToTab(tabs[0].id);
+                }
+            }
+            // Broadcast fallback for any listeners that are alive
+            browser.runtime.sendMessage({ action: "shortcut-toast", message: "Downloaded" }).catch(() => {});
+        } catch (_) {
+            // ignore toast failures
+        }
 
         if (isBundle) {
             await browser.storage.local.set({ urlQueue: [] });
