@@ -437,7 +437,7 @@ class ArticleExtractor:
             return result
 
         # Treat 403 as non-retryable to fast-fail to archive fallback
-        raw_html, final_url = await fetch_with_retry(session, url, 'text', non_retry_statuses={403})
+        raw_html, final_url = await fetch_with_retry(session, url, 'text', non_retry_statuses={403}, max_retries=1)
 
         if not raw_html:
              log.warning(f"aiohttp failed for {url}, trying requests fallback...")
@@ -544,18 +544,22 @@ class ImageProcessor:
                     non_retry_statuses={400,401,403,404,451}, max_retries=IMG_MAX_RETRIES,
                     backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT
                 )
-                data, _ = await fetch_with_retry(
-                    session, url, 'bytes', referer=ref, extra_headers=image_headers,
-                    non_retry_statuses={400,401,403,404,451}, max_retries=IMG_MAX_RETRIES,
-                    backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT
-                )
+                if headers:
+                    data, _ = await fetch_with_retry(
+                        session, url, 'bytes', referer=ref, extra_headers=image_headers,
+                        non_retry_statuses={400,401,403,404,451}, max_retries=IMG_MAX_RETRIES,
+                        backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT
+                    )
+                else:
+                    data = None
+
                 if headers and data:
                     return headers, data, None
                 last_err = "No headers" if not headers else "No data"
                 # If we get here, it implies fetch_with_retry returned None (failed after retries or hit non_retry_status)
                 # Mark specific reasons for immediate fallback after first ref attempt
-                if (attempt_idx == 0 and last_err == "No data") or (headers and headers.get("status") == "403"):
-                    aiohttp_fail_reason = "403 or Timeout on first aiohttp attempt"
+                if attempt_idx == 0 and (not headers or not data):
+                    aiohttp_fail_reason = "Failed on first aiohttp attempt (403/Timeout/Error)"
                     break # Break out of referer loop
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 last_err = str(e)
@@ -1010,6 +1014,10 @@ class ImageProcessor:
         tasks = []
 
         async def _process_tag(img_tag):
+            # Skip if already processed (e.g. by seeding)
+            if img_tag.get('class') == ['epub-image'] or str(img_tag.get('src')).startswith(IMAGE_DIR_IN_EPUB):
+                return
+
             log.debug(f"Processing img tag attrs={img_tag.attrs}")
             src = img_tag.get('src')
             srcset = img_tag.get('srcset')
@@ -1910,11 +1918,14 @@ class GenericDriver(BaseDriver):
         assets = []
         if not options.no_images:
             base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
-            await ImageProcessor.process_images(session, body_soup, base, assets)
-            # If no images found by general scraping, try to seed from __NEXT_DATA__ (Next.js sites)
-            if not assets and raw_html and "__NEXT_DATA__" in raw_html:
-                log.info("No images found by scraping. Attempting to seed from __NEXT_DATA__.")
+            
+            # Try to seed from __NEXT_DATA__ first (Fastest/Highest Quality for Next.js)
+            if raw_html and "__NEXT_DATA__" in raw_html:
+                log.info("Attempting to seed from __NEXT_DATA__ first.")
                 await ImageProcessor._seed_images_from_nextjs_data(raw_html, body_soup, base, assets, session)
+
+            await ImageProcessor.process_images(session, body_soup, base, assets)
+            
             # If we downloaded assets but no <img> tags survived extraction, inject them now at bottom
             if assets and not body_soup.find('img'):
                 for asset in assets:

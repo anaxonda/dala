@@ -72,7 +72,7 @@
     if (combo === downloadCombo) {
       evt.preventDefault();
       evt.stopPropagation();
-      const html = isAndroid ? document.documentElement.outerHTML : null;
+      const html = document.documentElement.outerHTML;
       browser.runtime.sendMessage({
         action: "shortcut-download",
         url: window.location.href,

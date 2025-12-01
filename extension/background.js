@@ -68,6 +68,19 @@ browser.runtime.onMessage.addListener((message, sender) => {
     }
 });
 
+async function getCookiesForUrl(url) {
+    try {
+        const list = await browser.cookies.getAll({url});
+        if (!list || list.length === 0) return null;
+        const jar = {};
+        list.forEach(c => { jar[c.name] = c.value; });
+        return jar;
+    } catch (e) {
+        console.warn("Cookie fetch failed for", url, e);
+        return null;
+    }
+}
+
 async function downloadFromShortcut(url, html) {
     if (!url || !url.startsWith("http")) return;
     const optsRes = await browser.storage.local.get("savedOptions");
@@ -76,8 +89,14 @@ async function downloadFromShortcut(url, html) {
     const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
     const is_forum = !!opts.forum;
     const termux_copy_dir = (opts.termux_copy_dir || "").trim() || null;
+    
+    let cookies = null;
+    if (opts.include_cookies) {
+        cookies = await getCookiesForUrl(url);
+    }
+
     const payload = {
-        sources: [{ url, html: html || null, cookies: null, assets: [], is_forum }],
+        sources: [{ url, html: html || null, cookies: cookies, assets: [], is_forum }],
         bundle_title: null,
         no_comments: !!opts.no_comments,
         no_article: !!opts.no_article,
@@ -130,8 +149,14 @@ async function downloadSingleFromContext(url) {
     const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
     const is_forum = !!opts.forum;
     const termux_copy_dir = (opts.termux_copy_dir || "").trim() || null;
+    
+    let cookies = null;
+    if (opts.include_cookies) {
+        cookies = await getCookiesForUrl(url);
+    }
+
     const payload = {
-        sources: [{ url, html: null, cookies: null, assets: [], is_forum }],
+        sources: [{ url, html: null, cookies: cookies, assets: [], is_forum }],
         bundle_title: null,
         no_comments: !!opts.no_comments,
         no_article: !!opts.no_article,
