@@ -55,7 +55,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
         }
         const target = message.url;
         if (target && target.startsWith("http")) {
-            downloadSingleFromContext(target);
+            downloadFromShortcut(target, message.html || null);
         }
     } else if (message.action === "shortcut-queue") {
         if (sender && sender.tab && sender.tab.id) {
@@ -67,6 +67,29 @@ browser.runtime.onMessage.addListener((message, sender) => {
         }
     }
 });
+
+async function downloadFromShortcut(url, html) {
+    if (!url || !url.startsWith("http")) return;
+    const optsRes = await browser.storage.local.get("savedOptions");
+    const opts = optsRes.savedOptions || {};
+    const page_spec = parsePageSpecInput(opts.pages);
+    const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
+    const is_forum = !!opts.forum;
+    const termux_copy_dir = (opts.termux_copy_dir || "").trim() || null;
+    const payload = {
+        sources: [{ url, html: html || null, cookies: null, assets: [], is_forum }],
+        bundle_title: null,
+        no_comments: !!opts.no_comments,
+        no_article: !!opts.no_article,
+        no_images: !!opts.no_images,
+        archive: !!opts.archive,
+        max_pages,
+        page_spec: page_spec && page_spec.length ? page_spec : null,
+        fetch_assets: false,
+        termux_copy_dir
+    };
+    await processDownloadWithAssets(payload, false);
+}
 
 async function addToQueue(url) {
     const res = await browser.storage.local.get("urlQueue");

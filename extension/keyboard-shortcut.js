@@ -3,6 +3,7 @@
   let enabled = false;
   let downloadCombo = "ctrl+shift+e";
   let queueCombo = "ctrl+shift+q";
+  const isAndroid = /Android/i.test((navigator && navigator.userAgent) || "");
 
   const editableTags = new Set(["input", "textarea", "select", "option"]);
 
@@ -71,9 +72,11 @@
     if (combo === downloadCombo) {
       evt.preventDefault();
       evt.stopPropagation();
+      const html = isAndroid ? document.documentElement.outerHTML : null;
       browser.runtime.sendMessage({
         action: "shortcut-download",
-        url: window.location.href
+        url: window.location.href,
+        html
       }).then(() => {
         showToast("Starting EPUB download…");
       }).catch((e) => {
