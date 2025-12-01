@@ -77,6 +77,7 @@ show_status() {
         echo -e "  ${GREEN}[S]${NC} - Start server"
     fi
     echo -e "  ${GREEN}[h]${NC} - Show help"
+    echo -e "  ${YELLOW}[D]${NC} - Restart with DEBUG logging"
     echo -e "======================================${NC}"
     echo ""
 }
@@ -104,6 +105,7 @@ show_help() {
     echo "  - Press 'r' to refresh status"
     echo "  - Press 'l' to view full logs"
     echo "  - Press 't' to tail logs in real-time"
+    echo "  - Press 'D' to restart with DEBUG logging"
     echo ""
     read -n 1 -p "Press any key to return..."
 }
@@ -163,6 +165,25 @@ while true; do
             ;;
         h|H)
             show_help
+            ;;
+        d|D)
+            echo "Restarting server with DEBUG logging..."
+            # Stop server if running
+            if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+                if [ -f ~/dala/android/dala_stop.sh ]; then
+                    ~/dala/android/dala_stop.sh
+                    sleep 2
+                fi
+            fi
+            # Start with DEBUG log level
+            if [ -f ~/dala/android/dala_start.sh ]; then
+                export LOGLEVEL=DEBUG
+                ~/dala/android/dala_start.sh
+                unset LOGLEVEL
+            else
+                echo "Start script not found at ~/dala/android/dala_start.sh"
+            fi
+            sleep 2
             ;;
         ""|q|Q)
             clear

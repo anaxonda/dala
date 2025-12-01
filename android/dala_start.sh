@@ -62,8 +62,13 @@ fi
 export UV_CACHE_DIR=$HOME/.cache/uv
 export UV_LINK_MODE=copy
 
+# Set log level (default to INFO if not already set)
+export LOGLEVEL=${LOGLEVEL:-INFO}
+
 # Log startup
 log "Starting EPUB server from $PROJECT_DIR"
+log "Python: $VENV_PYTHON"
+log "Log level: $LOGLEVEL"
 
 # Start server with nohup to detach from terminal
 nohup "$VENV_PYTHON" "$SERVER_SCRIPT" >> "$LOG_FILE" 2>&1 &
@@ -77,6 +82,7 @@ sleep 0.5
 if kill -0 "$SERVER_PID" 2>/dev/null; then
     log "Server started successfully (PID: $SERVER_PID)"
     echo "✓ Server started (PID: $SERVER_PID)"
+    echo "  Log level: $LOGLEVEL"
 else
     log "ERROR: Server failed to start"
     rm "$PID_FILE"
