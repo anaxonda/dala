@@ -102,7 +102,9 @@ def urls_match(url1: str, url2: str) -> bool:
     return normalize_url_for_matching(url1) == normalize_url_for_matching(url2)
 
 # --- Logging ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+_LOGLEVEL = os.getenv("LOGLEVEL", "INFO").upper()
+logging.basicConfig(level=getattr(logging, _LOGLEVEL, logging.INFO),
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
 
 # --- Data Structures ---
@@ -592,7 +594,12 @@ class ImageProcessor:
             fig.unwrap()
 
         wrapper = soup.new_tag("div", attrs={"class": "img-block"})
-        img_tag.replace_with(wrapper)
+        parent = img_tag.parent
+        if parent:
+            img_tag.replace_with(wrapper)
+        else:
+            # Detached tag: just append the new wrapper to the body
+            (soup.body or soup).append(wrapper)
         wrapper.append(img_tag)
         if caption_text:
             cap = soup.new_tag("p", attrs={"class": "caption"})
@@ -735,6 +742,93 @@ class ImageProcessor:
         return [c[1] for c in candidates]
 
     @staticmethod
+    def parse_srcset_with_width(srcset_str: str) -> list:
+        """Return list of (width, url) sorted by width desc."""
+        if not srcset_str:
+            return []
+        pairs = []
+        for part in srcset_str.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            url_part, *rest = part.split()
+            width_val = 0
+            if rest and rest[0].endswith("w"):
+                try:
+                    width_val = int(rest[0][:-1])
+                except Exception:
+                    width_val = 0
+            pairs.append((width_val, url_part))
+        pairs.sort(key=lambda x: x[0], reverse=True)
+        return pairs
+
+    @staticmethod
+    def _extract_wapo_origin(url: str) -> Optional[str]:
+        try:
+            parsed = urlparse(url)
+            if "washingtonpost.com" in (parsed.netloc or "") and "/wp-apps/imrs.php" in (parsed.path or ""):
+                qs = dict((k, v[0]) for k, v in parse_qs(parsed.query).items() if v)
+                return qs.get("src")
+        except Exception:
+            return None
+        return None
+
+    @staticmethod
+    async def seed_wapo_from_nextdata(raw_html: str, body_soup, base_url, book_assets: list, session) -> None:
+        """Parse WaPo __NEXT_DATA__ for image URLs and inject as img-blocks if none were captured."""
+        try:
+            if not raw_html:
+                return
+            full_soup = BeautifulSoup(raw_html, 'html.parser')
+            script = full_soup.find("script", id="__NEXT_DATA__")
+            if not script or not script.string:
+                return
+            data = json.loads(script.string)
+            elems = data.get("props", {}).get("pageProps", {}).get("globalContent", {}).get("content_elements", []) or []
+            log.debug(f"WaPo __NEXT_DATA__ images to consider: {len(elems)}")
+            added = 0
+            for el in elems:
+                if not isinstance(el, dict):
+                    continue
+                if el.get("type") != "image":
+                    continue
+                url = el.get("url")
+                if not url:
+                    continue
+                caption = el.get("credits_caption_display") or el.get("caption") or el.get("caption_display") or ""
+                # Prefer origin URL directly
+                origin = url
+                headers, data_bytes, err = await ImageProcessor.fetch_image_data(session, origin, referer=base_url)
+                if err or not headers or not data_bytes:
+                    log.debug(f"WaPo __NEXT_DATA__ fetch failed for {origin}: {err}")
+                    continue
+                mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(origin, headers, data_bytes)
+                if val_err or not final_data:
+                    log.debug(f"WaPo __NEXT_DATA__ validate failed for {origin}: {val_err}")
+                    continue
+                fname_base = sanitize_filename(os.path.splitext(os.path.basename(urlparse(origin).path))[0]) or f"img_{abs(hash(origin))}"
+                count = 0
+                fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}{ext}"
+                while any(a.filename == fname for a in book_assets):
+                    count += 1
+                    fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}_{count}{ext}"
+                uid = f"img_{abs(hash(fname))}"
+                asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=origin, alt_urls=[origin])
+                book_assets.append(asset)
+                # inject into DOM
+                img_tag = body_soup.new_tag("img", attrs={"src": fname, "class": "epub-image"})
+                cap_text = caption.strip() if caption else None
+                ImageProcessor.wrap_in_img_block(body_soup, img_tag, cap_text)
+                added += 1
+            if added:
+                # remove any leftover figcaptions after injection
+                for fc in list(body_soup.find_all("figcaption")):
+                    fc.decompose()
+                log.info(f"Seeded {added} WaPo images from __NEXT_DATA__")
+        except Exception as e:
+            log.debug(f"WaPo __NEXT_DATA__ seed failed: {e}")
+
+    @staticmethod
     async def process_images(session, soup, base_url, book_assets: list):
         # Flatten/remove known wrapper containers and stray labels (NYT et al.) before processing
         for wrapper in list(soup.find_all("div")):
@@ -761,6 +855,7 @@ class ImageProcessor:
         tasks = []
 
         async def _process_tag(img_tag):
+            log.debug(f"Processing img tag attrs={img_tag.attrs}")
             src = img_tag.get('src')
             srcset = img_tag.get('srcset')
             data_src = img_tag.get('data-src')
@@ -775,6 +870,17 @@ class ImageProcessor:
                 candidates.extend(ImageProcessor.parse_srcset(data_srcset))
             if srcset:
                 candidates.extend(ImageProcessor.parse_srcset(srcset))
+
+            # Prefer widest WaPo imrs srcset entry, and collect origin src for proxies
+            wapo_origin_seed = None
+            for srcset_candidate in [data_srcset, srcset]:
+                if srcset_candidate and "washingtonpost.com/wp-apps/imrs.php" in srcset_candidate:
+                    parsed_set = ImageProcessor.parse_srcset(srcset_candidate)
+                    if parsed_set:
+                        final_src = parsed_set[0] if not final_src else final_src
+                        # extract origin from widest entry
+                        wapo_origin_seed = ImageProcessor._extract_wapo_origin(parsed_set[0])
+                        break
 
             if src and not ImageProcessor.is_junk(src):
                 final_src = src
@@ -811,24 +917,61 @@ class ImageProcessor:
 
                 # Build fetch candidates from src and any srcset entries (plus queryless variants)
                 candidate_urls = []
-                def _add_candidate(u: Optional[str]):
-                    if u and u not in candidate_urls:
-                        candidate_urls.append(u)
+                def _add_candidate(u: Optional[str], prepend: bool = False):
+                    if not u or ImageProcessor.is_junk(u):
+                        return
+                    if prepend:
+                        if u not in candidate_urls:
+                            candidate_urls.insert(0, u)
+                    else:
+                        if u not in candidate_urls:
+                            candidate_urls.append(u)
 
-                if not ImageProcessor.is_junk(full_url):
-                    _add_candidate(full_url)
-                    if "?" in full_url:
-                        _add_candidate(full_url.split("?", 1)[0])
+                is_wapo_proxy = "washingtonpost.com" in full_url and "/wp-apps/imrs.php" in full_url
+                origin_src = ImageProcessor._extract_wapo_origin(full_url) if is_wapo_proxy else None
+
+                # Seed lede image candidates if available
+                lede_img = None
+                parent_fig = img_tag.find_parent("figure")
+                if parent_fig and parent_fig.get("data-testid") == "lede-image":
+                    lede_img = parent_fig.find("img")
+                if lede_img:
+                    for attr in ["src", "data-src"]:
+                        if lede_img.get(attr):
+                            _add_candidate(urljoin(base_url, lede_img[attr]), prepend=True)
+                    for srcset_attr in ["srcset", "data-srcset"]:
+                        if lede_img.get(srcset_attr):
+                            for w, u in ImageProcessor.parse_srcset_with_width(lede_img[srcset_attr]):
+                                _add_candidate(urljoin(base_url, u), prepend=True)
+
+                if is_wapo_proxy and origin_src:
+                    # Prefer origin first; do not bother with proxy unless origin fails
+                    _add_candidate(origin_src, prepend=True)
+                    _add_candidate(full_url, prepend=False)
+                else:
+                    if not ImageProcessor.is_junk(full_url):
+                        _add_candidate(full_url, prepend=True)
+                        if "?" in full_url and not ("washingtonpost.com" in full_url and "/wp-apps/imrs.php" in full_url):
+                            _add_candidate(full_url.split("?", 1)[0])
+
                 for srcset_str in filter(None, [data_srcset, srcset]):
-                    for candidate in ImageProcessor.parse_srcset(srcset_str):
-                        if ImageProcessor.is_junk(candidate):
-                            continue
+                    parsed_set = ImageProcessor.parse_srcset_with_width(srcset_str)
+                    for width, candidate in parsed_set:
                         cand_full = urljoin(base_url, candidate)
-                        if ImageProcessor.is_junk(cand_full):
-                            continue
-                        _add_candidate(cand_full)
-                        if "?" in cand_full:
+                        _add_candidate(cand_full, prepend=width >= 600)
+                        if "washingtonpost.com" in cand_full and "/wp-apps/imrs.php" in cand_full:
+                            origin_cand = ImageProcessor._extract_wapo_origin(cand_full)
+                            if origin_cand:
+                                _add_candidate(origin_cand, prepend=True)
+                        if not ("washingtonpost.com" in cand_full and "/wp-apps/imrs.php" in cand_full) and "?" in cand_full:
                             _add_candidate(cand_full.split("?", 1)[0])
+
+                # Final pass: ensure origin versions of any imrs proxies are prepended
+                for u in list(candidate_urls):
+                    origin = ImageProcessor._extract_wapo_origin(u)
+                    if origin:
+                        _add_candidate(origin, prepend=True)
+                log.debug(f"Candidate URLs for img: {candidate_urls}")
 
                 mime = ext = final_data = None
                 effective_url = None
@@ -1615,6 +1758,23 @@ class GenericDriver(BaseDriver):
         if not options.no_images:
             base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
             await ImageProcessor.process_images(session, body_soup, base, assets)
+            if not assets:
+                raw_full = data.get('raw_html_for_metadata') or source.html or ''
+                await ImageProcessor.seed_wapo_from_nextdata(raw_full, body_soup, base, assets, session)
+            # If we downloaded assets but no <img> tags survived extraction, inject them now at top
+            if assets and not body_soup.find('img'):
+                for asset in assets:
+                    wrapper = body_soup.new_tag("div", attrs={"class": "img-block"})
+                    img_tag = body_soup.new_tag("img", attrs={"src": asset.filename, "class": "epub-image"})
+                    wrapper.append(img_tag)
+                    first_p = body_soup.find('p')
+                    if first_p:
+                        first_p.insert_before(wrapper)
+                    else:
+                        body_soup.insert(0, wrapper)
+                # remove any figcaptions after injection
+                for fc in list(body_soup.find_all("figcaption")):
+                    fc.decompose()
 
         chapter_html = body_soup.prettify()
         meta_html = ArticleExtractor.build_meta_block(url, data)

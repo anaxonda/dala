@@ -74,6 +74,11 @@ uv run web_to_epub.py "https://www.trek-lite.com/index.php?threads/arcdome-1.152
 ---
 
 ## 🔄 Updates
+- **Washington Post images (latest):**
+  - Extract origin URLs from `imrs.php` proxies and try those first, so WaPo images download reliably.
+  - If no images survive extraction, parse `__NEXT_DATA__` and inject the listed images into the article body.
+  - Safer image wrapping tolerates detached tags; `LOGLEVEL=DEBUG` now shows per-image candidates/fetches when needed.
+  - Added missing `parse_srcset_with_width`, configurable logging, and origin/`__NEXT_DATA__` handling to unblock image downloads and document the WaPo improvements.
 - **UI & queue polish (latest):**
   - Popup queue is now an editable textarea: paste/edit URLs directly; changes auto-save and the queue persists across downloads.
   - Added context-menu action “Download Page to EPUB” for immediate conversion of the current page/link; queue remains untouched.
