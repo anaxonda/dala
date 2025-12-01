@@ -10,7 +10,8 @@
 #   "Pillow",
 #   "lxml",
 #   "pygments",
-#   "tqdm"
+#   "tqdm",
+#   "requests"
 # ]
 # ///
 
@@ -42,7 +43,6 @@ class SourceItem(BaseModel):
     cookies: Optional[dict] = None
     assets: Optional[list] = None
     is_forum: Optional[bool] = False
-    tab_cookies: Optional[list] = None
 
 class ConversionRequest(BaseModel):
     sources: List[SourceItem] # Renamed from urls
@@ -57,7 +57,6 @@ class ConversionRequest(BaseModel):
     max_posts: Optional[int] = None
     page_spec: Optional[List[int]] = None
     termux_copy_dir: Optional[str] = None
-    tab_cookies: Optional[list] = None
 
 @app.get("/ping")
 async def ping(): return {"status": "ok"}
@@ -98,17 +97,12 @@ async def convert(req: ConversionRequest):
     core_sources = []
     for s in req.sources:
         is_forum = bool(s.is_forum)
-        # include tab cookies for same-origin image fetches
-        cookies = s.cookies
-        if s.tab_cookies:
-            cookies = s.tab_cookies
         core_sources.append(core.Source(
             url=s.url,
             html=s.html,
-            cookies=cookies,
-            assets=s.assets if is_forum else None,
-            is_forum=is_forum,
-            tab_cookies=s.tab_cookies
+            cookies=s.cookies,
+            assets=s.assets,
+            is_forum=is_forum
         ))
 
     async with core.get_session() as session:

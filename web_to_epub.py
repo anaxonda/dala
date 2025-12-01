@@ -39,6 +39,7 @@ from itertools import islice
 
 # --- Dependency Imports ---
 try:
+    import requests # Added for fallback image fetching
     import aiohttp
     import socket
     from aiohttp.resolver import ThreadedResolver
@@ -68,7 +69,7 @@ HN_ITEM_URL_BASE = "https://news.ycombinator.com/item?id="
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=45)
 IMAGE_TIMEOUT = aiohttp.ClientTimeout(total=5)
 MAX_RETRIES = 5
-IMG_MAX_RETRIES = 2
+IMG_MAX_RETRIES = 1
 RETRY_DELAY = 2.0
 IMG_RETRY_DELAY = 1.5
 IMG_MAX_CANDIDATES = 2
@@ -130,7 +131,6 @@ class Source:
     cookies: Optional[Dict[str, str]] = None
     assets: Optional[List[Dict[str, Any]]] = None
     is_forum: bool = False
-    tab_cookies: Optional[List[Dict[str, Any]]] = None
 
 @dataclass
 class ImageAsset:
@@ -230,9 +230,7 @@ async def fetch_with_retry(
     extra_headers: Optional[Dict[str, str]] = None,
     max_retries: int = MAX_RETRIES,
     backoff: float = RETRY_DELAY,
-    timeout=None,
-    return_status: bool = False,
-    cookies: Optional[list] = None
+    timeout=None
 ):
     final_url = url
     for attempt in range(max_retries):
@@ -247,61 +245,40 @@ async def fetch_with_retry(
             if extra_headers:
                 headers.update(extra_headers)
 
-            async with session.get(
-                url,
-                allow_redirects=allow_redirects,
-                headers=headers,
-                timeout=timeout or REQUEST_TIMEOUT,
-                cookies=cookies
-            ) as response:
+            async with session.get(url, allow_redirects=allow_redirects, headers=headers, timeout=timeout or REQUEST_TIMEOUT) as response:
                 final_url = str(response.url)
 
-                status_code = response.status
-
-                if status_code == 429:
+                if response.status == 429:
                     retry_after = int(response.headers.get("Retry-After", 10))
                     wait_time = max(retry_after, backoff * (2 ** attempt))
                     log.warning(f"Rate limit hit (429). Cooling down for {wait_time}s...")
                     await asyncio.sleep(wait_time)
                     continue
 
-                if non_retry_statuses and status_code in non_retry_statuses:
-                    log.warning(f"Non-retryable HTTP {status_code} for {url}")
-                    return (None, status_code) if return_status else (None, final_url)
+                if non_retry_statuses and response.status in non_retry_statuses:
+                    log.warning(f"Non-retryable HTTP {response.status} for {url}")
+                    return None, final_url
 
-                if status_code >= 400:
-                    if status_code == 404:
-                        return (None, status_code) if return_status else (None, final_url)
-                    log.warning(f"HTTP {status_code} for {url}")
-                    if return_status:
-                        return (None, status_code)
+                if response.status >= 400:
+                    if response.status == 404: return None, final_url
+                    log.warning(f"HTTP {response.status} for {url}")
 
-                if not return_status:
-                    response.raise_for_status()
+                response.raise_for_status()
 
-                if response_type == 'json':
-                    return (await response.json(), status_code) if return_status else (await response.json(), final_url)
-                elif response_type == 'bytes':
-                    data = await response.read()
-                    return (data, status_code) if return_status else (data, final_url)
-                elif response_type == 'text':
-                    text = await response.text(encoding='utf-8', errors='replace')
-                    return (text, status_code) if return_status else (text, final_url)
-                elif response_type == 'headers':
-                    return (response.headers, status_code) if return_status else (response.headers, final_url)
-                else:
-                    return (response, status_code) if return_status else (response, final_url)
+                if response_type == 'json': return await response.json(), final_url
+                elif response_type == 'bytes': return await response.read(), final_url
+                elif response_type == 'text': return await response.text(encoding='utf-8', errors='replace'), final_url
+                elif response_type == 'headers': return response.headers, final_url
+                else: return response, final_url
 
         except (aiohttp.ClientError, asyncio.TimeoutError, UnicodeDecodeError) as e:
             wait = backoff * (2 ** attempt)
             log.warning(f"Attempt {attempt + 1}/{max_retries} failed for {url}: {e}. Retrying in {wait}s.")
-            if attempt + 1 == max_retries:
-                return (None, None) if return_status else (None, url)
+            if attempt + 1 == max_retries: return None, url
             await asyncio.sleep(wait)
         except Exception as e:
             log.error(f"Unexpected error for {url}: {e}")
-            if attempt + 1 == max_retries:
-                return (None, None) if return_status else (None, url)
+            if attempt + 1 == max_retries: return None, url
             await asyncio.sleep(backoff * (2 ** attempt))
     return None, url
 
@@ -443,7 +420,35 @@ class ArticleExtractor:
 
 class ImageProcessor:
     @staticmethod
-    async def fetch_image_data(session, url, referer=None, cookies: Optional[list] = None):
+    async def _requests_fetch(session, target, img_headers, referer):
+        try:
+            import requests
+            cookie_dict = {}
+            try:
+                jar = session.cookie_jar.filter_cookies(URL(target))
+                cookie_dict = {k: v.value for k, v in jar.items()}
+            except Exception:
+                pass
+            extra = getattr(session, "_extra_cookies", None)
+            if isinstance(extra, dict):
+                cookie_dict.update(extra)
+            
+            # Run requests in an executor to avoid blocking the async loop
+            loop = asyncio.get_running_loop()
+            def _do_req():
+                return requests.get(target, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
+            
+            resp = await loop.run_in_executor(None, _do_req)
+            
+            if resp.content:
+                return resp.headers, resp.content, resp.status_code
+        except Exception as e:
+            log.debug(f"Requests fetch failed for {target}: {e}")
+            pass
+        return None, None, None
+
+    @staticmethod
+    async def fetch_image_data(session, url, referer=None):
         if url:
             url = url.strip()
         parsed = urlparse(url)
@@ -479,7 +484,6 @@ class ImageProcessor:
             "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Encoding": "gzip, deflate, br",
         }
         refs = []
         if referer: refs.append(referer)
@@ -494,51 +498,29 @@ class ImageProcessor:
         last_err = "No data"
         for ref in refs:
             try:
-                non_retry = {400,401,404,451}
                 headers, _ = await fetch_with_retry(
                     session, url, 'headers', referer=ref, extra_headers=image_headers,
-                    non_retry_statuses=non_retry, max_retries=IMG_MAX_RETRIES,
-                    backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT, cookies=cookies
+                    non_retry_statuses={400,401,403,404,451}, max_retries=IMG_MAX_RETRIES,
+                    backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT
                 )
-                data, status = await fetch_with_retry(
+                data, _ = await fetch_with_retry(
                     session, url, 'bytes', referer=ref, extra_headers=image_headers,
-                    non_retry_statuses=non_retry, max_retries=IMG_MAX_RETRIES,
-                    backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT, return_status=True, cookies=cookies
+                    non_retry_statuses={400,401,403,404,451}, max_retries=IMG_MAX_RETRIES,
+                    backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT
                 )
                 if headers and data:
                     return headers, data, None
                 last_err = "No headers" if not headers else "No data"
-
-                # Hotlink fallback: on 403, retry once with stronger headers and page referer
-                if status == 403 or (parsed.path or "").startswith("/wp-content/uploads/"):
-                    origin_hdr = ""
-                    try:
-                        origin_hdr = f"{parsed.scheme}://{parsed.netloc}"
-                    except Exception:
-                        origin_hdr = referer or ""
-                    strong_headers = {
-                        **image_headers,
-                        "Referer": referer or url,
-                        "Origin": origin_hdr or (referer or url),
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    }
-                    try:
-                        headers2, status2 = await fetch_with_retry(
-                            session, url, 'headers', referer=referer or origin_hdr or url, extra_headers=strong_headers,
-                            non_retry_statuses=None, max_retries=2, backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT, return_status=True, cookies=cookies
-                        )
-                        data2, status_bytes = await fetch_with_retry(
-                            session, url, 'bytes', referer=referer or origin_hdr or url, extra_headers=strong_headers,
-                            non_retry_statuses=None, max_retries=2, backoff=IMG_RETRY_DELAY, timeout=IMAGE_TIMEOUT, return_status=True, cookies=cookies
-                        )
-                        if headers2 and data2:
-                            return headers2, data2, None
-                        last_err = f"HTTP {status2 or status_bytes}"
-                    except Exception as e:
-                        last_err = str(e)
             except Exception as e:
                 last_err = str(e)
                 continue
+
+        # Fallback: Try requests if aiohttp failed
+        log.warning(f"aiohttp failed for {url}, trying requests fallback...")
+        h_req, d_req, status_req = await ImageProcessor._requests_fetch(session, url, image_headers, referer)
+        if d_req and (not status_req or status_req < 400):
+            return h_req or {}, d_req, None
+
         return None, None, last_err
 
     @staticmethod
@@ -1033,8 +1015,7 @@ class ImageProcessor:
                     if asyncio.get_event_loop().time() - started > IMG_MAX_PER_IMAGE_SEC:
                         log.debug(f"Image timeout for {src} after {IMG_MAX_PER_IMAGE_SEC}s")
                         break
-                    cookies = getattr(session, "_extra_cookies", None)
-                    headers, data, err = await ImageProcessor.fetch_image_data(session, cand, referer=base_url, cookies=cookies)
+                    headers, data, err = await ImageProcessor.fetch_image_data(session, cand, referer=base_url)
                     if err or not headers or not data:
                         continue
                     m2, e2, d2, val_err = ImageProcessor.optimize_and_get_details(cand, headers, data)

@@ -459,12 +459,12 @@ async function preparePayload(urls, bundleTitle) {
         }
         let cookies = null;
         let assets = [];
-        if (is_forum && include_assets) {
+        if (include_assets) {
             cookies = await getCookiesForUrl(url);
-            if (match) {
+            if (is_forum && match) {
                 assets = await fetchAssetsFromPage(match.id, url) || [];
             }
-            if (assets.length === 0) {
+            if (is_forum && assets.length === 0) {
                 assets = await fetchPageAssets(url, cookies, page_spec, max_pages);
             }
         }
