@@ -46,6 +46,16 @@ browser.runtime.onMessage.addListener((message) => {
         cancelDownload();
     } else if (message.action === "fetch-assets") {
         return fetchAssetsForPage(message.url, message.page_spec, message.max_pages);
+    } else if (message.action === "shortcut-download") {
+        const target = message.url;
+        if (target && target.startsWith("http")) {
+            downloadSingleFromContext(target);
+        }
+    } else if (message.action === "shortcut-queue") {
+        const target = message.url;
+        if (target && target.startsWith("http")) {
+            addToQueue(target);
+        }
     }
 });
 

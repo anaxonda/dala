@@ -29,6 +29,20 @@
       "background.js"
     ]
   },
+  "options_ui": {
+    "page": "options.html",
+    "browser_style": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": ["keyboard-shortcut.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "browser_action": {
     "default_icon": "icon.png",
     "default_title": "EPUB Manager",

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>EPUB Downloader Options</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 16px; }
+    .row { margin-bottom: 12px; }
+    label { display: block; font-weight: bold; margin-bottom: 4px; }
+    input[type="text"] { width: 220px; padding: 6px; }
+    input[type="checkbox"] { margin-right: 6px; }
+    .hint { font-size: 12px; color: #555; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h2>Keyboard Shortcuts</h2>
+  <div class="row">
+    <label>
+      <input type="checkbox" id="enable-shortcuts">
+      Enable keyboard shortcuts
+    </label>
+    <div class="hint">Requires a hardware keyboard. Not available on about:/file: pages.</div>
+  </div>
+  <div class="row">
+    <label for="download-shortcut">Download page shortcut</label>
+    <input type="text" id="download-shortcut" placeholder="ctrl+shift+e" autocomplete="off">
+    <div class="hint">Press the desired combo while this field is focused.</div>
+  </div>
+  <div class="row">
+    <label for="queue-shortcut">Add to queue shortcut</label>
+    <input type="text" id="queue-shortcut" placeholder="ctrl+shift+q" autocomplete="off">
+    <div class="hint">Press the desired combo while this field is focused.</div>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

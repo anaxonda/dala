@@ -49,6 +49,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             browser.runtime.sendMessage({ action: "cancel-download" });
             showStatus("Cancel requested");
         };
+        const optsBtn = document.getElementById('btn-options');
+        if (optsBtn) {
+            optsBtn.onclick = () => {
+                if (browser.runtime.openOptionsPage) {
+                    browser.runtime.openOptionsPage();
+                } else {
+                    const url = browser.runtime.getURL("options.html");
+                    browser.tabs.create({ url });
+                }
+            };
+        }
     } catch (e) {
         console.error("Error attaching listeners:", e);
     }
