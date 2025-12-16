@@ -276,12 +276,18 @@ async function processDownloadCore(payload, isBundle) {
     }
 
     try {
+        console.log("Preparing JSON payload...");
+        const bodyStr = JSON.stringify(payload);
+        console.log(`Payload size: ${bodyStr.length} chars. Sending request to server...`);
+
         const response = await fetch("http://127.0.0.1:8000/convert", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
+            body: bodyStr,
             signal: currentController.signal
         });
+
+        console.log("Server response received:", response.status);
 
         if (!response.ok) {
             const errText = await response.text();

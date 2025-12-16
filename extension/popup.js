@@ -425,6 +425,7 @@ async function preparePayload(urls, bundleTitle) {
 
     // 2. Iterate requested URLs
     for (const url of urls) {
+        console.log(`Processing payload for: ${url}`);
         let html = null;
         // Find a tab that matches this URL and is fully loaded
         const match = allTabs.find(t => t.url === url);
@@ -433,11 +434,25 @@ async function preparePayload(urls, bundleTitle) {
             try {
                 if (match.status !== "complete") {
                     console.log("⏳ Waiting for tab to fully load...");
+                    // Wait for completion OR timeout after 5s
                     await new Promise(resolve => {
-                        const listener = (tabId, changeInfo) => {
-                            if (tabId === match.id && changeInfo.status === "complete") {
+                        let isResolved = false;
+                        const t = setTimeout(() => {
+                            if (!isResolved) {
+                                console.log("Timed out waiting for tab load");
+                                isResolved = true;
                                 browser.tabs.onUpdated.removeListener(listener);
                                 resolve();
+                            }
+                        }, 5000);
+                        const listener = (tabId, changeInfo) => {
+                            if (tabId === match.id && changeInfo.status === "complete") {
+                                if (!isResolved) {
+                                    isResolved = true;
+                                    clearTimeout(t);
+                                    browser.tabs.onUpdated.removeListener(listener);
+                                    resolve();
+                                }
                             }
                         };
                         browser.tabs.onUpdated.addListener(listener);
@@ -445,16 +460,24 @@ async function preparePayload(urls, bundleTitle) {
                 }
                 await new Promise(resolve => setTimeout(resolve, 2000));
                 // Inject script to steal DOM
-                const results = await browser.tabs.executeScript(match.id, {
-                    code: "document.documentElement.outerHTML;"
-                });
+                console.log(`Injecting script into tab ${match.id}...`);
+                
+                // Race executeScript with a timeout
+                const results = await Promise.race([
+                    browser.tabs.executeScript(match.id, {
+                        code: "document.documentElement.outerHTML;"
+                    }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("Script injection timed out")), 5000))
+                ]);
+
+                console.log("Script injection complete.");
                 if (results && results[0]) {
                     html = results[0];
                     console.log("Injecting HTML for:", url);
                 }
             } catch (e) {
                 // Fails on restricted domains (addons.mozilla.org) or discarded tabs
-                console.log("Could not grab HTML (using fallback):", url);
+                console.log("Could not grab HTML (using fallback):", url, e);
             }
         }
         let cookies = null;
@@ -514,6 +537,7 @@ async function safeDownloadSingle() {
 
 async function safeDownloadBundle() {
     try {
+        console.log("Starting bundle download...");
         await saveQueueFromEditor();
         const res = await browser.storage.local.get("urlQueue");
         const queue = res.urlQueue || [];
@@ -526,8 +550,10 @@ async function safeDownloadBundle() {
         showStatus("Preparing bundle...");
         const title = document.getElementById('bundle-title').value;
         const payload = await preparePayload(queue, title);
+        console.log("Payload prepared. Sending message to background...");
 
         browser.runtime.sendMessage({ action: "download", payload: payload, isBundle: true });
+        console.log("Message sent.");
         showStatus("Bundle started...");
         window.close();
     } catch (e) {

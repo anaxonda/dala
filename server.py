@@ -29,6 +29,12 @@ import web_to_epub as core
 
 app = FastAPI()
 
+@app.middleware("http")
+async def log_requests(request, call_next):
+    print(f"🔹 Incoming request: {request.method} {request.url}")
+    response = await call_next(request)
+    return response
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

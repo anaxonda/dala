@@ -74,6 +74,10 @@ uv run web_to_epub.py "https://www.trek-lite.com/index.php?threads/arcdome-1.152
 ---
 
 ## 🔄 Updates
+- **Extension Reliability & Pipeline Alignment:**
+  - **Unified Data Context:** Refactored `background.js` to ensure keyboard shortcuts and context menu actions invoke the same data-gathering logic as the popup UI. Specifically, they now check the `include_cookies` option and fetch `browser.cookies.getAll()` for the target URL, transmitting the session state to the backend. This enables authenticated scraping (e.g., paywalls) via shortcuts which previously failed due to missing cookies.
+  - **Mitigating Background Throttling:** Bundle downloads previously hung on background tabs due to browser resource throttling of `executeScript` callbacks. Implemented a `Promise.race` wrapper around script injection with a 5-second timeout. If a background tab is unresponsive, the extension now fails soft, logging a timeout and proceeding to the next URL (falling back to server-side scraping) instead of stalling the entire queue.
+  - **Zombie/Discarded Tab Handling:** Added explicit checks for `tab.discarded` in `popup.js`. The extension now skips client-side DOM injection for suspended/unloaded tabs immediately, avoiding API errors and deadlocks, and relying on the backend to fetch the content freshly.
 - **Washington Post images (latest):**
   - Extract origin URLs from `imrs.php` proxies and try those first, so WaPo images download reliably.
   - If no images survive extraction, parse `__NEXT_DATA__` and inject the listed images into the article body.
@@ -241,3 +245,18 @@ Reading threaded conversations linearly is difficult.
 *   **Fallback fetch:** For unmatched attachment URLs, use requests-only with cookies, including queryless retries; avoid aiohttp 409 loops.
 *   **Output:** Single-thread chapter with page labels and all distinct attachments embedded; tightened CSS to reduce whitespace around images/posts.
 *   **Challenges solved:** MTBR-style attachments used multiple URL forms and 409-protected CDNs. The mapping of URL variants to preloaded assets prevented collapsing every image to the first, and request-only/queryless fallbacks plus multi-page asset fetch ensured coverage across thread pages.
+# todo
+- support wordpress comments, ex site: https://caseyhandmer.wordpress.com/2025/11/26/antimatter-development-program/
+- refactor code, see note (gemini?)
+- per site rules
+- should run in background not need popup open if many tabs are bundled
+- support crawling certain number of link hierarchy
+- sign extension
+- keyboard shortcut add selected to bundle
+- right click menu to add selected to bundle
+- keyboard shortcut to download bundle
+- headless mode, better for rss?
+- port to chrome extension 
+- on koreader siden plugin for saving links to special file? or could just parse highlights later.  
+- for youtube links: fetch transcript, optional formatting, optional summary?
+- for any link summary option
