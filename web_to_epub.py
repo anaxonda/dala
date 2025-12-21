@@ -2969,7 +2969,8 @@ class WordPressDriver(BaseDriver):
 
             text = ""
             if body:
-                for reply in body.select('.reply'): reply.decompose()
+                for junk in body.select('.reply, .comment-likes, .comment-like-link, .comment-like-feedback, .wd-public-likes, .like-button'):
+                    junk.decompose()
                 text = str(body)
             
             node = {
