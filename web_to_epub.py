@@ -645,7 +645,7 @@ class BaseImageProcessor:
         return None
 
     @staticmethod
-    def wrap_in_img_block(soup: BeautifulSoup, img_tag: Tag, caption_text: Optional[str]) -> None:
+    def wrap_in_img_block(soup: BeautifulSoup, img_tag: Tag, caption_text: Optional[str], prepend: bool = False) -> None:
         if not img_tag or not soup:
             return
         fig = img_tag.find_parent("figure")
@@ -662,47 +662,16 @@ class BaseImageProcessor:
         if parent:
             img_tag.replace_with(wrapper)
         else:
-            (soup.body or soup).append(wrapper)
+            target = soup.body or soup
+            if prepend:
+                target.insert(0, wrapper)
+            else:
+                target.append(wrapper)
         wrapper.append(img_tag)
         if caption_text:
             cap = soup.new_tag("p", attrs={"class": "caption"})
             cap.string = caption_text
             wrapper.append(cap)
-
-        parent = wrapper.parent
-        while parent and parent.name in ("div", "section"):
-            for fc in list(parent.find_all("figcaption", recursive=False)):
-                fc.decompose()
-            meaningful = [c for c in parent.contents if not (isinstance(c, str) and not c.strip())]
-            dataid = (parent.get("data-testid") or "").lower()
-            if len(meaningful) == 1 and meaningful[0] is wrapper and (dataid.startswith("imageblock") or dataid.startswith("photoviewer")):
-                parent.unwrap()
-                parent = wrapper.parent
-                continue
-            break
-
-        sib = wrapper.next_sibling
-        while sib and isinstance(sib, str) and not sib.strip():
-            sib = sib.next_sibling
-        if hasattr(sib, "name") and sib.name == "figcaption":
-            sib.decompose()
-
-        parent = wrapper.parent
-        if parent:
-            for fc in list(parent.find_all("figcaption", recursive=False)):
-                fc.decompose()
-
-        parent = wrapper.parent
-        while parent and parent.name in ("div", "section"):
-            for fc in list(parent.find_all("figcaption", recursive=False)):
-                fc.decompose()
-            children = [c for c in parent.contents if not (isinstance(c, str) and not c.strip())]
-            dataid = (parent.get("data-testid") or "").lower()
-            if len(children) == 1 and children[0] is wrapper and (dataid.startswith("imageblock") or dataid.startswith("photoviewer")):
-                parent.unwrap()
-                parent = wrapper.parent
-                continue
-            break
 
     @staticmethod
     def is_junk(url: str) -> bool:
@@ -989,12 +958,8 @@ class ImageProcessor(BaseImageProcessor):
 
             log.debug(f"Targeted __NEXT_DATA__ content elements: {len(elems)}")
             added = 0
+            fallback_index = 0
             for el in elems:
-                if not isinstance(el, dict):
-                    continue
-                if el.get("type") != "image":
-                    continue
-                # Prefer direct URL (el.get("url"))
                 if not isinstance(el, dict):
                     continue
                 if el.get("type") != "image":
@@ -1034,6 +999,7 @@ class ImageProcessor(BaseImageProcessor):
                     img_block_wrapper = body_soup.new_tag("div", attrs={"class": "img-block"})
                     img_tag = body_soup.new_tag("img", attrs={"src": fname, "class": "epub-image"})
                     img_block_wrapper.append(img_tag)
+                    cap_text = caption.strip() if caption else None
                     if cap_text:
                         cap = body_soup.new_tag("p", attrs={"class": "caption"})
                         cap.string = cap_text
@@ -1042,11 +1008,23 @@ class ImageProcessor(BaseImageProcessor):
                     log.debug(f"Injected WaPo image {origin} into placeholder {el.get('_id')}")
                     added += 1
                 else:
-                    # Fallback to appending if no specific placeholder is found
+                    # Fallback to prepending if no specific placeholder is found (likely a lede image)
                     img_tag = body_soup.new_tag("img", attrs={"src": fname, "class": "epub-image"})
                     cap_text = caption.strip() if caption else None
-                    ImageProcessor.wrap_in_img_block(body_soup, img_tag, cap_text)
-                    log.debug(f"Appended WaPo image {origin} (no specific placeholder found)")
+                    
+                    # Prepend fallback images in order at the top
+                    wrapper = body_soup.new_tag("div", attrs={"class": "img-block"})
+                    wrapper.append(img_tag)
+                    if cap_text:
+                        cap = body_soup.new_tag("p", attrs={"class": "caption"})
+                        cap.string = cap_text
+                        wrapper.append(cap)
+                    
+                    target = body_soup.body or body_soup
+                    target.insert(fallback_index, wrapper)
+                    fallback_index += 1
+                    
+                    log.debug(f"Prepended WaPo image {origin} (no specific placeholder found)")
                     added += 1
             if added:
                 # remove any leftover figcaptions after injection

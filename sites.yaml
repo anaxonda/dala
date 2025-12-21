@@ -2,3 +2,15 @@
   domains:
     - "washingtonpost.com"
   image_proxy_pattern: "imrs.php"
+  remove:
+    - "[data-qa='collections-wrapper']"
+    - "[data-qa='author-bio']"
+    - "[data-qa='more-from-the-post']"
+    - "ul[data-testid='collections-list']"
+    - "footer"
+    - "aside"
+    - "nav"
+    - ".related-content"
+    - ".hide-for-print"
+    - "div[data-testid='article-byline'] ~ div"
+    - "hr ~ div" # Often WaPo junk follows a divider
