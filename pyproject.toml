@@ -1,0 +1,30 @@
+[project]
+name = "epub-downloader"
+version = "0.1.0"
+description = "Web to EPUB Downloader with E-Ink Optimizations"
+readme = "readme.md"
+requires-python = ">=3.8"
+dependencies = [
+    "requests>=2.30.0",
+    "aiohttp[speedups]>=3.9.0",
+    "beautifulsoup4>=4.11.0",
+    "EbookLib>=0.18",
+    "trafilatura>=1.6.0",
+    "lxml[html_clean]>=4.9.0",
+    "pygments>=2.14.0",
+    "tqdm>=4.65.0",
+    "Pillow>=9.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "aioresponses",
+]
