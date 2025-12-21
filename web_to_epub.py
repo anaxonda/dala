@@ -464,7 +464,7 @@ class ArticleExtractor:
 
 # --- Image Processing ---
 
-class ImageProcessor:
+class BaseImageProcessor:
     @staticmethod
     async def _requests_fetch(session, target, img_headers, referer):
         try:
@@ -479,20 +479,207 @@ class ImageProcessor:
             if isinstance(extra, dict):
                 cookie_dict.update(extra)
             
-            # Run requests in an executor to avoid blocking the async loop
             loop = asyncio.get_running_loop()
             def _do_req():
                 return requests.get(target, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
             
             resp = await loop.run_in_executor(None, _do_req)
-            
             if resp.content:
                 return resp.headers, resp.content, resp.status_code
         except Exception as e:
             log.debug(f"Requests fetch failed for {target}: {e}")
-            pass
         return None, None, None
 
+    @staticmethod
+    def optimize_and_get_details(url, headers, data):
+        if not data:
+            return None, None, None, "No Data"
+        content_type = headers.get('Content-Type', '').split(';')[0].strip().lower()
+        if len(data) < 12 * 1024:
+            if not content_type:
+                content_type = mimetypes.guess_type(url)[0] or 'application/octet-stream'
+            ext = mimetypes.guess_extension(content_type) or '.img'
+            return content_type, ext, data, None
+        if not HAS_PILLOW:
+            ext = mimetypes.guess_extension(content_type) or '.img'
+            return content_type, ext, data, None
+
+        try:
+            img_io = io.BytesIO(data)
+            with PillowImage.open(img_io) as img:
+                img.load()
+                if img.width < 20 or img.height < 20:
+                    return None, None, None, "Tracking Pixel"
+
+                if img.width > MAX_IMAGE_DIMENSION or img.height > MAX_IMAGE_DIMENSION:
+                    reduce_factor = max(1, int(max(img.width, img.height) / (MAX_IMAGE_DIMENSION * 2)))
+                    if reduce_factor > 1:
+                        img = img.reduce(reduce_factor)
+                    img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), PillowImage.Resampling.LANCZOS)
+
+                if img.format == 'GIF' and getattr(img, "is_animated", False):
+                    out_io = io.BytesIO()
+                    img.save(out_io, format='GIF', optimize=True)
+                    return 'image/gif', '.gif', out_io.getvalue(), None
+
+                if img.format == 'PNG' and len(data) < 200 * 1024:
+                    out_io = io.BytesIO()
+                    img.save(out_io, format='PNG', optimize=True)
+                    return 'image/png', '.png', out_io.getvalue(), None
+
+                output_format = 'JPEG'
+                output_mime = 'image/jpeg'
+                output_ext = '.jpg'
+
+                if img.format == 'WEBP':
+                    output_format = 'WEBP'
+                    output_mime = 'image/webp'
+                    output_ext = '.webp'
+
+                if output_format in ('JPEG', 'WEBP'):
+                    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+                        background = PillowImage.new("RGB", img.size, (255, 255, 255))
+                        if img.mode == 'P':
+                            img = img.convert('RGBA')
+                        background.paste(img, mask=img.split()[3])
+                        img = background
+                    elif img.mode != 'RGB':
+                        img = img.convert('RGB')
+
+                out_io = io.BytesIO()
+                save_params = {"optimize": True}
+                if output_format == 'JPEG':
+                    save_params["quality"] = JPEG_QUALITY
+                    save_params["subsampling"] = "4:2:0"
+                if output_format == 'WEBP':
+                    save_params["quality"] = 70
+                img.save(out_io, format=output_format, **save_params)
+
+                return output_mime, output_ext, out_io.getvalue(), None
+
+        except Exception as e:
+            return None, None, None, f"Optimization Error: {e}"
+
+    @staticmethod
+    def find_caption(element_tag):
+        if not element_tag:
+            return None
+        fig = element_tag.find_parent('figure')
+        if fig:
+            cap = fig.find('figcaption')
+            if cap:
+                return cap.get_text(strip=True)
+        nxt = element_tag.find_next_sibling(['p', 'div', 'span', 'figcaption'])
+        if nxt:
+            text = nxt.get_text(strip=True)
+            if 5 < len(text) < 300:
+                return text
+        return None
+
+    @staticmethod
+    def wrap_in_img_block(soup: BeautifulSoup, img_tag: Tag, caption_text: Optional[str]) -> None:
+        if not img_tag or not soup:
+            return
+        fig = img_tag.find_parent("figure")
+        if fig:
+            if not caption_text:
+                figcap = fig.find("figcaption")
+                if figcap:
+                    caption_text = figcap.get_text(strip=True)
+                    figcap.decompose()
+            fig.unwrap()
+
+        wrapper = soup.new_tag("div", attrs={"class": "img-block"})
+        parent = img_tag.parent
+        if parent:
+            img_tag.replace_with(wrapper)
+        else:
+            (soup.body or soup).append(wrapper)
+        wrapper.append(img_tag)
+        if caption_text:
+            cap = soup.new_tag("p", attrs={"class": "caption"})
+            cap.string = caption_text
+            wrapper.append(cap)
+
+        parent = wrapper.parent
+        while parent and parent.name in ("div", "section"):
+            for fc in list(parent.find_all("figcaption", recursive=False)):
+                fc.decompose()
+            meaningful = [c for c in parent.contents if not (isinstance(c, str) and not c.strip())]
+            dataid = (parent.get("data-testid") or "").lower()
+            if len(meaningful) == 1 and meaningful[0] is wrapper and (dataid.startswith("imageblock") or dataid.startswith("photoviewer")):
+                parent.unwrap()
+                parent = wrapper.parent
+                continue
+            break
+
+        sib = wrapper.next_sibling
+        while sib and isinstance(sib, str) and not sib.strip():
+            sib = sib.next_sibling
+        if hasattr(sib, "name") and sib.name == "figcaption":
+            sib.decompose()
+
+        parent = wrapper.parent
+        if parent:
+            for fc in list(parent.find_all("figcaption", recursive=False)):
+                fc.decompose()
+
+        parent = wrapper.parent
+        while parent and parent.name in ("div", "section"):
+            for fc in list(parent.find_all("figcaption", recursive=False)):
+                fc.decompose()
+            children = [c for c in parent.contents if not (isinstance(c, str) and not c.strip())]
+            dataid = (parent.get("data-testid") or "").lower()
+            if len(children) == 1 and children[0] is wrapper and (dataid.startswith("imageblock") or dataid.startswith("photoviewer")):
+                parent.unwrap()
+                parent = wrapper.parent
+                continue
+            break
+
+    @staticmethod
+    def parse_srcset(srcset_str: str) -> list:
+        if not srcset_str:
+            return []
+        candidates = []
+        parts = srcset_str.split(',')
+        for p in parts:
+            p = p.strip()
+            if not p:
+                continue
+            sub = p.split(' ')
+            url = sub[0]
+            width = 0
+            if len(sub) > 1 and sub[1].endswith('w'):
+                try:
+                    width = int(sub[1][:-1])
+                except:
+                    pass
+            candidates.append((width, url))
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return [c[1] for c in candidates]
+
+    @staticmethod
+    def parse_srcset_with_width(srcset_str: str) -> list:
+        if not srcset_str:
+            return []
+        pairs = []
+        for part in srcset_str.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            url_part, *rest = part.split()
+            width_val = 0
+            if rest and rest[0].endswith("w"):
+                try:
+                    width_val = int(rest[0][:-1])
+                except Exception:
+                    width_val = 0
+            pairs.append((width_val, url_part))
+        pairs.sort(key=lambda x: x[0], reverse=True)
+        return pairs
+
+class ImageProcessor(BaseImageProcessor):
     @staticmethod
     async def fetch_image_data(session, url, referer=None):
         if url:
@@ -591,166 +778,9 @@ class ImageProcessor:
 
         return None, None, last_err
 
-    @staticmethod
-    def optimize_and_get_details(url, headers, data):
-        if not data:
-            return None, None, None, "No Data"
-        content_type = headers.get('Content-Type', '').split(';')[0].strip().lower()
-        # Bypass for tiny assets: don't waste cycles or risk inflating size
-        if len(data) < 12 * 1024:
-            if not content_type:
-                content_type = mimetypes.guess_type(url)[0] or 'application/octet-stream'
-            ext = mimetypes.guess_extension(content_type) or '.img'
-            return content_type, ext, data, None
-        if not HAS_PILLOW:
-            ext = mimetypes.guess_extension(content_type) or '.img'
-            return content_type, ext, data, None
 
-        try:
-            img_io = io.BytesIO(data)
-            with PillowImage.open(img_io) as img:
-                img.load()
-                if img.width < 20 or img.height < 20:
-                    return None, None, None, "Tracking Pixel"
 
-                # Two-step downscale for very large images
-                if img.width > MAX_IMAGE_DIMENSION or img.height > MAX_IMAGE_DIMENSION:
-                    reduce_factor = max(1, int(max(img.width, img.height) / (MAX_IMAGE_DIMENSION * 2)))
-                    if reduce_factor > 1:
-                        img = img.reduce(reduce_factor)
-                    img.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), PillowImage.Resampling.LANCZOS)
 
-                # Animated GIF: keep as GIF
-                if img.format == 'GIF' and getattr(img, "is_animated", False):
-                    out_io = io.BytesIO()
-                    img.save(out_io, format='GIF', optimize=True)
-                    return 'image/gif', '.gif', out_io.getvalue(), None
-
-                # Preserve small PNGs to avoid JPEG artifacts
-                if img.format == 'PNG' and len(data) < 200 * 1024:
-                    out_io = io.BytesIO()
-                    img.save(out_io, format='PNG', optimize=True)
-                    return 'image/png', '.png', out_io.getvalue(), None
-
-                output_format = 'JPEG'
-                output_mime = 'image/jpeg'
-                output_ext = '.jpg'
-
-                # WebP path: only when Pillow supports and not animated
-                if img.format == 'WEBP':
-                    output_format = 'WEBP'
-                    output_mime = 'image/webp'
-                    output_ext = '.webp'
-
-                if output_format in ('JPEG', 'WEBP'):
-                    if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
-                        background = PillowImage.new("RGB", img.size, (255, 255, 255))
-                        if img.mode == 'P':
-                            img = img.convert('RGBA')
-                        background.paste(img, mask=img.split()[3])
-                        img = background
-                    elif img.mode != 'RGB':
-                        img = img.convert('RGB')
-
-                out_io = io.BytesIO()
-                save_params = {"optimize": True}
-                if output_format == 'JPEG':
-                    save_params["quality"] = JPEG_QUALITY
-                    save_params["subsampling"] = "4:2:0"
-                if output_format == 'WEBP':
-                    save_params["quality"] = 70
-                img.save(out_io, format=output_format, **save_params)
-
-                return output_mime, output_ext, out_io.getvalue(), None
-
-        except Exception as e:
-            return None, None, None, f"Optimization Error: {e}"
-
-    @staticmethod
-    def find_caption(element_tag):
-        if not element_tag:
-            return None
-        fig = element_tag.find_parent('figure')
-        if fig:
-            cap = fig.find('figcaption')
-            if cap:
-                return cap.get_text(strip=True)
-        nxt = element_tag.find_next_sibling(['p', 'div', 'span', 'figcaption'])
-        if nxt:
-            text = nxt.get_text(strip=True)
-            if 5 < len(text) < 300:
-                return text
-        return None
-
-    @staticmethod
-    def wrap_in_img_block(soup: BeautifulSoup, img_tag: Tag, caption_text: Optional[str]) -> None:
-        """Wrap an image in a minimal div.img-block with optional caption."""
-        if not img_tag or not soup:
-            return
-        # If inside a figure (possibly nested), harvest figcaption then unwrap
-        fig = img_tag.find_parent("figure")
-        if fig:
-            if not caption_text:
-                figcap = fig.find("figcaption")
-                if figcap:
-                    caption_text = figcap.get_text(strip=True)
-                    figcap.decompose()
-            fig.unwrap()
-
-        wrapper = soup.new_tag("div", attrs={"class": "img-block"})
-        parent = img_tag.parent
-        if parent:
-            img_tag.replace_with(wrapper)
-        else:
-            # Detached tag: just append the new wrapper to the body
-            (soup.body or soup).append(wrapper)
-        wrapper.append(img_tag)
-        if caption_text:
-            cap = soup.new_tag("p", attrs={"class": "caption"})
-            cap.string = caption_text
-            wrapper.append(cap)
-
-        # Remove nearby figcaptions and unwrap noisy containers above the img-block
-        parent = wrapper.parent
-        while parent and parent.name in ("div", "section"):
-            # drop sibling figcaptions at this level
-            for fc in list(parent.find_all("figcaption", recursive=False)):
-                fc.decompose()
-            meaningful = [c for c in parent.contents if not (isinstance(c, str) and not c.strip())]
-            dataid = (parent.get("data-testid") or "").lower()
-            if len(meaningful) == 1 and meaningful[0] is wrapper and (dataid.startswith("imageblock") or dataid.startswith("photoviewer")):
-                parent.unwrap()
-                parent = wrapper.parent
-                continue
-            break
-
-        # As a final cleanup, remove any figcaption siblings immediately after the wrapper
-        sib = wrapper.next_sibling
-        while sib and isinstance(sib, str) and not sib.strip():
-            sib = sib.next_sibling
-        if hasattr(sib, "name") and sib.name == "figcaption":
-            sib.decompose()
-
-        # Also remove any descendant figcaptions left under the same immediate parent
-        parent = wrapper.parent
-        if parent:
-            for fc in list(parent.find_all("figcaption", recursive=False)):
-                fc.decompose()
-
-        # Clean up outer wrappers/figcaptions from NYT/others
-        parent = wrapper.parent
-        while parent and parent.name in ("div", "section"):
-            # drop sibling figcaptions under this parent
-            for fc in list(parent.find_all("figcaption", recursive=False)):
-                fc.decompose()
-            # unwrap known noisy containers that only hold our block
-            children = [c for c in parent.contents if not (isinstance(c, str) and not c.strip())]
-            dataid = (parent.get("data-testid") or "").lower()
-            if len(children) == 1 and children[0] is wrapper and (dataid.startswith("imageblock") or dataid.startswith("photoviewer")):
-                parent.unwrap()
-                parent = wrapper.parent
-                continue
-            break
 
     @staticmethod
     def _cleanup_generic_wrapper(img_tag: Tag, caption_text: Optional[str]) -> None:
@@ -822,49 +852,7 @@ class ImageProcessor:
             return True
         return False
 
-    @staticmethod
-    def parse_srcset(srcset_str: str) -> list:
-        if not srcset_str:
-            return []
-        candidates = []
-        parts = srcset_str.split(',')
-        for p in parts:
-            p = p.strip()
-            if not p:
-                continue
-            sub = p.split(' ')
-            url = sub[0]
-            width = 0
-            if len(sub) > 1 and sub[1].endswith('w'):
-                try:
-                    width = int(sub[1][:-1])
-                except:
-                    pass
-            candidates.append((width, url))
 
-        candidates.sort(key=lambda x: x[0], reverse=True)
-        return [c[1] for c in candidates]
-
-    @staticmethod
-    def parse_srcset_with_width(srcset_str: str) -> list:
-        """Return list of (width, url) sorted by width desc."""
-        if not srcset_str:
-            return []
-        pairs = []
-        for part in srcset_str.split(","):
-            part = part.strip()
-            if not part:
-                continue
-            url_part, *rest = part.split()
-            width_val = 0
-            if rest and rest[0].endswith("w"):
-                try:
-                    width_val = int(rest[0][:-1])
-                except Exception:
-                    width_val = 0
-            pairs.append((width_val, url_part))
-        pairs.sort(key=lambda x: x[0], reverse=True)
-        return pairs
 
     @staticmethod
     def _extract_origin_from_proxy(url: str) -> Optional[str]:
@@ -1202,7 +1190,7 @@ class ImageProcessor:
             fc.decompose()
 
 
-class ForumImageProcessor:
+class ForumImageProcessor(BaseImageProcessor):
     @staticmethod
     def _normalize_for_match(url: str) -> Optional[str]:
         return normalize_url_for_matching(url) or None
@@ -1263,25 +1251,7 @@ class ForumImageProcessor:
             return True
         return False
 
-    @staticmethod
-    async def _requests_fetch(session, target, img_headers, referer):
-        try:
-            import requests
-            cookie_dict = {}
-            try:
-                jar = session.cookie_jar.filter_cookies(URL(target))
-                cookie_dict = {k: v.value for k, v in jar.items()}
-            except Exception:
-                pass
-            extra = getattr(session, "_extra_cookies", None)
-            if isinstance(extra, dict):
-                cookie_dict.update(extra)
-            resp = requests.get(target, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
-            if resp.content:
-                return resp.headers, resp.content, resp.status_code
-        except Exception:
-            pass
-        return None, None, None
+
 
     @staticmethod
     def _parse_viewer_for_image(html_bytes, base_url):
