@@ -1244,14 +1244,29 @@ class ForumImageProcessor(BaseImageProcessor):
             return True
         if url.startswith("data:") or url.startswith("view-source:"):
             return True
-        bad_keywords = [
-            "spacer", "1x1", "transparent", "gray.gif", "pixel.gif",
-            "placeholder", "loader", "blank.gif", "reaction_id=", "/react?", "reactions/emojione"
-        ]
-        lower_url = url.lower()
         if any(k in lower_url for k in bad_keywords):
             return True
         return False
+
+    @staticmethod
+    async def _requests_fetch(session, target, img_headers, referer):
+        try:
+            import requests
+            cookie_dict = {}
+            try:
+                jar = session.cookie_jar.filter_cookies(URL(target))
+                cookie_dict = {k: v.value for k, v in jar.items()}
+            except Exception:
+                pass
+            extra = getattr(session, "_extra_cookies", None)
+            if isinstance(extra, dict):
+                cookie_dict.update(extra)
+            resp = requests.get(target, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
+            if resp.content:
+                return resp.headers, resp.content, resp.status_code
+        except Exception:
+            pass
+        return None, None, None
 
 
 
