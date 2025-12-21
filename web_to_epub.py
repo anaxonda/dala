@@ -11,6 +11,7 @@
 #   "pygments>=2.14.0",
 #   "tqdm>=4.65.0",
 #   "Pillow>=9.0.0",
+#   "PyYAML>=6.0",
 # ]
 # ///
 
@@ -133,10 +134,62 @@ class Source:
     is_forum: bool = False
 
 @dataclass
+class SiteProfile:
+    name: str
+    domain_patterns: List[str]
+    driver_alias: Optional[str] = None
+    content_selector: Optional[str] = None
+    remove_selectors: List[str] = field(default_factory=list)
+    headers: Dict[str, str] = field(default_factory=dict)
+
+class ProfileManager:
+    _instance = None
+    def __init__(self, config_paths: List[str] = None):
+        self.profiles: List[SiteProfile] = []
+        if config_paths:
+            for path in config_paths:
+                self.load_config(path)
+    @classmethod
+    def get_instance(cls):
+        if not cls._instance:
+            paths = ["sites.yaml", os.path.expanduser("~/.config/epub_downloader/sites.yaml")]
+            cls._instance = cls(paths)
+        return cls._instance
+    def load_config(self, path: str):
+        if not os.path.exists(path): return
+        try:
+            import yaml
+            with open(path, 'r') as f:
+                data = yaml.safe_load(f)
+                if not data or not isinstance(data, list): return
+                for item in data:
+                    self.profiles.append(SiteProfile(
+                        name=item.get("name", "Unknown"),
+                        domain_patterns=item.get("domains", []),
+                        driver_alias=item.get("driver"),
+                        content_selector=item.get("content_selector"),
+                        remove_selectors=item.get("remove", []),
+                        headers=item.get("headers", {})
+                    ))
+            log.info(f"Loaded {len(data)} profiles from {path}")
+        except ImportError:
+            log.warning("PyYAML not found. Site profiles disabled.")
+        except Exception as e:
+            log.warning(f"Failed to load config {path}: {e}")
+    def get_profile(self, url: str) -> Optional[SiteProfile]:
+        for p in self.profiles:
+            for pattern in p.domain_patterns:
+                try:
+                    if re.search(pattern, url): return p
+                except: pass
+        return None
+
+@dataclass
 class ConversionContext:
     """Context object holding state for the conversion process."""
     session: aiohttp.ClientSession
     options: ConversionOptions
+    profile: Optional[SiteProfile] = None
 
 @dataclass
 class ImageAsset:
@@ -3843,7 +3896,16 @@ class EpubWriter:
 
 class DriverDispatcher:
     @staticmethod
-    def get_driver(source: Source) -> BaseDriver:
+    def get_driver(source: Source, profile: Optional[SiteProfile] = None) -> BaseDriver:
+        if profile and profile.driver_alias:
+            alias = profile.driver_alias.lower()
+            if alias in ("forum", "xenforo"): return ForumDriver()
+            if alias == "wordpress": return WordPressDriver()
+            if alias == "substack": return SubstackDriver()
+            if alias in ("hn", "hackernews"): return HackerNewsDriver()
+            if alias == "reddit": return RedditDriver()
+            if alias == "generic": return GenericDriver()
+
         url = source.url
         parsed = urlparse(url)
         
@@ -3877,7 +3939,8 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
 
     async def safe_process(source):
         async with GLOBAL_SEMAPHORE:
-            driver = DriverDispatcher.get_driver(source)
+            profile = ProfileManager.get_instance().get_profile(source.url)
+            driver = DriverDispatcher.get_driver(source, profile)
 
             local_session = session
             if source.cookies:
@@ -3890,7 +3953,7 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
                 setattr(local_session, "_extra_cookies", source.cookies)
 
             try:
-                context = ConversionContext(session=local_session, options=options)
+                context = ConversionContext(session=local_session, options=options, profile=profile)
                 return await driver.prepare_book_data(context, source)
             except Exception as e:
                 log.exception(f"Failed to process {source.url}: {e}")
