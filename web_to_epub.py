@@ -2945,14 +2945,8 @@ class WordPressDriver(BaseDriver):
             classes = li.get("class", [])
             if "comment" not in classes and "pingback" not in classes: continue
             
-            body = li.select_one('.comment-body, .comment-content')
             author_tag = li.select_one('.comment-author .fn, .comment-author cite')
             date_tag = li.select_one('.comment-metadata time, .comment-meta time')
-            
-            text = ""
-            if body:
-                for reply in body.select('.reply'): reply.decompose()
-                text = str(body)
             
             author = author_tag.get_text(strip=True) if author_tag else "Anonymous"
             
@@ -2963,6 +2957,20 @@ class WordPressDriver(BaseDriver):
                     dt = datetime.fromisoformat(dt_str)
                     time_val = dt.timestamp()
                 except: pass
+
+            # Prefer content only to avoid duplicating metadata (avatars)
+            body = li.select_one('.comment-content')
+            if not body:
+                body = li.select_one('.comment-body')
+                if body:
+                    # If falling back to wrapper, remove metadata elements
+                    for meta in body.select('footer, .comment-meta, .comment-author'):
+                        meta.decompose()
+
+            text = ""
+            if body:
+                for reply in body.select('.reply'): reply.decompose()
+                text = str(body)
             
             node = {
                 'id': li.get('id', f"c_{abs(hash(text))}"),
