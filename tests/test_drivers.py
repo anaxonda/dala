@@ -57,3 +57,50 @@ async def test_generic_driver_404():
                     
                     book = await driver.prepare_book_data(context, source)
                     assert book is None
+
+@pytest.mark.asyncio
+async def test_generic_driver_switches_to_forum():
+    url = "https://example.com/unknown-forum/thread"
+    # HTML that triggers the switch AND contains valid posts for ForumDriver
+    forum_html = """
+    <html>
+    <body>
+        <div data-template="thread_view">
+            <article class="message message--post" id="post-1">
+                <div class="message-inner">
+                    <div class="message-cell message-cell--user">
+                        <div class="message-user">
+                            <h4 class="message-name"><a href="#" class="username">TestUser</a></h4>
+                        </div>
+                    </div>
+                    <div class="message-cell message-cell--main">
+                        <div class="message-content">
+                            <div class="message-body">Hello Forum</div>
+                        </div>
+                    </div>
+                </div>
+            </article>
+        </div>
+    </body>
+    </html>
+    """
+    
+    with aioresponses() as m:
+        # 1. GenericDriver fetch
+        m.get(url, status=200, body=forum_html)
+        # 2. ForumDriver fetch (it starts over)
+        m.get(url, status=200, body=forum_html)
+        
+        async with aiohttp.ClientSession() as session:
+            options = ConversionOptions()
+            context = ConversionContext(session=session, options=options)
+            source = Source(url=url)
+            driver = GenericDriver()
+            
+            # This should return a BookData object from ForumDriver
+            book = await driver.prepare_book_data(context, source)
+            
+            assert book is not None
+            # ForumDriver sets author="Forum" usually
+            assert book.author == "Forum" 
+            assert "urn:forum:" in book.uid

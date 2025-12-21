@@ -637,6 +637,24 @@ class BaseImageProcessor:
             break
 
     @staticmethod
+    def is_junk(url: str) -> bool:
+        """Determines if an image URL is a known placeholder or tracking pixel."""
+        if not url:
+            return True
+        if url.startswith("data:"):
+            return True
+
+        bad_keywords = [
+            "spacer", "1x1", "transparent", "gray.gif", "pixel.gif",
+            "placeholder", "loader", "blank.gif", "grey-placeholder", "gray-placeholder",
+            "arc-authors", "author-bio", "avatar"
+        ]
+        lower_url = url.lower()
+        if any(k in lower_url for k in bad_keywords):
+            return True
+        return False
+
+    @staticmethod
     def parse_srcset(srcset_str: str) -> list:
         if not srcset_str:
             return []
@@ -834,23 +852,7 @@ class ImageProcessor(BaseImageProcessor):
             else:
                 break
 
-    @staticmethod
-    def is_junk(url: str) -> bool:
-        """Determines if an image URL is a known placeholder or tracking pixel."""
-        if not url:
-            return True
-        if url.startswith("data:"):
-            return True
 
-        bad_keywords = [
-            "spacer", "1x1", "transparent", "gray.gif", "pixel.gif",
-            "placeholder", "loader", "blank.gif", "grey-placeholder", "gray-placeholder",
-            "arc-authors", "author-bio", "avatar"
-        ]
-        lower_url = url.lower()
-        if any(k in lower_url for k in bad_keywords):
-            return True
-        return False
 
 
 
@@ -1883,7 +1885,14 @@ class GenericDriver(BaseDriver):
             return None
 
         raw_html = data.get('raw_html_for_metadata') or data.get('html', '')
-        # Dispatch logic moved to DriverDispatcher
+        
+        if 'substack:post_id' in raw_html:
+             log.info("Detected Substack metadata after fetch. Switching to SubstackDriver.")
+             return await SubstackDriver().prepare_book_data(context, source)
+
+        if 'data-template="thread_view"' in raw_html or 'xenforo' in raw_html.lower():
+             log.info("Detected Forum metadata after fetch. Switching to ForumDriver.")
+             return await ForumDriver().prepare_book_data(context, source)
 
         title = data['title'] or "Untitled Webpage"
         soup = BeautifulSoup(data['html'], 'html.parser')
