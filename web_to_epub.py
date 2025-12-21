@@ -1244,6 +1244,11 @@ class ForumImageProcessor(BaseImageProcessor):
             return True
         if url.startswith("data:") or url.startswith("view-source:"):
             return True
+        bad_keywords = [
+            "spacer", "1x1", "transparent", "gray.gif", "pixel.gif",
+            "placeholder", "loader", "blank.gif", "reaction_id=", "/react?", "reactions/emojione"
+        ]
+        lower_url = url.lower()
         if any(k in lower_url for k in bad_keywords):
             return True
         return False
