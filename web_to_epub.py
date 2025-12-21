@@ -2879,6 +2879,106 @@ class SubstackDriver(BaseDriver):
             return dt.timestamp()
         except: return 0
 
+class WordPressDriver(BaseDriver):
+    async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
+        session = context.session
+        options = context.options
+        url = source.url
+        log.info(f"WordPress Driver processing: {url}")
+
+        data = await ArticleExtractor.get_article_content(session, url, force_archive=options.archive, raw_html=source.html)
+        if not data['success']:
+            log.error(f"Failed to fetch content: {url}")
+            return None
+
+        title = data['title'] or "WordPress Article"
+        soup = BeautifulSoup(data['html'], 'html.parser')
+        body_soup = soup.body if soup.body else soup
+
+        assets = []
+        if not options.no_images:
+            base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
+            await ImageProcessor.process_images(session, body_soup, base, assets)
+
+        chapter_html = body_soup.prettify()
+        meta_html = ArticleExtractor.build_meta_block(url, data)
+        final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head>
+        <body><h1>{title}</h1>{meta_html}<hr/>{chapter_html}</body></html>"""
+        
+        uid = f"urn:wordpress:{abs(hash(url))}"
+        art_chap = Chapter(title=title, filename="article.xhtml", content_html=final_art_html, uid="article", is_article=True)
+        chapters = [art_chap]
+
+        comments_html = ""
+        if not options.no_comments:
+            raw = data.get('raw_html_for_metadata') or source.html
+            if raw:
+                full_soup = BeautifulSoup(raw, 'html.parser')
+                comment_list = full_soup.select_one('ol.comment-list, ul.comment-list, .commentlist')
+                if comment_list:
+                    comments = self._parse_comments(comment_list)
+                    enriched = _enrich_comment_tree(comments)
+                    fmt = HtmlFormatter(style='default', cssclass='codehilite', noclasses=False)
+                    chunks = []
+                    for c in enriched:
+                        chunks.append("<div class='thread-container'>")
+                        chunks.append(format_comment_html(c, fmt))
+                        chunks.append("</div>")
+                    comments_html = "".join(chunks)
+
+        com_chap = None
+        if comments_html:
+             full_com_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Comments</title><link rel="stylesheet" href="style/default.css"/></head><body>
+             <h1>Comments</h1>{comments_html}</body></html>"""
+             com_chap = Chapter(title="Comments", filename="comments.xhtml", content_html=full_com_html, uid="comments", is_comments=True)
+             chapters.append(com_chap)
+
+        toc = [epub.Link("article.xhtml", "Article", "article")]
+        if com_chap:
+            toc.append(epub.Link("comments.xhtml", "Comments", "comments"))
+
+        return BookData(title=title, author=data['author'] or "WordPress", uid=uid, language='en', description=f"Source: {url}", source_url=url, chapters=chapters, images=assets, toc_structure=toc)
+
+    def _parse_comments(self, element):
+        results = []
+        for li in element.find_all('li', recursive=False):
+            classes = li.get("class", [])
+            if "comment" not in classes and "pingback" not in classes: continue
+            
+            body = li.select_one('.comment-body, .comment-content')
+            author_tag = li.select_one('.comment-author .fn, .comment-author cite')
+            date_tag = li.select_one('.comment-metadata time, .comment-meta time')
+            
+            text = ""
+            if body:
+                for reply in body.select('.reply'): reply.decompose()
+                text = str(body)
+            
+            author = author_tag.get_text(strip=True) if author_tag else "Anonymous"
+            
+            time_val = 0
+            if date_tag and date_tag.has_attr('datetime'):
+                try:
+                    dt_str = date_tag['datetime'].replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(dt_str)
+                    time_val = dt.timestamp()
+                except: pass
+            
+            node = {
+                'id': li.get('id', f"c_{abs(hash(text))}"),
+                'by': author,
+                'text': text,
+                'time': time_val,
+                'children_data': []
+            }
+            
+            children_ol = li.select_one('ol.children, ul.children')
+            if children_ol:
+                node['children_data'] = self._parse_comments(children_ol)
+            
+            results.append(node)
+        return results
+
 class GenericDriver(BaseDriver):
     async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
         session = context.session
@@ -3749,6 +3849,8 @@ class DriverDispatcher:
             return RedditDriver()
         if "substack.com" in url or "/p/" in parsed.path:
             return SubstackDriver()
+        if "wordpress.com" in url:
+            return WordPressDriver()
             
         # 3. Content Sniffing
         if source.html:
@@ -3756,6 +3858,8 @@ class DriverDispatcher:
                  return SubstackDriver()
             if 'data-template="thread_view"' in source.html or 'xenforo' in source.html.lower():
                  return ForumDriver()
+            if 'name="generator" content="WordPress"' in source.html or 'class="comment-list"' in source.html:
+                 return WordPressDriver()
                  
         return GenericDriver()
 
