@@ -1375,61 +1375,115 @@ class ForumImageProcessor:
 
 
 
-    @staticmethod
+        @staticmethod
 
 
-    async def _requests_fetch(session, target, img_headers, referer):
 
 
-        try:
+
+        async def _requests_fetch(session, target, img_headers, referer):
 
 
-            import requests
 
-
-            cookie_dict = {}
 
 
             try:
 
 
-                jar = session.cookie_jar.filter_cookies(URL(target))
 
 
-                cookie_dict = {k: v.value for k, v in jar.items()}
+
+                import requests
 
 
-            except Exception:
 
 
-                pass
+
+                cookie_dict = {}
 
 
-            extra = getattr(session, "_extra_cookies", None)
 
 
-            if isinstance(extra, dict):
+
+                try:
 
 
-                cookie_dict.update(extra)
 
 
-            resp = requests.get(target, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
+
+                    jar = session.cookie_jar.filter_cookies(URL(target))
 
 
-            if resp.content:
 
 
-                return resp.headers, resp.content, resp.status_code
+
+                    cookie_dict = {k: v.value for k, v in jar.items()}
 
 
-        except Exception:
 
 
-            pass
+
+                except Exception:
 
 
-        return None, None, None
+
+
+
+                    pass
+
+
+
+
+
+                extra = getattr(session, "_extra_cookies", None)
+
+
+
+
+
+                if isinstance(extra, dict):
+
+
+
+
+
+                    cookie_dict.update(extra)
+
+
+
+
+
+                resp = requests.get(target, headers={**img_headers, "Referer": referer or ""}, cookies=cookie_dict, timeout=20, allow_redirects=True)
+
+
+
+
+
+                if resp.content:
+
+
+
+
+
+                    return resp.headers, resp.content, resp.status_code
+
+
+
+
+
+            except Exception as e:
+
+
+
+
+
+                log.warning(f"Forum requests fetch failed: {e}")
+
+
+
+
+
+            return None, None, None
 
 
 
@@ -3714,7 +3768,12 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
 
             local_session = session
             if source.cookies:
-                local_session = aiohttp.ClientSession(timeout=REQUEST_TIMEOUT, cookies=source.cookies)
+                connector = aiohttp.TCPConnector(
+                    resolver=ThreadedResolver(),
+                    ttl_dns_cache=300,
+                    family=socket.AF_INET
+                )
+                local_session = aiohttp.ClientSession(timeout=REQUEST_TIMEOUT, cookies=source.cookies, connector=connector)
                 setattr(local_session, "_extra_cookies", source.cookies)
 
             try:
