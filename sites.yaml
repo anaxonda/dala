@@ -12,5 +12,3 @@
     - "nav"
     - ".related-content"
     - ".hide-for-print"
-    - "div:has(> label > span:contains('More from The Post'))"
-    - "div:has(> label > div:contains('Most read'))"
