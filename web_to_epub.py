@@ -992,6 +992,7 @@ class ImageProcessor(BaseImageProcessor):
                 uid = f"img_{abs(hash(fname))}"
                 asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=origin, alt_urls=[origin])
                 book_assets.append(asset)
+                added += 1 # Asset added to collection
 
                 # 1. Try to find a placeholder in the body_soup by content ID
                 target_div = body_soup.find("div", id=el.get("_id"))
@@ -1007,23 +1008,20 @@ class ImageProcessor(BaseImageProcessor):
                         img_block_wrapper.append(cap)
                     target_div.replace_with(img_block_wrapper)
                     log.debug(f"Injected WaPo image {origin} into placeholder {el.get('_id')}")
-                    added += 1
                     continue
 
                 # 2. Check if the image is already present in the DOM (e.g. by URL)
-                # If it's already there, process_images will handle the src update later.
+                # If it's already there, we skip injection but asset is in book_assets
+                # so process_images will handle the src update later.
                 is_present = False
                 for existing_img in body_soup.find_all("img"):
-                    # Check src and all data attributes for the origin URL
-                    # We check for containment because one might be a proxy (imrs.php) 
-                    # wrapping the other (the direct URL).
                     img_attrs = [existing_img.get("src"), existing_img.get("data-src"), existing_img.get("data-srcset")]
                     if any(attr and (origin in attr or attr in origin or urls_match(attr, origin)) for attr in img_attrs):
                         is_present = True
                         break
                 
                 if is_present:
-                    log.debug(f"WaPo image {origin} already present in DOM, skipping seed injection.")
+                    log.debug(f"WaPo image {origin} already present in DOM, skipping seed injection (will be processed in-place later).")
                     continue
 
                 # 3. Fallback: Prepend missing images (likely the lede image)
@@ -1039,16 +1037,13 @@ class ImageProcessor(BaseImageProcessor):
                 
                 target = body_soup.body or body_soup
                 if fallback_index == 0:
-                    # Prepend the lede image at the very top
                     target.insert(0, wrapper)
                     log.debug(f"Prepended WaPo lede image {origin}")
                 else:
-                    # Append any other missing images to the end
                     target.append(wrapper)
                     log.debug(f"Appended WaPo supplemental image {origin}")
                 
                 fallback_index += 1
-                added += 1
             if added:
                 # remove any leftover figcaptions after injection
                 for fc in list(body_soup.find_all("figcaption")):
