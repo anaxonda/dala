@@ -992,7 +992,8 @@ class ImageProcessor(BaseImageProcessor):
                 uid = f"img_{abs(hash(fname))}"
                 asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=origin, alt_urls=[origin])
                 book_assets.append(asset)
-                # Try to find a placeholder in the body_soup by content ID
+
+                # 1. Try to find a placeholder in the body_soup by content ID
                 target_div = body_soup.find("div", id=el.get("_id"))
                 if target_div:
                     # Construct the image block according to guidelines
@@ -1007,25 +1008,39 @@ class ImageProcessor(BaseImageProcessor):
                     target_div.replace_with(img_block_wrapper)
                     log.debug(f"Injected WaPo image {origin} into placeholder {el.get('_id')}")
                     added += 1
-                else:
-                    # Fallback to prepending if no specific placeholder is found (likely a lede image)
-                    img_tag = body_soup.new_tag("img", attrs={"src": fname, "class": "epub-image"})
-                    cap_text = caption.strip() if caption else None
-                    
-                    # Prepend fallback images in order at the top
-                    wrapper = body_soup.new_tag("div", attrs={"class": "img-block"})
-                    wrapper.append(img_tag)
-                    if cap_text:
-                        cap = body_soup.new_tag("p", attrs={"class": "caption"})
-                        cap.string = cap_text
-                        wrapper.append(cap)
-                    
-                    target = body_soup.body or body_soup
-                    target.insert(fallback_index, wrapper)
-                    fallback_index += 1
-                    
-                    log.debug(f"Prepended WaPo image {origin} (no specific placeholder found)")
-                    added += 1
+                    continue
+
+                # 2. Check if the image is already present in the DOM (e.g. by URL)
+                # If it's already there, process_images will handle the src update later.
+                # We normalize the URL for matching to be safe.
+                is_present = False
+                for existing_img in body_soup.find_all("img"):
+                    if urls_match(existing_img.get("src"), origin) or urls_match(existing_img.get("data-src"), origin):
+                        is_present = True
+                        break
+                
+                if is_present:
+                    log.debug(f"WaPo image {origin} already present in DOM, skipping seed injection.")
+                    added += 1 # Count as 'found'
+                    continue
+
+                # 3. Fallback: Prepend missing images (likely the lede image)
+                img_tag = body_soup.new_tag("img", attrs={"src": fname, "class": "epub-image"})
+                cap_text = caption.strip() if caption else None
+                
+                wrapper = body_soup.new_tag("div", attrs={"class": "img-block"})
+                wrapper.append(img_tag)
+                if cap_text:
+                    cap = body_soup.new_tag("p", attrs={"class": "caption"})
+                    cap.string = cap_text
+                    wrapper.append(cap)
+                
+                target = body_soup.body or body_soup
+                target.insert(fallback_index, wrapper)
+                fallback_index += 1
+                
+                log.debug(f"Prepended WaPo image {origin} (no placeholder or DOM match found)")
+                added += 1
             if added:
                 # remove any leftover figcaptions after injection
                 for fc in list(body_soup.find_all("figcaption")):
