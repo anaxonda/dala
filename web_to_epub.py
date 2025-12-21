@@ -133,6 +133,12 @@ class Source:
     is_forum: bool = False
 
 @dataclass
+class ConversionContext:
+    """Context object holding state for the conversion process."""
+    session: aiohttp.ClientSession
+    options: ConversionOptions
+
+@dataclass
 class ImageAsset:
     uid: str
     filename: str
@@ -1669,11 +1675,13 @@ class ForumImageProcessor:
 
 class BaseDriver(ABC):
     @abstractmethod
-    async def prepare_book_data(self, source: Source, session, options: ConversionOptions) -> Optional[BookData]:
+    async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
         pass
 
 class SubstackDriver(BaseDriver):
-    async def prepare_book_data(self, source: Source, session, options: ConversionOptions) -> Optional[BookData]:
+    async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
+        session = context.session
+        options = context.options
         url = source.url
         log.info(f"Substack Driver processing: {url}")
 
@@ -1894,7 +1902,9 @@ class SubstackDriver(BaseDriver):
         except: return 0
 
 class GenericDriver(BaseDriver):
-    async def prepare_book_data(self, source: Source, session, options: ConversionOptions) -> Optional[BookData]:
+    async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
+        session = context.session
+        options = context.options
         url = source.url
         log.info(f"Generic Driver processing: {url}")
         data = await ArticleExtractor.get_article_content(session, url, force_archive=options.archive, raw_html=source.html)
@@ -1903,13 +1913,7 @@ class GenericDriver(BaseDriver):
             return None
 
         raw_html = data.get('raw_html_for_metadata') or data.get('html', '')
-        if 'substack:post_id' in raw_html:
-             log.info("Detected Substack metadata on custom domain. Switching to SubstackDriver.")
-             return await SubstackDriver().prepare_book_data(source, session, options)
-        # Detect XenForo/forum markers even on non-standard paths
-        if source.is_forum or 'data-template="thread_view"' in raw_html or 'xenforo' in raw_html.lower():
-             log.info("Detected forum/thread template. Switching to ForumDriver.")
-             return await ForumDriver().prepare_book_data(source, session, options)
+        # Dispatch logic moved to DriverDispatcher
 
         title = data['title'] or "Untitled Webpage"
         soup = BeautifulSoup(data['html'], 'html.parser')
@@ -1957,7 +1961,9 @@ class GenericDriver(BaseDriver):
         )
 
 class HackerNewsDriver(BaseDriver):
-    async def prepare_book_data(self, source: Source, session, options: ConversionOptions) -> Optional[BookData]:
+    async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
+        session = context.session
+        options = context.options
         url = source.url
         try:
             q = parse_qs(urlparse(url).query)
@@ -2038,7 +2044,9 @@ class HackerNewsDriver(BaseDriver):
         return BookData(title=title, author=author, uid=f"urn:hn:{item_id}", language='en', description=f"HN Thread {item_id}", source_url=url, chapters=chapters, images=assets, toc_structure=toc_structure)
 
 class RedditDriver(BaseDriver):
-    async def prepare_book_data(self, source: Source, session, options: ConversionOptions) -> Optional[BookData]:
+    async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
+        session = context.session
+        options = context.options
         api_url = self._build_api_url(source.url)
         log.info(f"Reddit Driver processing: {api_url}")
 
@@ -2201,7 +2209,9 @@ class RedditDriver(BaseDriver):
 # --- Forum Driver ---
 
 class ForumDriver(BaseDriver):
-    async def prepare_book_data(self, source: Source, session, options: ConversionOptions) -> Optional[BookData]:
+    async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
+        session = context.session
+        options = context.options
         base_url = self._normalize_url(source.url)
         log.info(f"Forum Driver processing: {base_url}")
 
@@ -2737,23 +2747,39 @@ class EpubWriter:
 
 # --- Public API (for Server) ---
 
+class DriverDispatcher:
+    @staticmethod
+    def get_driver(source: Source) -> BaseDriver:
+        url = source.url
+        parsed = urlparse(url)
+        
+        # 1. Explicit Flags
+        if source.is_forum:
+            return ForumDriver()
+            
+        # 2. Domain Matching
+        if "news.ycombinator.com" in url:
+            return HackerNewsDriver()
+        if "reddit.com" in parsed.netloc or parsed.netloc.endswith("redd.it"):
+            return RedditDriver()
+        if "substack.com" in url or "/p/" in parsed.path:
+            return SubstackDriver()
+            
+        # 3. Content Sniffing
+        if source.html:
+            if 'substack:post_id' in source.html:
+                 return SubstackDriver()
+            if 'data-template="thread_view"' in source.html or 'xenforo' in source.html.lower():
+                 return ForumDriver()
+                 
+        return GenericDriver()
+
 async def process_urls(sources: List[Source], options: ConversionOptions, session) -> List[BookData]:
     processed_books = []
 
     async def safe_process(source):
         async with GLOBAL_SEMAPHORE:
-            driver = None
-            parsed = urlparse(source.url)
-            if source.is_forum:
-                driver = ForumDriver()
-            elif "news.ycombinator.com" in source.url:
-                driver = HackerNewsDriver()
-            elif "reddit.com" in parsed.netloc or parsed.netloc.endswith("redd.it"):
-                driver = RedditDriver()
-            elif "substack.com" in source.url or "/p/" in parsed.path:
-                driver = SubstackDriver()
-            else:
-                driver = GenericDriver()
+            driver = DriverDispatcher.get_driver(source)
 
             local_session = session
             if source.cookies:
@@ -2761,7 +2787,8 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
                 setattr(local_session, "_extra_cookies", source.cookies)
 
             try:
-                return await driver.prepare_book_data(source, local_session, options)
+                context = ConversionContext(session=local_session, options=options)
+                return await driver.prepare_book_data(context, source)
             except Exception as e:
                 log.exception(f"Failed to process {source.url}: {e}")
                 return None
