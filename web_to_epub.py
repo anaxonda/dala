@@ -42,6 +42,7 @@ from itertools import islice
 try:
     import requests # Added for fallback image fetching
     import aiohttp
+    import yaml
     import socket
     from aiohttp.resolver import ThreadedResolver
     from ebooklib import epub
@@ -68,7 +69,7 @@ except ImportError:
 HN_API_BASE_URL = "https://hacker-news.firebaseio.com/v0/"
 HN_ITEM_URL_BASE = "https://news.ycombinator.com/item?id="
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=45)
-IMAGE_TIMEOUT = aiohttp.ClientTimeout(total=5)
+IMAGE_TIMEOUT = aiohttp.ClientTimeout(total=2)
 MAX_RETRIES = 5
 IMG_MAX_RETRIES = 1
 RETRY_DELAY = 2.0
@@ -159,7 +160,6 @@ class ProfileManager:
     def load_config(self, path: str):
         if not os.path.exists(path): return
         try:
-            import yaml
             with open(path, 'r') as f:
                 data = yaml.safe_load(f)
                 if not data or not isinstance(data, list): return
@@ -174,8 +174,6 @@ class ProfileManager:
                         image_proxy_pattern=item.get("image_proxy_pattern")
                     ))
             log.info(f"Loaded {len(data)} profiles from {path}")
-        except ImportError:
-            log.warning("PyYAML not found. Site profiles disabled.")
         except Exception as e:
             log.warning(f"Failed to load config {path}: {e}")
     def get_profile(self, url: str) -> Optional[SiteProfile]:

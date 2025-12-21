@@ -11,7 +11,8 @@
 #   "lxml",
 #   "pygments",
 #   "tqdm",
-#   "requests"
+#   "requests",
+#   "PyYAML"
 # ]
 # ///
 
