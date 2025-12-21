@@ -1,0 +1,4 @@
+- name: "Washington Post"
+  domains:
+    - "washingtonpost.com"
+  image_proxy_pattern: "imrs.php"

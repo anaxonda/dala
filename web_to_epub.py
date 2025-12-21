@@ -141,6 +141,7 @@ class SiteProfile:
     content_selector: Optional[str] = None
     remove_selectors: List[str] = field(default_factory=list)
     headers: Dict[str, str] = field(default_factory=dict)
+    image_proxy_pattern: Optional[str] = None
 
 class ProfileManager:
     _instance = None
@@ -169,7 +170,8 @@ class ProfileManager:
                         driver_alias=item.get("driver"),
                         content_selector=item.get("content_selector"),
                         remove_selectors=item.get("remove", []),
-                        headers=item.get("headers", {})
+                        headers=item.get("headers", {}),
+                        image_proxy_pattern=item.get("image_proxy_pattern")
                     ))
             log.info(f"Loaded {len(data)} profiles from {path}")
         except ImportError:
@@ -392,11 +394,26 @@ class ArticleExtractor:
         return None, None
 
     @staticmethod
-    def extract_from_html(html_content, url):
+    def extract_from_html(html_content, url, profile: Optional[SiteProfile] = None):
         try:
             metadata = trafilatura.extract_metadata(html_content)
             soup = BeautifulSoup(html_content, 'lxml')
-            content_soup = ArticleExtractor._smart_selector_extract(soup)
+            
+            # Use profile-specific remove selectors if provided
+            if profile and profile.remove_selectors:
+                for selector in profile.remove_selectors:
+                    for element in soup.select(selector):
+                        element.decompose()
+
+            # Prefer profile-specific content selector
+            content_soup = None
+            if profile and profile.content_selector:
+                content_soup = soup.select_one(profile.content_selector)
+                if content_soup:
+                    log.info(f"Found content using profile selector: '{profile.content_selector}'")
+            
+            if not content_soup:
+                content_soup = ArticleExtractor._smart_selector_extract(soup)
 
             extracted_html = None
             if content_soup:
@@ -470,13 +487,13 @@ class ArticleExtractor:
         return None
 
     @staticmethod
-    async def get_article_content(session, url, force_archive=False, raw_html=None):
+    async def get_article_content(session, url, force_archive=False, raw_html=None, profile: Optional[SiteProfile] = None):
         result = {'success': False, 'html': None, 'title': None, 'author': None, 'date': None, 'sitename': None, 'was_archived': False, 'archive_url': None}
         loop = asyncio.get_running_loop()
 
         if raw_html:
             log.info("Using pre-fetched HTML content.")
-            extracted = await loop.run_in_executor(None, ArticleExtractor.extract_from_html, raw_html, url)
+            extracted = await loop.run_in_executor(None, ArticleExtractor.extract_from_html, raw_html, url, profile)
             if extracted['success']:
                 result.update(extracted)
                 result['raw_html_for_metadata'] = raw_html
@@ -488,7 +505,7 @@ class ArticleExtractor:
             if snap_url:
                 raw_html, final_url = await fetch_with_retry(session, snap_url, 'text')
                 if raw_html:
-                    extracted = await loop.run_in_executor(None, ArticleExtractor.extract_from_html, raw_html, url)
+                    extracted = await loop.run_in_executor(None, ArticleExtractor.extract_from_html, raw_html, url, profile)
                     result.update(extracted)
                     result['was_archived'] = True
                     result['archive_url'] = final_url
@@ -506,14 +523,14 @@ class ArticleExtractor:
                  final_url = req_url
 
         if raw_html:
-             extracted = await loop.run_in_executor(None, ArticleExtractor.extract_from_html, raw_html, url)
+             extracted = await loop.run_in_executor(None, ArticleExtractor.extract_from_html, raw_html, url, profile)
              if extracted['success']:
                  result.update(extracted)
                  result['raw_html_for_metadata'] = raw_html
                  return result
 
         log.warning(f"Live fetch failed. Trying archive...")
-        return await ArticleExtractor.get_article_content(session, url, force_archive=True)
+        return await ArticleExtractor.get_article_content(session, url, force_archive=True, profile=profile)
 
 # --- Image Processing ---
 
@@ -910,11 +927,16 @@ class ImageProcessor(BaseImageProcessor):
 
 
     @staticmethod
-    def _extract_origin_from_proxy(url: str) -> Optional[str]:
+    def _extract_origin_from_proxy(url: str, profile: Optional[SiteProfile] = None) -> Optional[str]:
         """Extracts the original source URL from common image proxy patterns."""
         try:
             parsed = urlparse(url)
             qs = dict((k, v[0]) for k, v in parse_qs(parsed.query).items() if v)
+            
+            # Profile-based proxy detection
+            if profile and profile.image_proxy_pattern and profile.image_proxy_pattern in (parsed.path or ""):
+                return qs.get("src") or qs.get("url") or qs.get("original")
+
             # Common proxy patterns
             if "imrs.php" in (parsed.path or "") or "resizer" in (parsed.path or parsed.netloc) or "proxy" in (parsed.path or parsed.netloc):
                 return qs.get("src") or qs.get("url") or qs.get("original")
@@ -928,7 +950,7 @@ class ImageProcessor(BaseImageProcessor):
         return None
 
     @staticmethod
-    async def _seed_images_from_nextjs_data(raw_html: str, body_soup: BeautifulSoup, base_url: str, book_assets: list, session) -> None:
+    async def _seed_images_from_nextjs_data(raw_html: str, body_soup: BeautifulSoup, base_url: str, book_assets: list, session, profile: Optional[SiteProfile] = None) -> None:
         """Parses __NEXT_DATA__ for image URLs and injects them into the article body or appends them."""
         try:
             if not raw_html:
@@ -988,7 +1010,7 @@ class ImageProcessor(BaseImageProcessor):
                 if not origin: continue
 
                 # Try to extract a cleaner origin from the found URL first, then use it
-                extracted_origin = ImageProcessor._extract_origin_from_proxy(origin) or origin
+                extracted_origin = ImageProcessor._extract_origin_from_proxy(origin, profile=profile) or origin
 
                 headers, data_bytes, err = await ImageProcessor.fetch_image_data(session, extracted_origin, referer=base_url)
                 if err or not headers or not data_bytes:
@@ -1037,7 +1059,7 @@ class ImageProcessor(BaseImageProcessor):
             log.debug(f"WaPo __NEXT_DATA__ seed failed: {e}")
 
     @staticmethod
-    async def process_images(session, soup, base_url, book_assets: list):
+    async def process_images(session, soup, base_url, book_assets: list, profile: Optional[SiteProfile] = None):
         # Flatten/remove known wrapper containers and stray labels (NYT et al.) before processing
         for wrapper in list(soup.find_all("div")):
             dataid = (wrapper.get("data-testid") or "").lower()
@@ -1091,7 +1113,7 @@ class ImageProcessor(BaseImageProcessor):
                     if parsed_set:
                         final_src = parsed_set[0] if not final_src else final_src
                         # extract origin from widest entry
-                        wapo_origin_seed = ImageProcessor._extract_origin_from_proxy(parsed_set[0])
+                        wapo_origin_seed = ImageProcessor._extract_origin_from_proxy(parsed_set[0], profile=profile)
                         break
 
             if src and not ImageProcessor.is_junk(src):
@@ -1139,7 +1161,7 @@ class ImageProcessor(BaseImageProcessor):
                         if u not in candidate_urls:
                             candidate_urls.append(u)
 
-                origin_src = ImageProcessor._extract_origin_from_proxy(full_url)
+                origin_src = ImageProcessor._extract_origin_from_proxy(full_url, profile=profile)
 
                 # Seed lede image candidates if available
                 lede_img = None
@@ -1170,15 +1192,20 @@ class ImageProcessor(BaseImageProcessor):
                     for width, candidate in parsed_set:
                         cand_full = urljoin(base_url, candidate)
                         _add_candidate(cand_full, prepend=width >= 600)
-                        origin_cand = ImageProcessor._extract_origin_from_proxy(cand_full)
+                        origin_cand = ImageProcessor._extract_origin_from_proxy(cand_full, profile=profile)
                         if origin_cand:
                             _add_candidate(origin_cand, prepend=True)
-                        if not ("washingtonpost.com" in cand_full and "/wp-apps/imrs.php" in cand_full) and "?" in cand_full:
+                        
+                        is_known_proxy = ("washingtonpost.com" in cand_full and "/wp-apps/imrs.php" in cand_full)
+                        if profile and profile.image_proxy_pattern and profile.image_proxy_pattern in cand_full:
+                            is_known_proxy = True
+
+                        if not is_known_proxy and "?" in cand_full:
                             _add_candidate(cand_full.split("?", 1)[0])
 
                 # Final pass: ensure origin versions of any known proxies are prepended
                 for u in list(candidate_urls):
-                    origin = ImageProcessor._extract_origin_from_proxy(u)
+                    origin = ImageProcessor._extract_origin_from_proxy(u, profile=profile)
                     if origin:
                         _add_candidate(origin, prepend=True)
                 log.debug(f"Candidate URLs for img: {candidate_urls}")
@@ -2716,7 +2743,7 @@ class SubstackDriver(BaseDriver):
         url = source.url
         log.info(f"Substack Driver processing: {url}")
 
-        data = await ArticleExtractor.get_article_content(session, url, force_archive=options.archive, raw_html=source.html)
+        data = await ArticleExtractor.get_article_content(session, url, force_archive=options.archive, raw_html=source.html, profile=context.profile)
         if not data['success']:
             log.error(f"Failed to fetch Substack content: {url}")
             return None
@@ -2939,7 +2966,7 @@ class WordPressDriver(BaseDriver):
         url = source.url
         log.info(f"WordPress Driver processing: {url}")
 
-        data = await ArticleExtractor.get_article_content(session, url, force_archive=options.archive, raw_html=source.html)
+        data = await ArticleExtractor.get_article_content(session, url, force_archive=options.archive, raw_html=source.html, profile=context.profile)
         if not data['success']:
             log.error(f"Failed to fetch content: {url}")
             return None
@@ -3047,7 +3074,7 @@ class GenericDriver(BaseDriver):
         options = context.options
         url = source.url
         log.info(f"Generic Driver processing: {url}")
-        data = await ArticleExtractor.get_article_content(session, url, force_archive=options.archive, raw_html=source.html)
+        data = await ArticleExtractor.get_article_content(session, url, force_archive=options.archive, raw_html=source.html, profile=context.profile)
         if not data['success']:
             log.error(f"Failed to fetch content for {url}")
             return None
@@ -3073,9 +3100,9 @@ class GenericDriver(BaseDriver):
             # Try to seed from __NEXT_DATA__ first (Fastest/Highest Quality for Next.js)
             if raw_html and "__NEXT_DATA__" in raw_html:
                 log.info("Attempting to seed from __NEXT_DATA__ first.")
-                await ImageProcessor._seed_images_from_nextjs_data(raw_html, body_soup, base, assets, session)
+                await ImageProcessor._seed_images_from_nextjs_data(raw_html, body_soup, base, assets, session, profile=context.profile)
 
-            await ImageProcessor.process_images(session, body_soup, base, assets)
+            await ImageProcessor.process_images(session, body_soup, base, assets, profile=context.profile)
             
             # If we downloaded assets but no <img> tags survived extraction, inject them now at bottom
             if assets and not body_soup.find('img'):
@@ -3136,7 +3163,7 @@ class HackerNewsDriver(BaseDriver):
         if (article_url and not options.no_article) or post_text:
             art_title = title
             if article_url and not options.no_article:
-                art_data = await ArticleExtractor.get_article_content(session, article_url, force_archive=options.archive, raw_html=source.html if not article_url else None)
+                art_data = await ArticleExtractor.get_article_content(session, article_url, force_archive=options.archive, raw_html=source.html if not article_url else None, profile=context.profile)
                 if art_data['success']:
                     if art_data['title']: art_title = art_data['title']
                     soup = BeautifulSoup(art_data['html'], 'html.parser')
@@ -3245,7 +3272,7 @@ class RedditDriver(BaseDriver):
                 meta_html = ArticleExtractor.build_meta_block(link_url, {"author": None, "date": None, "sitename": urlparse(link_url).netloc}, context=context)
                 article_html = f"{meta_html}<hr/>{article_html}"
             elif link_url and not link_url.startswith(("https://www.reddit.com", "https://old.reddit.com", "https://redd.it")):
-                art_data = await ArticleExtractor.get_article_content(session, link_url, force_archive=options.archive)
+                art_data = await ArticleExtractor.get_article_content(session, link_url, force_archive=options.archive, profile=context.profile)
                 if art_data['success']:
                     chapter_title = art_data.get('title') or chapter_title
                     soup = BeautifulSoup(art_data['html'], 'html.parser')
