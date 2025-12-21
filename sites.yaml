@@ -12,5 +12,5 @@
     - "nav"
     - ".related-content"
     - ".hide-for-print"
-    - "div[data-testid='article-byline'] ~ div"
-    - "hr ~ div" # Often WaPo junk follows a divider
+    - "div:has(> label > span:contains('More from The Post'))"
+    - "div:has(> label > div:contains('Most read'))"

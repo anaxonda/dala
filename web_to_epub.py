@@ -1012,16 +1012,18 @@ class ImageProcessor(BaseImageProcessor):
 
                 # 2. Check if the image is already present in the DOM (e.g. by URL)
                 # If it's already there, process_images will handle the src update later.
-                # We normalize the URL for matching to be safe.
                 is_present = False
                 for existing_img in body_soup.find_all("img"):
-                    if urls_match(existing_img.get("src"), origin) or urls_match(existing_img.get("data-src"), origin):
+                    # Check src and all data attributes for the origin URL
+                    # We check for containment because one might be a proxy (imrs.php) 
+                    # wrapping the other (the direct URL).
+                    img_attrs = [existing_img.get("src"), existing_img.get("data-src"), existing_img.get("data-srcset")]
+                    if any(attr and (origin in attr or attr in origin or urls_match(attr, origin)) for attr in img_attrs):
                         is_present = True
                         break
                 
                 if is_present:
                     log.debug(f"WaPo image {origin} already present in DOM, skipping seed injection.")
-                    added += 1 # Count as 'found'
                     continue
 
                 # 3. Fallback: Prepend missing images (likely the lede image)
@@ -1036,10 +1038,16 @@ class ImageProcessor(BaseImageProcessor):
                     wrapper.append(cap)
                 
                 target = body_soup.body or body_soup
-                target.insert(fallback_index, wrapper)
-                fallback_index += 1
+                if fallback_index == 0:
+                    # Prepend the lede image at the very top
+                    target.insert(0, wrapper)
+                    log.debug(f"Prepended WaPo lede image {origin}")
+                else:
+                    # Append any other missing images to the end
+                    target.append(wrapper)
+                    log.debug(f"Appended WaPo supplemental image {origin}")
                 
-                log.debug(f"Prepended WaPo image {origin} (no placeholder or DOM match found)")
+                fallback_index += 1
                 added += 1
             if added:
                 # remove any leftover figcaptions after injection
