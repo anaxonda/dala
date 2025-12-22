@@ -12,6 +12,7 @@
 #   "tqdm>=4.65.0",
 #   "Pillow>=9.0.0",
 #   "PyYAML>=6.0",
+#   "youtube-transcript-api>=0.6.0",
 # ]
 # ///
 
@@ -53,6 +54,7 @@ try:
     from pygments.util import ClassNotFound
     from tqdm.asyncio import tqdm_asyncio
     from tqdm import tqdm
+    from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 except ImportError as e:
     print(f"Error: Missing dependency. Please run with 'uv run'. Details: {e}", file=sys.stderr)
     sys.exit(1)
@@ -124,6 +126,8 @@ class ConversionOptions:
     max_pages: Optional[int] = None
     max_posts: Optional[int] = None
     page_spec: Optional[List[int]] = None
+    llm_format: bool = False
+    llm_model: Optional[str] = None
 
 @dataclass
 class Source:
@@ -3960,6 +3964,171 @@ class EpubWriter:
         epub.write_epub(output_path, book)
         log.info(f"Wrote EPUB: {output_path}")
 
+class LLMHelper:
+    @staticmethod
+    async def format_transcript(text: str, model: Optional[str] = None) -> str:
+        """Formats text using an LLM if API key is present."""
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                log.warning("No GEMINI_API_KEY or OPENAI_API_KEY found. Skipping LLM format.")
+                return text
+
+        # Default prompt
+        prompt = (
+            "You are an expert editor. Please format the following YouTube transcript into a readable article. "
+            "Fix punctuation, capitalization, and paragraph breaks. "
+            "Do not summarize; keep the full content but make it flow like a written piece. "
+            "Remove filler words like 'um', 'uh', 'like' where appropriate.\\n\\n"
+            f"{text}"
+        )
+
+        try:
+            # Simple Google Gemini API call via requests (REST)
+            if "GEMINI" in os.environ.get("GEMINI_API_KEY", "") or (api_key and "AIza" in api_key): # Heuristic
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model or 'gemini-1.5-flash'}:generateContent?key={api_key}"
+                payload = {"contents": [{"parts": [{"text": prompt}]}]}
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, json=payload) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            return data['candidates'][0]['content']['parts'][0]['text']
+                        else:
+                            log.error(f"Gemini API Error: {resp.status} {await resp.text()}")
+
+            # Fallback to OpenAI-style (or if specified) - Stub for now or generic usage
+            # ...
+        except Exception as e:
+            log.error(f"LLM Format failed: {e}")
+        
+        return text
+
+class YouTubeDriver(BaseDriver):
+    async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
+        session = context.session
+        options = context.options
+        url = source.url
+        log.info(f"YouTube Driver processing: {url}")
+
+        video_id = self._extract_video_id(url)
+        if not video_id:
+            log.error("Could not extract video ID")
+            return None
+
+        # 1. Fetch Page for Metadata (Title, Author, Thumbnail)
+        try:
+            html_content, _ = await fetch_with_retry(session, url, 'text')
+            soup = BeautifulSoup(html_content, 'html.parser')
+            title = soup.find("meta", property="og:title")
+            title = title["content"] if title else f"YouTube Video {video_id}"
+            
+            desc = soup.find("meta", property="og:description")
+            description = desc["content"] if desc else ""
+
+            author = "YouTube"
+            # Try to find channel name
+            channel = soup.find("link", itemprop="name")
+            if channel: author = channel.get("content")
+            
+            # Thumbnail
+            thumb_url = None
+            og_img = soup.find("meta", property="og:image")
+            if og_img: thumb_url = og_img["content"]
+            
+        except Exception as e:
+            log.warning(f"Metadata fetch failed: {e}")
+            title = f"YouTube Video {video_id}"
+            author = "YouTube"
+            description = ""
+            thumb_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+
+        # 2. Fetch Transcript
+        loop = asyncio.get_running_loop()
+        transcript_list = []
+        try:
+            transcript_list = await loop.run_in_executor(
+                None, 
+                lambda: YouTubeTranscriptApi.get_transcript(video_id)
+            )
+        except (TranscriptsDisabled, NoTranscriptFound) as e:
+            log.warning(f"No transcript available: {e}")
+            # Try auto-generated? get_transcript usually fetches what's available.
+            # Could list_transcripts() to find others, but sticking to default for now.
+        except Exception as e:
+            log.error(f"Transcript fetch error: {e}")
+
+        if not transcript_list:
+            log.error("Aborting: No transcript found.")
+            return None
+
+        # 3. Process Text
+        full_text = " ".join([t['text'] for t in transcript_list])
+        full_text = html.unescape(full_text)
+
+        if options.llm_format:
+            log.info("Formatting transcript with LLM...")
+            full_text = await LLMHelper.format_transcript(full_text, options.llm_model)
+
+        # 4. Build Chapter
+        assets = []
+        cover_image_html = ""
+        if not options.no_images and thumb_url:
+            # We want the thumbnail as a cover or lede image
+            # Reuse ImageProcessor logic?
+            # Manually fetch to ensure we get it
+            headers, data, err = await ImageProcessor.fetch_image_data(session, thumb_url)
+            if data:
+                mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(thumb_url, headers, data)
+                if final_data:
+                    fname = f"{IMAGE_DIR_IN_EPUB}/cover{ext}"
+                    uid = "cover_img"
+                    asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=thumb_url)
+                    assets.append(asset)
+                    cover_image_html = f'<div class="img-block"><img src="{fname}" alt="Thumbnail" class="epub-image"/></div><hr/>'
+
+        # Basic formatting if no LLM (just paragraphs every N chars or breaks?)
+        # For now, just one blob if no LLM, or maybe split by time?
+        # Let's simple-split by double spaces or simple heuristic if LLM didn't run.
+        if not options.llm_format:
+            # Simple cleanup: capitalize first letters of sentences (heuristic)
+            # full_text = ". ".join(s.capitalize() for s in full_text.split(". "))
+            pass
+
+        # Wrap in paragraphs
+        content_html = f"{cover_image_html}<div class='transcript-body'><p>{full_text}</p></div>"
+        
+        final_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head>
+        <body><h1>{title}</h1><div class="post-meta"><p><strong>Source:</strong> <a href="{url}">{url}</a></p><p><strong>Channel:</strong> {author}</p></div>{content_html}</body></html>"""
+
+        chapter = Chapter(title=title, filename="transcript.xhtml", content_html=final_html, uid="transcript", is_article=True)
+
+        return BookData(
+            title=title, 
+            author=author, 
+            uid=f"urn:youtube:{video_id}", 
+            language='en', 
+            description=description, 
+            source_url=url, 
+            chapters=[chapter], 
+            images=assets, 
+            toc_structure=[epub.Link("transcript.xhtml", title, "transcript")]
+        )
+
+    def _extract_video_id(self, url):
+        """Extracts video ID from various YouTube URL formats."""
+        parsed = urlparse(url)
+        if parsed.netloc == "youtu.be":
+            return parsed.path[1:]
+        if parsed.netloc in ("www.youtube.com", "youtube.com"):
+            if "/watch" in parsed.path:
+                return parse_qs(parsed.query).get("v", [None])[0]
+            if "/embed/" in parsed.path:
+                return parsed.path.split("/embed/")[1]
+            if "/v/" in parsed.path:
+                return parsed.path.split("/v/")[1]
+        return None
+
 # --- Public API (for Server) ---
 
 class DriverDispatcher:
@@ -3972,6 +4141,7 @@ class DriverDispatcher:
             if alias == "substack": return SubstackDriver()
             if alias in ("hn", "hackernews"): return HackerNewsDriver()
             if alias == "reddit": return RedditDriver()
+            if alias == "youtube": return YouTubeDriver()
             if alias == "generic": return GenericDriver()
 
         url = source.url
@@ -3990,6 +4160,8 @@ class DriverDispatcher:
             return SubstackDriver()
         if "wordpress.com" in url:
             return WordPressDriver()
+        if parsed.netloc in ("www.youtube.com", "youtube.com", "youtu.be"):
+            return YouTubeDriver()
             
         # 3. Content Sniffing
         if source.html:
@@ -4077,33 +4249,37 @@ async def async_main():
     parser.add_argument("--max-depth", type=int, default=None)
     parser.add_argument("--max-pages", type=int, default=None, help="Max forum pages to fetch")
     parser.add_argument("--max-posts", type=int, default=None, help="Max forum posts to fetch")
-    parser.add_argument("--pages", help="Forum pages to fetch (e.g., 1,3-5)")
-    parser.add_argument("--cookie-file", help="Netscape-format cookie file for auth-gated content")
-    parser.add_argument("--forum", action="store_true", help="Treat URLs as forum threads (use forum driver)")
-    parser.add_argument("--css", help="Custom CSS file")
-    parser.add_argument("-v", "--verbose", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument("--pages", help="Specific pages to fetch (e.g. '1,3-5')")
+    parser.add_argument("--css", help="Custom CSS file to inject")
+    parser.add_argument("--llm", action="store_true", dest="llm_format", help="Format transcript using LLM (requires GEMINI_API_KEY)")
+    parser.add_argument("--llm-model", help="Specify LLM model (default: gemini-1.5-flash)")
+    return parser.parse_args()
 
-    if args.verbose: log.setLevel(logging.DEBUG)
-
+async def main():
+    args = parse_args()
+    
     urls = []
-    if args.input: urls.append(args.input)
     if args.input_file:
-        with open(args.input_file) as f:
-            urls.extend([l.strip() for l in f if l.strip() and not l.startswith('#')])
+        with open(args.input_file, 'r') as f:
+            urls.extend([line.strip() for line in f if line.strip() and not line.startswith('#')])
+    urls.extend(args.url)
+    
+    if not urls:
+        print("No URLs provided.")
+        return
 
-    if not urls: print("No input provided."); sys.exit(1)
-
-    page_spec = parse_page_spec(args.pages) if args.pages else None
     options = ConversionOptions(
         no_article=args.no_article,
         no_comments=args.no_comments,
         no_images=args.no_images,
         archive=args.archive,
+        compact_comments=args.compact_comments,
         max_depth=args.max_depth,
         max_pages=args.max_pages,
         max_posts=args.max_posts,
-        page_spec=page_spec
+        page_spec=parse_page_spec(args.pages),
+        llm_format=args.llm_format,
+        llm_model=args.llm_model
     )
 
     # Load cookies once if provided

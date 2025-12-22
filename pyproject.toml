@@ -17,6 +17,7 @@ dependencies = [
     "fastapi>=0.100.0",
     "uvicorn>=0.22.0",
     "pyyaml>=6.0.3",
+    "youtube-transcript-api>=0.6.0",
 ]
 
 [tool.pytest.ini_options]
