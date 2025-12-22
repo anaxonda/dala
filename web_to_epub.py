@@ -134,6 +134,7 @@ class ConversionOptions:
     llm_format: bool = False
     llm_model: Optional[str] = None
     llm_api_key: Optional[str] = None
+    summary: bool = False
 
 @dataclass
 class Source:
@@ -355,7 +356,7 @@ async def fetch_with_retry(
 
 class ArticleExtractor:
     @staticmethod
-    def build_meta_block(url: str, data: dict, context: Optional[str] = None) -> str:
+    def build_meta_block(url: str, data: dict, context: Optional[str] = None, summary_html: Optional[str] = None) -> str:
         """Shared article metadata block with source, author, date, site, archive info."""
         author = data.get('author') or 'Unknown'
         date = data.get('date') or 'Unknown'
@@ -368,6 +369,10 @@ class ArticleExtractor:
             rows.append(context)
         if data.get('was_archived') and data.get('archive_url'):
             rows.append(f"<p class=\"archive-notice\">Archived: <a href=\"{data['archive_url']}\">{data['archive_url']}</a></p>")
+        
+        if summary_html:
+            rows.append(f"<div class='ai-summary'><h3>AI Summary</h3>{summary_html}</div>")
+
         return "<div class=\"post-meta\">" + "".join(rows) + "</div>"
 
     @staticmethod
@@ -3171,8 +3176,14 @@ class GenericDriver(BaseDriver):
             if not tag.get_text(strip=True) and not tag.find(['img', 'figure']):
                 tag.decompose()
 
+        summary_html = None
+        if options.summary:
+            log.info("Generating AI summary...")
+            text_content = body_soup.get_text(separator=" ", strip=True)
+            summary_html = await LLMHelper.generate_summary(text_content, options.llm_model, options.llm_api_key)
+
         chapter_html = body_soup.prettify()
-        meta_html = ArticleExtractor.build_meta_block(url, data)
+        meta_html = ArticleExtractor.build_meta_block(url, data, summary_html=summary_html)
 
         final_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head>
         <body><h1>{title}</h1>{meta_html}<hr/>{chapter_html}</body></html>"""
@@ -3972,16 +3983,14 @@ class EpubWriter:
 
 class LLMHelper:
     @staticmethod
-    async def format_transcript(text: str, model: Optional[str] = None, api_key: Optional[str] = None) -> str:
-        """Formats text using an LLM if API key is present."""
+    async def _call_llm(prompt: str, model: Optional[str], api_key: Optional[str]) -> Optional[str]:
         gemini_key = api_key or os.getenv("GEMINI_API_KEY")
         openrouter_key = api_key or os.getenv("OPENROUTER_API_KEY")
         openai_key = api_key or os.getenv("OPENAI_API_KEY")
 
         # Heuristic to detect key type if passed generically
         passed_key_is_gemini = api_key and ("AIza" in api_key)
-        passed_key_is_sk = api_key and (api_key.startswith("sk-") or "openrouter" in api_key) # Loose check
-
+        
         if api_key:
             if passed_key_is_gemini:
                 gemini_key = api_key
@@ -3989,28 +3998,15 @@ class LLMHelper:
                 openai_key = None
             else:
                 gemini_key = None
-                openrouter_key = api_key # Assume OpenRouter/OpenAI compatible if not Gemini
+                openrouter_key = api_key 
                 openai_key = api_key
 
         if not (gemini_key or openrouter_key or openai_key):
-            log.warning("No API keys found (GEMINI/OPENROUTER/OPENAI). Skipping LLM format.")
-            return text
+            log.warning("No API keys found. Skipping LLM task.")
+            return None
 
         # Determine Model
         model = model or os.getenv("LLM_MODEL")
-
-        # Prepare Prompt
-        custom_prompt = os.getenv("LLM_PROMPT")
-        if custom_prompt:
-            prompt = custom_prompt.replace("{text}", text)
-        else:
-            prompt = (
-                "You are an expert editor. Please format the following YouTube transcript into a readable article. "
-                "Fix punctuation, capitalization, and paragraph breaks. "
-                "Do not summarize; keep the full content but make it flow like a written piece. "
-                "Remove filler words like 'um', 'uh', 'like' where appropriate.\\n\\n"
-                f"{text}"
-            )
 
         try:
             # Google Gemini (REST)
@@ -4021,20 +4017,22 @@ class LLMHelper:
                     async with session.post(url, json=payload) as resp:
                         if resp.status == 200:
                             data = await resp.json()
-                            return data['candidates'][0]['content']['parts'][0]['text']
+                            if 'candidates' in data and data['candidates']:
+                                return data['candidates'][0]['content']['parts'][0]['text']
+                            else:
+                                log.warning(f"Gemini API returned no candidates: {data}")
+                                return None
                         else:
                             log.error(f"Gemini API Error: {resp.status} {await resp.text()}")
-                            if not (openrouter_key or openai_key): return text
+                            if not (openrouter_key or openai_key): return None
 
             # OpenAI Compatible (OpenRouter / OpenAI)
             active_key = openrouter_key or openai_key
             base_url = "https://openrouter.ai/api/v1" if openrouter_key and not openai_key else "https://api.openai.com/v1"
             if "openrouter" in (model or ""): base_url = "https://openrouter.ai/api/v1"
             
-            # If we have an explicit passed key that isn't Gemini, assume it works with the requested model/endpoint
             if api_key and not passed_key_is_gemini:
                 active_key = api_key
-                # If model starts with 'google/' or 'anthropic/', likely OpenRouter
                 if model and ("/" in model): base_url = "https://openrouter.ai/api/v1"
 
             target_model = model or ("google/gemini-flash-1.5" if "openrouter" in base_url else "gpt-3.5-turbo")
@@ -4050,7 +4048,7 @@ class LLMHelper:
             payload = {
                 "model": target_model,
                 "messages": [
-                    {"role": "system", "content": "You are a helpful editor."},
+                    {"role": "system", "content": "You are a helpful assistant."},
                     {"role": "user", "content": prompt}
                 ]
             }
@@ -4062,11 +4060,44 @@ class LLMHelper:
                         return data['choices'][0]['message']['content']
                     else:
                         log.error(f"LLM API Error ({base_url}): {resp.status} {await resp.text()}")
+                        return None
 
         except Exception as e:
-            log.error(f"LLM Format failed: {e}")
+            log.error(f"LLM call failed: {e}")
+            return None
+
+    @staticmethod
+    async def format_transcript(text: str, model: Optional[str] = None, api_key: Optional[str] = None) -> str:
+        # Prepare Prompt
+        custom_prompt = os.getenv("LLM_PROMPT")
+        if custom_prompt:
+            prompt = custom_prompt.replace("{text}", text)
+        else:
+            prompt = (
+                "You are an expert editor. Please format the following YouTube transcript into a readable article. "
+                "Fix punctuation, capitalization, and paragraph breaks. "
+                "Do not summarize; keep the full content but make it flow like a written piece. "
+                "Remove filler words like 'um', 'uh', 'like' where appropriate.\\n\\n"
+                f"{text}"
+            )
         
-        return text
+        result = await LLMHelper._call_llm(prompt, model, api_key)
+        return result if result else text
+
+    @staticmethod
+    async def generate_summary(text: str, model: Optional[str] = None, api_key: Optional[str] = None) -> Optional[str]:
+        custom_prompt = os.getenv("LLM_SUMMARY_PROMPT")
+        if custom_prompt:
+            prompt = custom_prompt.replace("{text}", text[:15000]) # truncate to avoid huge context costs?
+        else:
+            prompt = (
+                "Please provide a concise executive summary (3-5 paragraphs) of the following text. "
+                "Capture the main arguments, key takeaways, and conclusion. "
+                "Format with <b>bold</b> for key terms if helpful.\\n\\n"
+                f"{text[:25000]}" # Limit context window usage for summary
+            )
+        
+        return await LLMHelper._call_llm(prompt, model, api_key)
 
 class YouTubeDriver(BaseDriver):
     async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
@@ -4152,7 +4183,15 @@ class YouTubeDriver(BaseDriver):
                     assets.append(asset)
                     cover_image_html = f'<div class="img-block"><img src="{fname}" alt="Thumbnail" class="epub-image"/></div><hr/>'
 
-        content_html = f"{cover_image_html}<div class='transcript-body'>{final_text}</div>"
+        summary_html = ""
+        if options.summary:
+            log.info("Generating AI summary for YouTube...")
+            raw_transcript_text = " ".join([t['text'] for t in transcript_list])
+            sum_res = await LLMHelper.generate_summary(raw_transcript_text, options.llm_model, options.llm_api_key)
+            if sum_res:
+                summary_html = f"<div class='ai-summary'><h3>AI Summary</h3>{sum_res}</div><hr/>"
+
+        content_html = f"{summary_html}{cover_image_html}<div class='transcript-body'>{final_text}</div>"
         
         final_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head>
         <body><h1>{title}</h1><div class="post-meta"><p><strong>Source:</strong> <a href="{url}">{url}</a></p><p><strong>Channel:</strong> {author}</p></div>{content_html}</body></html>"""
@@ -4342,6 +4381,7 @@ async def async_main():
     parser.add_argument("--llm", action="store_true", dest="llm_format", help="Format transcript using LLM (requires GEMINI_API_KEY)")
     parser.add_argument("--llm-model", help="Specify LLM model (default: gemini-1.5-flash)")
     parser.add_argument("--api-key", help="API Key for LLM (overrides env vars)")
+    parser.add_argument("--summary", action="store_true", help="Generate AI summary at start of article")
     return parser.parse_args()
 
 async def main():
@@ -4369,7 +4409,8 @@ async def main():
         page_spec=parse_page_spec(args.pages),
         llm_format=args.llm_format,
         llm_model=args.llm_model,
-        llm_api_key=args.api_key
+        llm_api_key=args.api_key,
+        summary=args.summary
     )
 
     # Load cookies once if provided

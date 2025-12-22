@@ -108,6 +108,7 @@ async function saveOptions() {
         no_article: document.getElementById('opt-noarticle').checked,
         no_images: document.getElementById('opt-noimages').checked,
         archive: document.getElementById('opt-archive').checked,
+        summary: document.getElementById('opt-summary').checked,
         include_cookies: document.getElementById('opt-cookies').checked,
         forum: document.getElementById('opt-forum').checked,
         pages: (document.getElementById('opt-pages')?.value || "").trim(),
@@ -123,6 +124,7 @@ async function restoreOptions() {
         document.getElementById('opt-noarticle').checked = res.savedOptions.no_article;
         document.getElementById('opt-noimages').checked = res.savedOptions.no_images;
         document.getElementById('opt-archive').checked = res.savedOptions.archive;
+        document.getElementById('opt-summary').checked = !!res.savedOptions.summary;
         document.getElementById('opt-cookies').checked = !!res.savedOptions.include_cookies;
         document.getElementById('opt-forum').checked = !!res.savedOptions.forum;
         if (res.savedOptions.pages !== undefined) {
@@ -140,6 +142,7 @@ function getOptions() {
         no_article: document.getElementById('opt-noarticle').checked,
         no_images: document.getElementById('opt-noimages').checked,
         archive: document.getElementById('opt-archive').checked,
+        summary: document.getElementById('opt-summary').checked,
         include_cookies: document.getElementById('opt-cookies').checked,
         forum: document.getElementById('opt-forum').checked,
         pages: (document.getElementById('opt-pages')?.value || "").trim(),
@@ -502,6 +505,7 @@ async function preparePayload(urls, bundleTitle) {
         no_article: options.no_article,
         no_images: options.no_images,
         archive: options.archive,
+        summary: options.summary,
         max_pages: max_pages,
         page_spec: page_spec && page_spec.length ? page_spec : null,
         fetch_assets: shouldFetchAssets,

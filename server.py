@@ -69,6 +69,7 @@ class ConversionRequest(BaseModel):
     llm_format: bool = False
     llm_model: Optional[str] = None
     llm_api_key: Optional[str] = None
+    summary: bool = False
 
 @app.get("/ping")
 async def ping(): return {"status": "ok"}
@@ -105,7 +106,8 @@ async def convert(req: ConversionRequest):
         page_spec=req.page_spec,
         llm_format=req.llm_format,
         llm_model=req.llm_model,
-        llm_api_key=req.llm_api_key
+        llm_api_key=req.llm_api_key,
+        summary=req.summary
     )
 
     # Map Pydantic to Core Dataclass
