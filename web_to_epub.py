@@ -4137,7 +4137,8 @@ class LLMHelper:
                 "You are an expert editor. Please format the following YouTube transcript into a readable article. "
                 "Fix punctuation, capitalization, and paragraph breaks. "
                 "Do not summarize; keep the full content but make it flow like a written piece. "
-                "Remove filler words like 'um', 'uh', 'like' where appropriate.\\n\\n"
+                "Remove filler words like 'um', 'uh', 'like' where appropriate. "
+                "Format the output as HTML (using <p> tags for paragraphs).\\n\\n"
                 f"{text}"
             )
         
@@ -4153,7 +4154,8 @@ class LLMHelper:
             prompt = (
                 "Please provide a concise executive summary (3-5 paragraphs) of the following text. "
                 "Capture the main arguments, key takeaways, and conclusion. "
-                "Format with <b>bold</b> for key terms if helpful.\\n\\n"
+                "Format the response as valid HTML (using <p>, <strong>, <ul>/<li> tags). "
+                "Do NOT use Markdown syntax (like ** or ###).\\n\\n"
                 f"{text[:25000]}" # Limit context window usage for summary
             )
         
