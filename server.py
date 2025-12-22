@@ -64,6 +64,8 @@ class ConversionRequest(BaseModel):
     max_posts: Optional[int] = None
     page_spec: Optional[List[int]] = None
     termux_copy_dir: Optional[str] = None
+    llm_format: bool = False
+    llm_model: Optional[str] = None
 
 @app.get("/ping")
 async def ping(): return {"status": "ok"}
@@ -97,7 +99,9 @@ async def convert(req: ConversionRequest):
         max_depth=req.max_depth,
         max_pages=req.max_pages,
         max_posts=req.max_posts,
-        page_spec=req.page_spec
+        page_spec=req.page_spec,
+        llm_format=req.llm_format,
+        llm_model=req.llm_model
     )
 
     # Map Pydantic to Core Dataclass
