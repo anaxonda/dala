@@ -505,7 +505,10 @@ async function preparePayload(urls, bundleTitle) {
         max_pages: max_pages,
         page_spec: page_spec && page_spec.length ? page_spec : null,
         fetch_assets: shouldFetchAssets,
-        termux_copy_dir: (savedOpts.termux_copy_dir || "").trim() || null
+        termux_copy_dir: (savedOpts.termux_copy_dir || "").trim() || null,
+        llm_format: !!savedOpts.llm_format,
+        llm_model: (savedOpts.llm_model || "").trim() || null,
+        llm_api_key: (savedOpts.llm_api_key || "").trim() || null
     };
 }
 

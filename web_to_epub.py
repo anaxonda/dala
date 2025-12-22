@@ -12,6 +12,8 @@
 #   "tqdm>=4.65.0",
 #   "Pillow>=9.0.0",
 #   "PyYAML>=6.0",
+#   "youtube-transcript-api>=0.6.0",
+#   "python-dotenv>=1.0.0",
 # ]
 # ///
 
@@ -53,9 +55,14 @@ try:
     from pygments.util import ClassNotFound
     from tqdm.asyncio import tqdm_asyncio
     from tqdm import tqdm
+    from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+    from dotenv import load_dotenv
 except ImportError as e:
     print(f"Error: Missing dependency. Please run with 'uv run'. Details: {e}", file=sys.stderr)
     sys.exit(1)
+
+# Load environment variables from .env file
+load_dotenv()
 
 try:
     from PIL import Image as PillowImage
@@ -124,6 +131,9 @@ class ConversionOptions:
     max_pages: Optional[int] = None
     max_posts: Optional[int] = None
     page_spec: Optional[List[int]] = None
+    llm_format: bool = False
+    llm_model: Optional[str] = None
+    llm_api_key: Optional[str] = None
 
 @dataclass
 class Source:
@@ -443,7 +453,7 @@ class ArticleExtractor:
 
     @staticmethod
     def _smart_selector_extract(soup):
-        selectors = ['article', '[role="main"]', '.main-content', '.post-content', '.entry-content', '#main', '#content', '.article-body', '.storycontent']
+        selectors = ['article', '[data-qa="article-body"]', '[role="main"]', '.main-content', '.post-content', '.entry-content', '#main', '#content', '.article-body', '.storycontent']
         for selector in selectors:
             found = soup.select_one(selector)
             if found and len(found.get_text(strip=True)) > 200:
@@ -645,7 +655,7 @@ class BaseImageProcessor:
         return None
 
     @staticmethod
-    def wrap_in_img_block(soup: BeautifulSoup, img_tag: Tag, caption_text: Optional[str], prepend: bool = False) -> None:
+    def wrap_in_img_block(soup: BeautifulSoup, img_tag: Tag, caption_text: Optional[str]) -> None:
         if not img_tag or not soup:
             return
         fig = img_tag.find_parent("figure")
@@ -662,16 +672,47 @@ class BaseImageProcessor:
         if parent:
             img_tag.replace_with(wrapper)
         else:
-            target = soup.body or soup
-            if prepend:
-                target.insert(0, wrapper)
-            else:
-                target.append(wrapper)
+            (soup.body or soup).append(wrapper)
         wrapper.append(img_tag)
         if caption_text:
             cap = soup.new_tag("p", attrs={"class": "caption"})
             cap.string = caption_text
             wrapper.append(cap)
+
+        parent = wrapper.parent
+        while parent and parent.name in ("div", "section"):
+            for fc in list(parent.find_all("figcaption", recursive=False)):
+                fc.decompose()
+            meaningful = [c for c in parent.contents if not (isinstance(c, str) and not c.strip())]
+            dataid = (parent.get("data-testid") or "").lower()
+            if len(meaningful) == 1 and meaningful[0] is wrapper and (dataid.startswith("imageblock") or dataid.startswith("photoviewer")):
+                parent.unwrap()
+                parent = wrapper.parent
+                continue
+            break
+
+        sib = wrapper.next_sibling
+        while sib and isinstance(sib, str) and not sib.strip():
+            sib = sib.next_sibling
+        if hasattr(sib, "name") and sib.name == "figcaption":
+            sib.decompose()
+
+        parent = wrapper.parent
+        if parent:
+            for fc in list(parent.find_all("figcaption", recursive=False)):
+                fc.decompose()
+
+        parent = wrapper.parent
+        while parent and parent.name in ("div", "section"):
+            for fc in list(parent.find_all("figcaption", recursive=False)):
+                fc.decompose()
+            children = [c for c in parent.contents if not (isinstance(c, str) and not c.strip())]
+            dataid = (parent.get("data-testid") or "").lower()
+            if len(children) == 1 and children[0] is wrapper and (dataid.startswith("imageblock") or dataid.startswith("photoviewer")):
+                parent.unwrap()
+                parent = wrapper.parent
+                continue
+            break
 
     @staticmethod
     def is_junk(url: str) -> bool:
@@ -958,16 +999,24 @@ class ImageProcessor(BaseImageProcessor):
 
             log.debug(f"Targeted __NEXT_DATA__ content elements: {len(elems)}")
             added = 0
-            fallback_index = 0
+            images_processed_count = 0
+            lede_candidate = None
+
             for el in elems:
                 if not isinstance(el, dict):
                     continue
                 if el.get("type") != "image":
                     continue
+                
+                is_first_image = (images_processed_count == 0)
+                images_processed_count += 1
+
                 url = el.get("url")
                 if not url:
                     continue
                 caption = el.get("credits_caption_display") or el.get("caption") or el.get("caption_display") or ""
+                cap_text = caption.strip() if caption else None
+                
                 # Prefer direct URL (el.get("url"))
                 origin = el.get("url")
                 if not origin: continue
@@ -992,45 +1041,49 @@ class ImageProcessor(BaseImageProcessor):
                 uid = f"img_{abs(hash(fname))}"
                 asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=origin, alt_urls=[origin])
                 book_assets.append(asset)
-                added += 1
-
-                # 1. Try to find a placeholder in the body_soup by content ID
-                target_div = body_soup.find("div", id=el.get("_id"))
-                if target_div:
+                
+                # Try to find a placeholder in the body_soup by content ID (relaxed search)
+                target_tag = body_soup.find(id=el.get("_id"))
+                if not target_tag:
+                    target_tag = body_soup.find(attrs={"data-id": el.get("_id")})
+                if not target_tag:
+                    target_tag = body_soup.find(attrs={"data-uuid": el.get("_id")})
+                
+                if target_tag:
                     # Construct the image block according to guidelines
                     img_block_wrapper = body_soup.new_tag("div", attrs={"class": "img-block"})
                     img_tag = body_soup.new_tag("img", attrs={"src": fname, "class": "epub-image"})
                     img_block_wrapper.append(img_tag)
-                    cap_text = caption.strip() if caption else None
                     if cap_text:
                         cap = body_soup.new_tag("p", attrs={"class": "caption"})
                         cap.string = cap_text
                         img_block_wrapper.append(cap)
-                    target_div.replace_with(img_block_wrapper)
+                    target_tag.replace_with(img_block_wrapper)
                     log.debug(f"Injected WaPo image {origin} into placeholder {el.get('_id')}")
-                    continue
-
-                # 2. Fallback: Position missing images
-                # Prepend the first fallback (usually the lede), append the rest.
-                img_tag = body_soup.new_tag("img", attrs={"src": fname, "class": "epub-image"})
-                cap_text = caption.strip() if caption else None
-                
-                wrapper = body_soup.new_tag("div", attrs={"class": "img-block"})
-                wrapper.append(img_tag)
-                if cap_text:
-                    cap = body_soup.new_tag("p", attrs={"class": "caption"})
-                    cap.string = cap_text
-                    wrapper.append(cap)
-                
-                target = body_soup.body or body_soup
-                if fallback_index == 0:
-                    target.insert(0, wrapper)
-                    log.debug(f"Prepended WaPo lede image {origin}")
+                    added += 1
                 else:
-                    target.append(wrapper)
-                    log.debug(f"Appended WaPo supplemental image {origin}")
-                
-                fallback_index += 1
+                    # Fallback
+                    img_tag = body_soup.new_tag("img", attrs={"src": fname, "class": "epub-image"})
+                    
+                    if is_first_image and not lede_candidate:
+                        # Defer lede insertion
+                        lede_candidate = (img_tag, cap_text, origin)
+                        added += 1
+                    else:
+                        # Append subsequent unmatched images
+                        ImageProcessor.wrap_in_img_block(body_soup, img_tag, cap_text)
+                        log.debug(f"Appended WaPo image {origin} (no specific placeholder found)")
+                        added += 1
+
+            if lede_candidate:
+                l_img, l_cap, l_origin = lede_candidate
+                if body_soup.contents:
+                    body_soup.insert(0, l_img)
+                else:
+                    body_soup.append(l_img)
+                ImageProcessor.wrap_in_img_block(body_soup, l_img, l_cap)
+                log.debug(f"Prepended WaPo Lede image {l_origin}")
+
             if added:
                 # remove any leftover figcaptions after injection
                 for fc in list(body_soup.find_all("figcaption")):
@@ -3006,7 +3059,10 @@ class WordPressDriver(BaseDriver):
             classes = li.get("class", [])
             if "comment" not in classes and "pingback" not in classes: continue
             
-            author_tag = li.select_one('.comment-author .fn, .comment-author cite')
+            # Author: Try standard, then relaxed selectors
+            author_tag = li.select_one('.comment-author .fn, .comment-author cite, .comment-meta .fn, cite.fn')
+            
+            # Date: Try time tag, then fallback to link text in metadata
             date_tag = li.select_one('.comment-metadata time, .comment-meta time')
             
             author = author_tag.get_text(strip=True) if author_tag else "Anonymous"
@@ -3018,6 +3074,20 @@ class WordPressDriver(BaseDriver):
                     dt = datetime.fromisoformat(dt_str)
                     time_val = dt.timestamp()
                 except: pass
+            elif not time_val:
+                # Fallback: look for a date link text (common in older WP themes)
+                date_link = li.select_one('.comment-metadata a, .comment-meta a')
+                if date_link:
+                    dtext = date_link.get_text(strip=True)
+                    try:
+                        # Try parsing common WP date formats "November 27, 2025 at 12:38 am"
+                        # This is a bit brittle but better than 0
+                        # Remove "at" if present
+                        clean_dtext = dtext.replace(" at ", " ")
+                        dt = datetime.strptime(clean_dtext, "%B %d, %Y %I:%M %p")
+                        time_val = dt.timestamp()
+                    except:
+                        pass
 
             # Prefer content only to avoid duplicating metadata (avatars)
             body = li.select_one('.comment-content')
@@ -3900,6 +3970,253 @@ class EpubWriter:
         epub.write_epub(output_path, book)
         log.info(f"Wrote EPUB: {output_path}")
 
+class LLMHelper:
+    @staticmethod
+    async def format_transcript(text: str, model: Optional[str] = None, api_key: Optional[str] = None) -> str:
+        """Formats text using an LLM if API key is present."""
+        gemini_key = api_key or os.getenv("GEMINI_API_KEY")
+        openrouter_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        openai_key = api_key or os.getenv("OPENAI_API_KEY")
+
+        # Heuristic to detect key type if passed generically
+        passed_key_is_gemini = api_key and ("AIza" in api_key)
+        passed_key_is_sk = api_key and (api_key.startswith("sk-") or "openrouter" in api_key) # Loose check
+
+        if api_key:
+            if passed_key_is_gemini:
+                gemini_key = api_key
+                openrouter_key = None
+                openai_key = None
+            else:
+                gemini_key = None
+                openrouter_key = api_key # Assume OpenRouter/OpenAI compatible if not Gemini
+                openai_key = api_key
+
+        if not (gemini_key or openrouter_key or openai_key):
+            log.warning("No API keys found (GEMINI/OPENROUTER/OPENAI). Skipping LLM format.")
+            return text
+
+        # Determine Model
+        model = model or os.getenv("LLM_MODEL")
+
+        # Prepare Prompt
+        custom_prompt = os.getenv("LLM_PROMPT")
+        if custom_prompt:
+            prompt = custom_prompt.replace("{text}", text)
+        else:
+            prompt = (
+                "You are an expert editor. Please format the following YouTube transcript into a readable article. "
+                "Fix punctuation, capitalization, and paragraph breaks. "
+                "Do not summarize; keep the full content but make it flow like a written piece. "
+                "Remove filler words like 'um', 'uh', 'like' where appropriate.\\n\\n"
+                f"{text}"
+            )
+
+        try:
+            # Google Gemini (REST)
+            if gemini_key:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model or 'gemini-1.5-flash'}:generateContent?key={gemini_key}"
+                payload = {"contents": [{"parts": [{"text": prompt}]}]}
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, json=payload) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            return data['candidates'][0]['content']['parts'][0]['text']
+                        else:
+                            log.error(f"Gemini API Error: {resp.status} {await resp.text()}")
+                            if not (openrouter_key or openai_key): return text
+
+            # OpenAI Compatible (OpenRouter / OpenAI)
+            active_key = openrouter_key or openai_key
+            base_url = "https://openrouter.ai/api/v1" if openrouter_key and not openai_key else "https://api.openai.com/v1"
+            if "openrouter" in (model or ""): base_url = "https://openrouter.ai/api/v1"
+            
+            # If we have an explicit passed key that isn't Gemini, assume it works with the requested model/endpoint
+            if api_key and not passed_key_is_gemini:
+                active_key = api_key
+                # If model starts with 'google/' or 'anthropic/', likely OpenRouter
+                if model and ("/" in model): base_url = "https://openrouter.ai/api/v1"
+
+            target_model = model or ("google/gemini-flash-1.5" if "openrouter" in base_url else "gpt-3.5-turbo")
+            
+            headers = {
+                "Authorization": f"Bearer {active_key}",
+                "Content-Type": "application/json"
+            }
+            if "openrouter" in base_url:
+                headers["HTTP-Referer"] = "https://github.com/loki/epub_downloader"
+                headers["X-Title"] = "EPUB Downloader"
+
+            payload = {
+                "model": target_model,
+                "messages": [
+                    {"role": "system", "content": "You are a helpful editor."},
+                    {"role": "user", "content": prompt}
+                ]
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(f"{base_url}/chat/completions", headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data['choices'][0]['message']['content']
+                    else:
+                        log.error(f"LLM API Error ({base_url}): {resp.status} {await resp.text()}")
+
+        except Exception as e:
+            log.error(f"LLM Format failed: {e}")
+        
+        return text
+
+class YouTubeDriver(BaseDriver):
+    async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
+        session = context.session
+        options = context.options
+        url = source.url
+        log.info(f"YouTube Driver processing: {url}")
+
+        video_id = self._extract_video_id(url)
+        if not video_id:
+            log.error("Could not extract video ID")
+            return None
+
+        # 1. Fetch Page for Metadata (Title, Author, Thumbnail)
+        try:
+            html_content, _ = await fetch_with_retry(session, url, 'text')
+            soup = BeautifulSoup(html_content, 'html.parser')
+            title = soup.find("meta", property="og:title")
+            title = title["content"] if title else f"YouTube Video {video_id}"
+            
+            desc = soup.find("meta", property="og:description")
+            description = desc["content"] if desc else ""
+
+            author = "YouTube"
+            # Try to find channel name
+            channel = soup.find("link", itemprop="name")
+            if channel: author = channel.get("content")
+            
+            # Thumbnail
+            thumb_url = None
+            og_img = soup.find("meta", property="og:image")
+            if og_img: thumb_url = og_img["content"]
+            
+        except Exception as e:
+            log.warning(f"Metadata fetch failed: {e}")
+            title = f"YouTube Video {video_id}"
+            author = "YouTube"
+            description = ""
+            thumb_url = f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+
+        # 2. Fetch Transcript
+        loop = asyncio.get_running_loop()
+        transcript_list = []
+        try:
+            # Using instance method fetch() which returns a FetchedTranscript object, then converting to raw dicts
+            transcript_list = await loop.run_in_executor(
+                None, 
+                lambda: YouTubeTranscriptApi().fetch(video_id).to_raw_data()
+            )
+        except (TranscriptsDisabled, NoTranscriptFound) as e:
+            log.warning(f"No transcript available: {e}")
+        except Exception as e:
+            log.error(f"Transcript fetch error: {e}")
+
+        if not transcript_list:
+            log.error("Aborting: No transcript found.")
+            return None
+
+        # 3. Process Text
+        if options.llm_format:
+            full_text = " ".join([t['text'] for t in transcript_list])
+            full_text = html.unescape(full_text)
+            log.info("Formatting transcript with LLM...")
+            final_text = await LLMHelper.format_transcript(full_text, options.llm_model, options.llm_api_key)
+            # Wrap in paragraphs if LLM returned plain text block (LLMs usually add newlines)
+            if "<p>" not in final_text:
+                final_text = "".join(f"<p>{p.strip()}</p>" for p in final_text.split('\n\n') if p.strip())
+        else:
+            # Basic cleanup using timestamps
+            final_text = self._basic_transcript_cleanup(transcript_list)
+
+        # 4. Build Chapter
+        assets = []
+        cover_image_html = ""
+        if not options.no_images and thumb_url:
+            headers, data, err = await ImageProcessor.fetch_image_data(session, thumb_url)
+            if data:
+                mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(thumb_url, headers, data)
+                if final_data:
+                    fname = f"{IMAGE_DIR_IN_EPUB}/cover{ext}"
+                    uid = "cover_img"
+                    asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=thumb_url)
+                    assets.append(asset)
+                    cover_image_html = f'<div class="img-block"><img src="{fname}" alt="Thumbnail" class="epub-image"/></div><hr/>'
+
+        content_html = f"{cover_image_html}<div class='transcript-body'>{final_text}</div>"
+        
+        final_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head>
+        <body><h1>{title}</h1><div class="post-meta"><p><strong>Source:</strong> <a href="{url}">{url}</a></p><p><strong>Channel:</strong> {author}</p></div>{content_html}</body></html>"""
+
+        chapter = Chapter(title=title, filename="transcript.xhtml", content_html=final_html, uid="transcript", is_article=True)
+
+        return BookData(
+            title=title, 
+            author=author, 
+            uid=f"urn:youtube:{video_id}", 
+            language='en', 
+            description=description, 
+            source_url=url, 
+            chapters=[chapter], 
+            images=assets, 
+            toc_structure=[epub.Link("transcript.xhtml", title, "transcript")]
+        )
+
+    def _basic_transcript_cleanup(self, transcript_list: List[Dict]) -> str:
+        """Merges lines and creates paragraphs based on silence gaps (>2s)."""
+        paragraphs = []
+        current_para = []
+        last_end = 0
+
+        for item in transcript_list:
+            text = html.unescape(item['text']).replace('\n', ' ').strip()
+            if not text: continue
+            
+            start = item['start']
+            
+            # If gap > 2 seconds, start new paragraph
+            if current_para and (start - last_end > 2.0):
+                # Join sentences, try to capitalize first letter
+                joined = " ".join(current_para)
+                if joined:
+                    joined = joined[0].upper() + joined[1:]
+                paragraphs.append(f"<p>{joined}</p>")
+                current_para = []
+
+            current_para.append(text)
+            last_end = start + item['duration']
+
+        if current_para:
+            joined = " ".join(current_para)
+            if joined:
+                joined = joined[0].upper() + joined[1:]
+            paragraphs.append(f"<p>{joined}</p>")
+        
+        return "".join(paragraphs)
+
+    def _extract_video_id(self, url):
+        """Extracts video ID from various YouTube URL formats."""
+        parsed = urlparse(url)
+        if parsed.netloc == "youtu.be":
+            return parsed.path[1:]
+        if parsed.netloc in ("www.youtube.com", "youtube.com"):
+            if "/watch" in parsed.path:
+                return parse_qs(parsed.query).get("v", [None])[0]
+            if "/embed/" in parsed.path:
+                return parsed.path.split("/embed/")[1]
+            if "/v/" in parsed.path:
+                return parsed.path.split("/v/")[1]
+        return None
+
 # --- Public API (for Server) ---
 
 class DriverDispatcher:
@@ -3912,6 +4229,7 @@ class DriverDispatcher:
             if alias == "substack": return SubstackDriver()
             if alias in ("hn", "hackernews"): return HackerNewsDriver()
             if alias == "reddit": return RedditDriver()
+            if alias == "youtube": return YouTubeDriver()
             if alias == "generic": return GenericDriver()
 
         url = source.url
@@ -3930,6 +4248,8 @@ class DriverDispatcher:
             return SubstackDriver()
         if "wordpress.com" in url:
             return WordPressDriver()
+        if parsed.netloc in ("www.youtube.com", "youtube.com", "youtu.be"):
+            return YouTubeDriver()
             
         # 3. Content Sniffing
         if source.html:
@@ -4017,33 +4337,39 @@ async def async_main():
     parser.add_argument("--max-depth", type=int, default=None)
     parser.add_argument("--max-pages", type=int, default=None, help="Max forum pages to fetch")
     parser.add_argument("--max-posts", type=int, default=None, help="Max forum posts to fetch")
-    parser.add_argument("--pages", help="Forum pages to fetch (e.g., 1,3-5)")
-    parser.add_argument("--cookie-file", help="Netscape-format cookie file for auth-gated content")
-    parser.add_argument("--forum", action="store_true", help="Treat URLs as forum threads (use forum driver)")
-    parser.add_argument("--css", help="Custom CSS file")
-    parser.add_argument("-v", "--verbose", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument("--pages", help="Specific pages to fetch (e.g. '1,3-5')")
+    parser.add_argument("--css", help="Custom CSS file to inject")
+    parser.add_argument("--llm", action="store_true", dest="llm_format", help="Format transcript using LLM (requires GEMINI_API_KEY)")
+    parser.add_argument("--llm-model", help="Specify LLM model (default: gemini-1.5-flash)")
+    parser.add_argument("--api-key", help="API Key for LLM (overrides env vars)")
+    return parser.parse_args()
 
-    if args.verbose: log.setLevel(logging.DEBUG)
-
+async def main():
+    args = parse_args()
+    
     urls = []
-    if args.input: urls.append(args.input)
     if args.input_file:
-        with open(args.input_file) as f:
-            urls.extend([l.strip() for l in f if l.strip() and not l.startswith('#')])
+        with open(args.input_file, 'r') as f:
+            urls.extend([line.strip() for line in f if line.strip() and not line.startswith('#')])
+    urls.extend(args.url)
+    
+    if not urls:
+        print("No URLs provided.")
+        return
 
-    if not urls: print("No input provided."); sys.exit(1)
-
-    page_spec = parse_page_spec(args.pages) if args.pages else None
     options = ConversionOptions(
         no_article=args.no_article,
         no_comments=args.no_comments,
         no_images=args.no_images,
         archive=args.archive,
+        compact_comments=args.compact_comments,
         max_depth=args.max_depth,
         max_pages=args.max_pages,
         max_posts=args.max_posts,
-        page_spec=page_spec
+        page_spec=parse_page_spec(args.pages),
+        llm_format=args.llm_format,
+        llm_model=args.llm_model,
+        llm_api_key=args.api_key
     )
 
     # Load cookies once if provided
