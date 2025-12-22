@@ -2810,9 +2810,15 @@ class SubstackDriver(BaseDriver):
             base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
             await ImageProcessor.process_images(session, body_soup, base, assets)
 
+        summary_html = None
+        if options.summary:
+            log.info("Generating AI summary for Substack...")
+            text_content = body_soup.get_text(separator=" ", strip=True)
+            summary_html = await LLMHelper.generate_summary(text_content, options.llm_model, options.llm_api_key)
+
         title = data['title'] or "Substack Article"
         chapter_html = body_soup.prettify()
-        meta_html = ArticleExtractor.build_meta_block(url, data)
+        meta_html = ArticleExtractor.build_meta_block(url, data, summary_html=summary_html)
 
         chapters = []
         final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head>
@@ -3019,8 +3025,14 @@ class WordPressDriver(BaseDriver):
             base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
             await ImageProcessor.process_images(session, body_soup, base, assets)
 
+        summary_html = None
+        if options.summary:
+            log.info("Generating AI summary for WordPress...")
+            text_content = body_soup.get_text(separator=" ", strip=True)
+            summary_html = await LLMHelper.generate_summary(text_content, options.llm_model, options.llm_api_key)
+
         chapter_html = body_soup.prettify()
-        meta_html = ArticleExtractor.build_meta_block(url, data)
+        meta_html = ArticleExtractor.build_meta_block(url, data, summary_html=summary_html)
         final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head>
         <body><h1>{title}</h1>{meta_html}<hr/>{chapter_html}</body></html>"""
         
@@ -3224,21 +3236,35 @@ class HackerNewsDriver(BaseDriver):
 
         if (article_url and not options.no_article) or post_text:
             art_title = title
+            summary_html = None
+            
             if article_url and not options.no_article:
                 art_data = await ArticleExtractor.get_article_content(session, article_url, force_archive=options.archive, raw_html=source.html if not article_url else None, profile=context.profile)
                 if art_data['success']:
                     if art_data['title']: art_title = art_data['title']
                     soup = BeautifulSoup(art_data['html'], 'html.parser')
                     body = soup.body if soup.body else soup
+                    
+                    if options.summary:
+                        log.info("Generating AI summary for HN Link...")
+                        txt = body.get_text(separator=" ", strip=True)
+                        summary_html = await LLMHelper.generate_summary(txt, options.llm_model, options.llm_api_key)
+
                     if not options.no_images:
                         base = art_data.get('archive_url') if art_data.get('was_archived') else article_url
                         await ImageProcessor.process_images(session, body, base, assets)
                     art_html = body.prettify()
                     context = f"<p><strong>HN Source:</strong> <a href=\"{url}\">{title}</a></p>"
-                    meta_html = ArticleExtractor.build_meta_block(article_url, art_data, context=context)
+                    meta_html = ArticleExtractor.build_meta_block(article_url, art_data, context=context, summary_html=summary_html)
                     art_html = f"{meta_html}<hr/>{art_html}"
                 else: art_html = f"<p>Could not fetch article: <a href='{article_url}'>{article_url}</a></p>"
-            elif post_text: art_html = f"<div>{post_text}</div>"
+            elif post_text:
+                if options.summary:
+                    log.info("Generating AI summary for HN Self Text...")
+                    summary_html = await LLMHelper.generate_summary(post_text, options.llm_model, options.llm_api_key)
+                
+                sum_div = f"<div class='ai-summary'><h3>AI Summary</h3>{summary_html}</div><hr/>" if summary_html else ""
+                art_html = f"{sum_div}<div>{post_text}</div>"
             else: art_html = ""
 
             final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{art_title}</title><link rel="stylesheet" href="style/default.css"/></head><body>
@@ -3317,13 +3343,22 @@ class RedditDriver(BaseDriver):
             article_html = ""
             chapter_title = title
             is_image_link = link_url and re.search(r'\.(jpe?g|png|webp|gif)(\?|$)', link_url, re.IGNORECASE)
+            summary_html = None
 
             if selftext_html:
                 decoded = html.unescape(selftext_html)
                 soup = BeautifulSoup(decoded, 'html.parser')
+                
+                if options.summary:
+                    log.info("Generating AI summary for Reddit Selftext...")
+                    summary_html = await LLMHelper.generate_summary(soup.get_text(separator=" ", strip=True), options.llm_model, options.llm_api_key)
+
                 if not options.no_images:
                     await ImageProcessor.process_images(session, soup, source.url, assets)
                 article_html = soup.prettify()
+                if summary_html:
+                    article_html = f"<div class='ai-summary'><h3>AI Summary</h3>{summary_html}</div><hr/>{article_html}"
+
             elif is_image_link:
                 img_html = f"""<div class="img-block"><img class="epub-image" src="{link_url}" alt="{title}"/></div>"""
                 soup = BeautifulSoup(img_html, 'html.parser')
@@ -3339,12 +3374,17 @@ class RedditDriver(BaseDriver):
                     chapter_title = art_data.get('title') or chapter_title
                     soup = BeautifulSoup(art_data['html'], 'html.parser')
                     body = soup.body if soup.body else soup
+                    
+                    if options.summary:
+                        log.info("Generating AI summary for Reddit Link...")
+                        summary_html = await LLMHelper.generate_summary(body.get_text(separator=" ", strip=True), options.llm_model, options.llm_api_key)
+
                     if not options.no_images:
                         base = art_data.get('archive_url') if art_data.get('was_archived') else link_url
                         await ImageProcessor.process_images(session, body, base, assets)
                     article_html = body.prettify()
                     context = f"<p><strong>Reddit Link:</strong> <a href=\"{source.url}\">{source.url}</a></p>"
-                    meta_html = ArticleExtractor.build_meta_block(link_url, art_data, context=context)
+                    meta_html = ArticleExtractor.build_meta_block(link_url, art_data, context=context, summary_html=summary_html)
                     article_html = f"{meta_html}<hr/>{article_html}"
                 else:
                     article_html = f"<p>Original link: <a href=\"{link_url}\">{link_url}</a></p>"
@@ -3571,7 +3611,23 @@ class ForumDriver(BaseDriver):
             log.error("Forum extraction produced no posts.")
             return None
 
-        chapter_html = self._render_thread_html(title or "Forum Thread", source.url, page_blocks)
+        summary_html = None
+        if options.summary:
+            log.info("Generating AI summary for Forum Thread...")
+            sample_text = []
+            count = 0
+            for _, posts in page_blocks:
+                for p in posts:
+                    clean = BeautifulSoup(p.get("html", ""), "html.parser").get_text(separator=" ", strip=True)
+                    sample_text.append(f"Post by {p.get('author')}: {clean}")
+                    count += 1
+                    if count >= 5: break
+                if count >= 5: break
+            
+            if sample_text:
+                summary_html = await LLMHelper.generate_summary("\n\n".join(sample_text), options.llm_model, options.llm_api_key)
+
+        chapter_html = self._render_thread_html(title or "Forum Thread", source.url, page_blocks, summary_html=summary_html)
         assets, chapter_html = self._dedupe_assets(assets, chapter_html)
         chapter = Chapter(
             title=title or "Forum Thread",
@@ -3727,7 +3783,7 @@ class ForumDriver(BaseDriver):
                 return True
         return False
 
-    def _render_thread_html(self, title, url, page_blocks: List[Tuple[int, List[Dict[str, Any]]]]):
+    def _render_thread_html(self, title, url, page_blocks: List[Tuple[int, List[Dict[str, Any]]]], summary_html: Optional[str] = None):
         anchor_map: Dict[str, str] = {}
         for _, posts in page_blocks:
             for p in posts:
@@ -3773,11 +3829,15 @@ class ForumDriver(BaseDriver):
                         if a.has_attr("data-content-selector"):
                             del a["data-content-selector"]
                 return str(soup)
-            except Exception:
+            except Exception as e:
                 return html_snippet
 
         chunks = [f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head><body>"""]
         chunks.append(f"<h1>{title}</h1><div class='post-meta'><p><strong>Source:</strong> <a href=\"{url}\">{url}</a></p></div>")
+        
+        if summary_html:
+            chunks.append(f"<div class='ai-summary'><h3>AI Summary</h3>{summary_html}</div><hr/>")
+
         post_counter = 1
         for page_no, posts in page_blocks:
             chunks.append(f"<div class='page-label' id='page_{page_no}'>Page {page_no}</div>")
