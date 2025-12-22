@@ -443,7 +443,7 @@ class ArticleExtractor:
 
     @staticmethod
     def _smart_selector_extract(soup):
-        selectors = ['article', '[role="main"]', '.main-content', '.post-content', '.entry-content', '#main', '#content', '.article-body', '.storycontent']
+        selectors = ['article', '[data-qa="article-body"]', '[role="main"]', '.main-content', '.post-content', '.entry-content', '#main', '#content', '.article-body', '.storycontent']
         for selector in selectors:
             found = soup.select_one(selector)
             if found and len(found.get_text(strip=True)) > 200:
@@ -1034,6 +1034,10 @@ class ImageProcessor(BaseImageProcessor):
                 
                 # Try to find a placeholder in the body_soup by content ID (relaxed search)
                 target_tag = body_soup.find(id=el.get("_id"))
+                if not target_tag:
+                    target_tag = body_soup.find(attrs={"data-id": el.get("_id")})
+                if not target_tag:
+                    target_tag = body_soup.find(attrs={"data-uuid": el.get("_id")})
                 
                 if target_tag:
                     # Construct the image block according to guidelines
