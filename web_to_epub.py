@@ -989,20 +989,24 @@ class ImageProcessor(BaseImageProcessor):
 
             log.debug(f"Targeted __NEXT_DATA__ content elements: {len(elems)}")
             added = 0
+            images_processed_count = 0
+            lede_candidate = None
+
             for el in elems:
                 if not isinstance(el, dict):
                     continue
                 if el.get("type") != "image":
                     continue
-                # Prefer direct URL (el.get("url"))
-                if not isinstance(el, dict):
-                    continue
-                if el.get("type") != "image":
-                    continue
+                
+                is_first_image = (images_processed_count == 0)
+                images_processed_count += 1
+
                 url = el.get("url")
                 if not url:
                     continue
                 caption = el.get("credits_caption_display") or el.get("caption") or el.get("caption_display") or ""
+                cap_text = caption.strip() if caption else None
+                
                 # Prefer direct URL (el.get("url"))
                 origin = el.get("url")
                 if not origin: continue
@@ -1027,9 +1031,11 @@ class ImageProcessor(BaseImageProcessor):
                 uid = f"img_{abs(hash(fname))}"
                 asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=origin, alt_urls=[origin])
                 book_assets.append(asset)
-                # Try to find a placeholder in the body_soup by content ID
-                target_div = body_soup.find("div", id=el.get("_id"))
-                if target_div:
+                
+                # Try to find a placeholder in the body_soup by content ID (relaxed search)
+                target_tag = body_soup.find(id=el.get("_id"))
+                
+                if target_tag:
                     # Construct the image block according to guidelines
                     img_block_wrapper = body_soup.new_tag("div", attrs={"class": "img-block"})
                     img_tag = body_soup.new_tag("img", attrs={"src": fname, "class": "epub-image"})
@@ -1038,16 +1044,32 @@ class ImageProcessor(BaseImageProcessor):
                         cap = body_soup.new_tag("p", attrs={"class": "caption"})
                         cap.string = cap_text
                         img_block_wrapper.append(cap)
-                    target_div.replace_with(img_block_wrapper)
+                    target_tag.replace_with(img_block_wrapper)
                     log.debug(f"Injected WaPo image {origin} into placeholder {el.get('_id')}")
                     added += 1
                 else:
-                    # Fallback to appending if no specific placeholder is found
+                    # Fallback
                     img_tag = body_soup.new_tag("img", attrs={"src": fname, "class": "epub-image"})
-                    cap_text = caption.strip() if caption else None
-                    ImageProcessor.wrap_in_img_block(body_soup, img_tag, cap_text)
-                    log.debug(f"Appended WaPo image {origin} (no specific placeholder found)")
-                    added += 1
+                    
+                    if is_first_image and not lede_candidate:
+                        # Defer lede insertion
+                        lede_candidate = (img_tag, cap_text, origin)
+                        added += 1
+                    else:
+                        # Append subsequent unmatched images
+                        ImageProcessor.wrap_in_img_block(body_soup, img_tag, cap_text)
+                        log.debug(f"Appended WaPo image {origin} (no specific placeholder found)")
+                        added += 1
+
+            if lede_candidate:
+                l_img, l_cap, l_origin = lede_candidate
+                if body_soup.contents:
+                    body_soup.insert(0, l_img)
+                else:
+                    body_soup.append(l_img)
+                ImageProcessor.wrap_in_img_block(body_soup, l_img, l_cap)
+                log.debug(f"Prepended WaPo Lede image {l_origin}")
+
             if added:
                 # remove any leftover figcaptions after injection
                 for fc in list(body_soup.find_all("figcaption")):
