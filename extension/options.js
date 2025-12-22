@@ -5,10 +5,10 @@ const subfolderInput = document.getElementById("download-subfolder");
 const termuxInput = document.getElementById("download-termux");
 const llmFormatBox = document.getElementById("llm-format");
 const llmModelInput = document.getElementById("llm-model");
+const llmApiKeyInput = document.getElementById("llm-api-key");
 
 const DEFAULT_DOWNLOAD = "ctrl+shift+e";
 const DEFAULT_QUEUE = "ctrl+shift+q";
-
 function normalizeCombo(str) {
   if (!str || typeof str !== "string") return "";
   return str
@@ -42,7 +42,6 @@ function attachCapture(inputEl) {
     }
   });
 }
-
 async function loadSettings() {
   const res = await browser.storage.local.get([
     "keyboardShortcutsEnabled",
@@ -58,6 +57,7 @@ async function loadSettings() {
   termuxInput.value = (savedOpts.termux_copy_dir || "").trim();
   llmFormatBox.checked = Boolean(savedOpts.llm_format);
   llmModelInput.value = (savedOpts.llm_model || "").trim();
+  llmApiKeyInput.value = (savedOpts.llm_api_key || "").trim();
 }
 
 async function saveSettings() {
@@ -68,6 +68,7 @@ async function saveSettings() {
   const termux = (termuxInput.value || "").trim();
   const llmFormat = llmFormatBox.checked;
   const llmModel = (llmModelInput.value || "").trim();
+  const llmApiKey = (llmApiKeyInput.value || "").trim();
   
   const res = await browser.storage.local.get("savedOptions");
   const existing = res.savedOptions || {};
@@ -80,7 +81,8 @@ async function saveSettings() {
       subfolder,
       termux_copy_dir: termux,
       llm_format: llmFormat,
-      llm_model: llmModel
+      llm_model: llmModel,
+      llm_api_key: llmApiKey
     }
   });
 }
@@ -92,6 +94,7 @@ subfolderInput.addEventListener("change", saveSettings);
 termuxInput.addEventListener("change", saveSettings);
 llmFormatBox.addEventListener("change", saveSettings);
 llmModelInput.addEventListener("change", saveSettings);
+llmApiKeyInput.addEventListener("change", saveSettings);
 
 attachCapture(downloadInput);
 attachCapture(queueInput);
