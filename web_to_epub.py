@@ -3996,14 +3996,21 @@ class LLMHelper:
             log.warning("No API keys found (GEMINI/OPENROUTER/OPENAI). Skipping LLM format.")
             return text
 
-        # Default prompt
-        prompt = (
-            "You are an expert editor. Please format the following YouTube transcript into a readable article. "
-            "Fix punctuation, capitalization, and paragraph breaks. "
-            "Do not summarize; keep the full content but make it flow like a written piece. "
-            "Remove filler words like 'um', 'uh', 'like' where appropriate.\\n\\n"
-            f"{text}"
-        )
+        # Determine Model
+        model = model or os.getenv("LLM_MODEL")
+
+        # Prepare Prompt
+        custom_prompt = os.getenv("LLM_PROMPT")
+        if custom_prompt:
+            prompt = custom_prompt.replace("{text}", text)
+        else:
+            prompt = (
+                "You are an expert editor. Please format the following YouTube transcript into a readable article. "
+                "Fix punctuation, capitalization, and paragraph breaks. "
+                "Do not summarize; keep the full content but make it flow like a written piece. "
+                "Remove filler words like 'um', 'uh', 'like' where appropriate.\\n\\n"
+                f"{text}"
+            )
 
         try:
             # Google Gemini (REST)
