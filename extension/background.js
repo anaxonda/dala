@@ -107,7 +107,8 @@ async function downloadFromShortcut(url, html) {
         fetch_assets: false,
         termux_copy_dir,
         llm_format: !!opts.llm_format,
-        llm_model: (opts.llm_model || "").trim() || null
+        llm_model: (opts.llm_model || "").trim() || null,
+        llm_api_key: (opts.llm_api_key || "").trim() || null
     };
     await processDownloadWithAssets(payload, false);
 }
@@ -169,7 +170,8 @@ async function downloadSingleFromContext(url) {
         fetch_assets: false,
         termux_copy_dir,
         llm_format: !!opts.llm_format,
-        llm_model: (opts.llm_model || "").trim() || null
+        llm_model: (opts.llm_model || "").trim() || null,
+        llm_api_key: (opts.llm_api_key || "").trim() || null
     };
     await processDownloadWithAssets(payload, false);
 }

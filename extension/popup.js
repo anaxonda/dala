@@ -507,7 +507,8 @@ async function preparePayload(urls, bundleTitle) {
         fetch_assets: shouldFetchAssets,
         termux_copy_dir: (savedOpts.termux_copy_dir || "").trim() || null,
         llm_format: !!savedOpts.llm_format,
-        llm_model: (savedOpts.llm_model || "").trim() || null
+        llm_model: (savedOpts.llm_model || "").trim() || null,
+        llm_api_key: (savedOpts.llm_api_key || "").trim() || null
     };
 }
 
