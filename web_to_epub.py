@@ -13,6 +13,7 @@
 #   "Pillow>=9.0.0",
 #   "PyYAML>=6.0",
 #   "youtube-transcript-api>=0.6.0",
+#   "python-dotenv>=1.0.0",
 # ]
 # ///
 
@@ -55,9 +56,13 @@ try:
     from tqdm.asyncio import tqdm_asyncio
     from tqdm import tqdm
     from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+    from dotenv import load_dotenv
 except ImportError as e:
     print(f"Error: Missing dependency. Please run with 'uv run'. Details: {e}", file=sys.stderr)
     sys.exit(1)
+
+# Load environment variables from .env file
+load_dotenv()
 
 try:
     from PIL import Image as PillowImage
@@ -128,6 +133,7 @@ class ConversionOptions:
     page_spec: Optional[List[int]] = None
     llm_format: bool = False
     llm_model: Optional[str] = None
+    llm_api_key: Optional[str] = None
 
 @dataclass
 class Source:
@@ -3966,14 +3972,29 @@ class EpubWriter:
 
 class LLMHelper:
     @staticmethod
-    async def format_transcript(text: str, model: Optional[str] = None) -> str:
+    async def format_transcript(text: str, model: Optional[str] = None, api_key: Optional[str] = None) -> str:
         """Formats text using an LLM if API key is present."""
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                log.warning("No GEMINI_API_KEY or OPENAI_API_KEY found. Skipping LLM format.")
-                return text
+        gemini_key = api_key or os.getenv("GEMINI_API_KEY")
+        openrouter_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        openai_key = api_key or os.getenv("OPENAI_API_KEY")
+
+        # Heuristic to detect key type if passed generically
+        passed_key_is_gemini = api_key and ("AIza" in api_key)
+        passed_key_is_sk = api_key and (api_key.startswith("sk-") or "openrouter" in api_key) # Loose check
+
+        if api_key:
+            if passed_key_is_gemini:
+                gemini_key = api_key
+                openrouter_key = None
+                openai_key = None
+            else:
+                gemini_key = None
+                openrouter_key = api_key # Assume OpenRouter/OpenAI compatible if not Gemini
+                openai_key = api_key
+
+        if not (gemini_key or openrouter_key or openai_key):
+            log.warning("No API keys found (GEMINI/OPENROUTER/OPENAI). Skipping LLM format.")
+            return text
 
         # Default prompt
         prompt = (
@@ -3985,9 +4006,9 @@ class LLMHelper:
         )
 
         try:
-            # Simple Google Gemini API call via requests (REST)
-            if "GEMINI" in os.environ.get("GEMINI_API_KEY", "") or (api_key and "AIza" in api_key): # Heuristic
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model or 'gemini-1.5-flash'}:generateContent?key={api_key}"
+            # Google Gemini (REST)
+            if gemini_key:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model or 'gemini-1.5-flash'}:generateContent?key={gemini_key}"
                 payload = {"contents": [{"parts": [{"text": prompt}]}]}
                 async with aiohttp.ClientSession() as session:
                     async with session.post(url, json=payload) as resp:
@@ -3996,9 +4017,45 @@ class LLMHelper:
                             return data['candidates'][0]['content']['parts'][0]['text']
                         else:
                             log.error(f"Gemini API Error: {resp.status} {await resp.text()}")
+                            if not (openrouter_key or openai_key): return text
 
-            # Fallback to OpenAI-style (or if specified) - Stub for now or generic usage
-            # ...
+            # OpenAI Compatible (OpenRouter / OpenAI)
+            active_key = openrouter_key or openai_key
+            base_url = "https://openrouter.ai/api/v1" if openrouter_key and not openai_key else "https://api.openai.com/v1"
+            if "openrouter" in (model or ""): base_url = "https://openrouter.ai/api/v1"
+            
+            # If we have an explicit passed key that isn't Gemini, assume it works with the requested model/endpoint
+            if api_key and not passed_key_is_gemini:
+                active_key = api_key
+                # If model starts with 'google/' or 'anthropic/', likely OpenRouter
+                if model and ("/" in model): base_url = "https://openrouter.ai/api/v1"
+
+            target_model = model or ("google/gemini-flash-1.5" if "openrouter" in base_url else "gpt-3.5-turbo")
+            
+            headers = {
+                "Authorization": f"Bearer {active_key}",
+                "Content-Type": "application/json"
+            }
+            if "openrouter" in base_url:
+                headers["HTTP-Referer"] = "https://github.com/loki/epub_downloader"
+                headers["X-Title"] = "EPUB Downloader"
+
+            payload = {
+                "model": target_model,
+                "messages": [
+                    {"role": "system", "content": "You are a helpful editor."},
+                    {"role": "user", "content": prompt}
+                ]
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(f"{base_url}/chat/completions", headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data['choices'][0]['message']['content']
+                    else:
+                        log.error(f"LLM API Error ({base_url}): {resp.status} {await resp.text()}")
+
         except Exception as e:
             log.error(f"LLM Format failed: {e}")
         
@@ -4047,14 +4104,13 @@ class YouTubeDriver(BaseDriver):
         loop = asyncio.get_running_loop()
         transcript_list = []
         try:
+            # Using instance method fetch() which returns a FetchedTranscript object, then converting to raw dicts
             transcript_list = await loop.run_in_executor(
                 None, 
-                lambda: YouTubeTranscriptApi.get_transcript(video_id)
+                lambda: YouTubeTranscriptApi().fetch(video_id).to_raw_data()
             )
         except (TranscriptsDisabled, NoTranscriptFound) as e:
             log.warning(f"No transcript available: {e}")
-            # Try auto-generated? get_transcript usually fetches what's available.
-            # Could list_transcripts() to find others, but sticking to default for now.
         except Exception as e:
             log.error(f"Transcript fetch error: {e}")
 
@@ -4063,20 +4119,22 @@ class YouTubeDriver(BaseDriver):
             return None
 
         # 3. Process Text
-        full_text = " ".join([t['text'] for t in transcript_list])
-        full_text = html.unescape(full_text)
-
         if options.llm_format:
+            full_text = " ".join([t['text'] for t in transcript_list])
+            full_text = html.unescape(full_text)
             log.info("Formatting transcript with LLM...")
-            full_text = await LLMHelper.format_transcript(full_text, options.llm_model)
+            final_text = await LLMHelper.format_transcript(full_text, options.llm_model, options.llm_api_key)
+            # Wrap in paragraphs if LLM returned plain text block (LLMs usually add newlines)
+            if "<p>" not in final_text:
+                final_text = "".join(f"<p>{p.strip()}</p>" for p in final_text.split('\n\n') if p.strip())
+        else:
+            # Basic cleanup using timestamps
+            final_text = self._basic_transcript_cleanup(transcript_list)
 
         # 4. Build Chapter
         assets = []
         cover_image_html = ""
         if not options.no_images and thumb_url:
-            # We want the thumbnail as a cover or lede image
-            # Reuse ImageProcessor logic?
-            # Manually fetch to ensure we get it
             headers, data, err = await ImageProcessor.fetch_image_data(session, thumb_url)
             if data:
                 mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(thumb_url, headers, data)
@@ -4087,16 +4145,7 @@ class YouTubeDriver(BaseDriver):
                     assets.append(asset)
                     cover_image_html = f'<div class="img-block"><img src="{fname}" alt="Thumbnail" class="epub-image"/></div><hr/>'
 
-        # Basic formatting if no LLM (just paragraphs every N chars or breaks?)
-        # For now, just one blob if no LLM, or maybe split by time?
-        # Let's simple-split by double spaces or simple heuristic if LLM didn't run.
-        if not options.llm_format:
-            # Simple cleanup: capitalize first letters of sentences (heuristic)
-            # full_text = ". ".join(s.capitalize() for s in full_text.split(". "))
-            pass
-
-        # Wrap in paragraphs
-        content_html = f"{cover_image_html}<div class='transcript-body'><p>{full_text}</p></div>"
+        content_html = f"{cover_image_html}<div class='transcript-body'>{final_text}</div>"
         
         final_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head>
         <body><h1>{title}</h1><div class="post-meta"><p><strong>Source:</strong> <a href="{url}">{url}</a></p><p><strong>Channel:</strong> {author}</p></div>{content_html}</body></html>"""
@@ -4114,6 +4163,38 @@ class YouTubeDriver(BaseDriver):
             images=assets, 
             toc_structure=[epub.Link("transcript.xhtml", title, "transcript")]
         )
+
+    def _basic_transcript_cleanup(self, transcript_list: List[Dict]) -> str:
+        """Merges lines and creates paragraphs based on silence gaps (>2s)."""
+        paragraphs = []
+        current_para = []
+        last_end = 0
+
+        for item in transcript_list:
+            text = html.unescape(item['text']).replace('\n', ' ').strip()
+            if not text: continue
+            
+            start = item['start']
+            
+            # If gap > 2 seconds, start new paragraph
+            if current_para and (start - last_end > 2.0):
+                # Join sentences, try to capitalize first letter
+                joined = " ".join(current_para)
+                if joined:
+                    joined = joined[0].upper() + joined[1:]
+                paragraphs.append(f"<p>{joined}</p>")
+                current_para = []
+
+            current_para.append(text)
+            last_end = start + item['duration']
+
+        if current_para:
+            joined = " ".join(current_para)
+            if joined:
+                joined = joined[0].upper() + joined[1:]
+            paragraphs.append(f"<p>{joined}</p>")
+        
+        return "".join(paragraphs)
 
     def _extract_video_id(self, url):
         """Extracts video ID from various YouTube URL formats."""
@@ -4253,6 +4334,7 @@ async def async_main():
     parser.add_argument("--css", help="Custom CSS file to inject")
     parser.add_argument("--llm", action="store_true", dest="llm_format", help="Format transcript using LLM (requires GEMINI_API_KEY)")
     parser.add_argument("--llm-model", help="Specify LLM model (default: gemini-1.5-flash)")
+    parser.add_argument("--api-key", help="API Key for LLM (overrides env vars)")
     return parser.parse_args()
 
 async def main():
@@ -4279,7 +4361,8 @@ async def main():
         max_posts=args.max_posts,
         page_spec=parse_page_spec(args.pages),
         llm_format=args.llm_format,
-        llm_model=args.llm_model
+        llm_model=args.llm_model,
+        llm_api_key=args.api_key
     )
 
     # Load cookies once if provided
