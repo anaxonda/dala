@@ -3049,7 +3049,10 @@ class WordPressDriver(BaseDriver):
             classes = li.get("class", [])
             if "comment" not in classes and "pingback" not in classes: continue
             
-            author_tag = li.select_one('.comment-author .fn, .comment-author cite')
+            # Author: Try standard, then relaxed selectors
+            author_tag = li.select_one('.comment-author .fn, .comment-author cite, .comment-meta .fn, cite.fn')
+            
+            # Date: Try time tag, then fallback to link text in metadata
             date_tag = li.select_one('.comment-metadata time, .comment-meta time')
             
             author = author_tag.get_text(strip=True) if author_tag else "Anonymous"
@@ -3061,6 +3064,20 @@ class WordPressDriver(BaseDriver):
                     dt = datetime.fromisoformat(dt_str)
                     time_val = dt.timestamp()
                 except: pass
+            elif not time_val:
+                # Fallback: look for a date link text (common in older WP themes)
+                date_link = li.select_one('.comment-metadata a, .comment-meta a')
+                if date_link:
+                    dtext = date_link.get_text(strip=True)
+                    try:
+                        # Try parsing common WP date formats "November 27, 2025 at 12:38 am"
+                        # This is a bit brittle but better than 0
+                        # Remove "at" if present
+                        clean_dtext = dtext.replace(" at ", " ")
+                        dt = datetime.strptime(clean_dtext, "%B %d, %Y %I:%M %p")
+                        time_val = dt.timestamp()
+                    except:
+                        pass
 
             # Prefer content only to avoid duplicating metadata (avatars)
             body = li.select_one('.comment-content')
