@@ -142,7 +142,8 @@ async def convert(req: ConversionRequest):
 
         core.EpubWriter.write(final_book, tmp_path)
         filename = f"{core.sanitize_filename(final_book.title)}.epub"
-        print(f"✅ Sending: {filename}")
+        print(f"✅ Generated EPUB at: {tmp_path}")
+        print(f"✅ Sending as: {filename}")
 
         # If running inside Termux with shared storage mounted, drop a copy to Downloads
         termux_dl = (req.termux_copy_dir or "").strip() or "/data/data/com.termux/files/home/storage/downloads"

@@ -318,6 +318,7 @@ async function processDownloadCore(payload, isBundle) {
 
         if (canDownload) {
             try {
+                console.log(`Attempting download: URL=${url}, Filename=${targetPath}`);
                 await browser.downloads.download({
                     url: url,
                     filename: targetPath,
@@ -326,7 +327,13 @@ async function processDownloadCore(payload, isBundle) {
                 });
                 downloaded = true;
             } catch (e) {
-                console.warn("downloads API failed; will open blob in new tab", e);
+                console.error("downloads API failed for", targetPath, e);
+                browser.notifications.create({
+                    type: "basic",
+                    iconUrl: "icon.png",
+                    title: "Download Save Failed",
+                    message: `Browser refused to save '${targetPath}'. Error: ${e.message || e}`
+                });
             }
         } else {
             console.warn("downloads API unavailable; will open blob in new tab");
