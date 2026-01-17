@@ -63,6 +63,21 @@ browser.runtime.onMessage.addListener((message, sender) => {
     if (message.action === "download") {
         processDownloadWithAssets(message.payload, message.isBundle);
         return true; 
+    } else if (message.action === "init_download") {
+        preparePayloadFromBackground(message.urls, message.title, message.isBundle)
+            .then(payload => processDownloadWithAssets(payload, message.isBundle))
+            .catch(e => {
+                console.error("Preparation failed", e);
+                browser.notifications.create({
+                    type: "basic",
+                    iconUrl: "icon.png",
+                    title: "Preparation Failed",
+                    message: e.message
+                });
+                browser.browserAction.setBadgeText({ text: "ERR" });
+                browser.browserAction.setBadgeBackgroundColor({ color: "red" });
+            });
+        return true;
     } else if (message.action === "cancel-download") {
         cancelDownload();
     } else if (message.action === "fetch-assets") {
@@ -85,6 +100,171 @@ browser.runtime.onMessage.addListener((message, sender) => {
         }
     }
 });
+
+function getPageHTML() { 
+    return document.documentElement.outerHTML; 
+}
+
+async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
+    browser.browserAction.setBadgeText({ text: "PREP" });
+    browser.browserAction.setBadgeBackgroundColor({ color: "#FFA500" });
+
+    const savedOpts = (await browser.storage.local.get("savedOptions")).savedOptions || {};
+    
+    const options = {
+        no_comments: !!savedOpts.no_comments,
+        no_article: !!savedOpts.no_article,
+        no_images: !!savedOpts.no_images,
+        archive: !!savedOpts.archive,
+        summary: !!savedOpts.summary,
+        include_cookies: !!savedOpts.include_cookies,
+        forum: !!savedOpts.forum,
+        pages: (savedOpts.pages || "").trim(),
+        max_pages: savedOpts.max_pages ? parseInt(savedOpts.max_pages, 10) || null : null
+    };
+
+    const sources = [];
+    const page_spec = parsePageSpecInput(options.pages);
+    const max_pages = options.max_pages;
+    const include_assets = options.include_cookies;
+    const is_forum = options.forum;
+
+    let allTabs = [];
+    try {
+        allTabs = await browser.tabs.query({});
+    } catch(e) {
+        console.warn("Cannot query tabs for HTML injection");
+    }
+
+    for (const url of urls) {
+        console.log(`Processing payload for: ${url}`);
+        let html = null;
+        const match = allTabs.find(t => t.url === url);
+
+        if (match) {
+            try {
+                if (match.status !== "complete") {
+                   await new Promise(r => setTimeout(r, 1000));
+                }
+                
+                console.log(`Injecting script into tab ${match.id}...`);
+                const results = await new Promise((resolve, reject) => {
+                    chrome.scripting.executeScript({
+                        target: { tabId: match.id },
+                        func: getPageHTML
+                    }, (res) => {
+                        if (chrome.runtime.lastError) resolve(null); // resolve null on error
+                        else resolve(res);
+                    });
+                });
+
+                if (results && results[0] && results[0].result) {
+                    html = results[0].result;
+                    console.log("Injecting HTML for:", url);
+                }
+            } catch (e) {
+                console.log("Could not grab HTML (using fallback):", url, e);
+            }
+        }
+        
+        let cookies = null;
+        let assets = [];
+        if (include_assets) {
+            cookies = await getCookiesForUrl(url);
+            if (is_forum && match) {
+                try {
+                    assets = await scrapeAssetsFromTab(match.id, url);
+                    console.log(`Scraped ${assets.length} assets from DOM for ${url}`);
+                } catch (e) {
+                    console.warn("DOM asset scrape failed", e);
+                }
+            }
+        }
+        sources.push({ url: url, html: html, cookies: cookies, assets: assets, is_forum: is_forum });
+    }
+
+    const shouldFetchAssets = include_assets && is_forum;
+    
+    return {
+        sources: sources,
+        bundle_title: bundleTitle,
+        no_comments: options.no_comments,
+        no_article: options.no_article,
+        no_images: options.no_images,
+        archive: options.archive,
+        summary: options.summary,
+        max_pages: max_pages,
+        page_spec: page_spec && page_spec.length ? page_spec : null,
+        fetch_assets: shouldFetchAssets,
+        termux_copy_dir: (savedOpts.termux_copy_dir || "").trim() || null,
+        llm_format: !!savedOpts.llm_format,
+        llm_model: (savedOpts.llm_model || "").trim() || null,
+        llm_api_key: (savedOpts.llm_api_key || "").trim() || null
+    };
+}
+
+function scrapeImagesFunc() {
+    const imgs = Array.from(document.querySelectorAll('.message-body img'));
+    return imgs.map(img => {
+        const srcset = img.getAttribute('data-srcset') || img.getAttribute('srcset');
+        const dataUrl = img.getAttribute('data-url');
+        const src = img.getAttribute('data-src') || img.getAttribute('src');
+        const a = img.closest('a');
+        const viewer = a && a.href ? a.href : null;
+        return {src, srcset, dataUrl, viewer};
+    });
+}
+
+async function scrapeAssetsFromTab(tabId, refererUrl) {
+    try {
+        const results = await new Promise((resolve, reject) => {
+            chrome.scripting.executeScript({
+                target: { tabId: tabId },
+                func: scrapeImagesFunc
+            }, (res) => {
+                if (chrome.runtime.lastError) resolve(null);
+                else resolve(res);
+            });
+        });
+
+        const assets = [];
+        if (results && results[0] && results[0].result) {
+            for (const rec of results[0].result) {
+                const best = pickBestImageCandidate(rec, refererUrl);
+                if (best && best.url) assets.push(best);
+            }
+        }
+        return assets;
+    } catch (e) {
+        console.warn('scrapeAssetsFromTab failed', e);
+        return [];
+    }
+}
+
+function pickBestImageCandidate(rec, baseUrl) {
+    const candidates = [];
+    if (rec.dataUrl) candidates.push({u: rec.dataUrl, w: 99999});
+    if (rec.srcset) {
+        const parts = rec.srcset.split(',').map(p => p.trim()).filter(Boolean);
+        for (const p of parts) {
+            const [u, w] = p.split(/\\s+/);
+            let width = parseInt((w || '').replace('w',''), 10);
+            if (isNaN(width)) width = 0;
+            candidates.push({u, w: width});
+        }
+    }
+    if (rec.src) candidates.push({u: rec.src, w: 0});
+    let best = null;
+    let maxw = -1;
+    for (const c of candidates) {
+        let abs = null;
+        try { abs = new URL(c.u, baseUrl).href; } catch(e) { abs = null; }
+        if (!abs) continue;
+        if (c.w > maxw) { maxw = c.w; best = abs; }
+    }
+    if (!best) return null;
+    return {original_url: best, url: best};
+}
 
 async function getCookiesForUrl(url) {
     try {

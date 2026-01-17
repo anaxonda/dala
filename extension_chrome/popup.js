@@ -4,23 +4,6 @@ function isValidUrl(url) {
     return url && url.startsWith("http") && !url.includes("localhost");
 }
 
-// Injection functions for MV3
-function getPageHTML() { 
-    return document.documentElement.outerHTML; 
-}
-
-function scrapeImages() {
-    const imgs = Array.from(document.querySelectorAll('.message-body img'));
-    return imgs.map(img => {
-        const srcset = img.getAttribute('data-srcset') || img.getAttribute('srcset');
-        const dataUrl = img.getAttribute('data-url');
-        const src = img.getAttribute('data-src') || img.getAttribute('src');
-        const a = img.closest('a');
-        const viewer = a && a.href ? a.href : null;
-        return {src, srcset, dataUrl, viewer};
-    });
-}
-
 document.addEventListener('DOMContentLoaded', async () => {
     // --- 1. Attach Event Listeners Immediately ---
     try {
@@ -188,74 +171,7 @@ function parsePageSpecInput(spec) {
     return arr.length ? arr : null;
 }
 
-async function fetchAssetsFromPage(tabId, refererUrl) {
-    try {
-        // MV3: Use scripting API with function reference
-        const results = await new Promise((resolve, reject) => {
-            chrome.scripting.executeScript({
-                target: { tabId: tabId },
-                func: scrapeImages
-            }, (res) => {
-                if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
-                else resolve(res);
-            });
-        });
 
-        const assets = [];
-        // results is array of {frameId, result}
-        if (results && results[0] && results[0].result) {
-            for (const rec of results[0].result) {
-                const best = pickBestImageCandidate(rec, refererUrl);
-                if (!best) continue;
-            }
-        }
-        return assets;
-    } catch (e) {
-        console.warn('fetchAssetsFromPage failed', e);
-        return [];
-    }
-}
-
-function pickBestImageCandidate(rec, baseUrl) {
-    const candidates = [];
-    if (rec.dataUrl) candidates.push({u: rec.dataUrl, w: 99999});
-    if (rec.srcset) {
-        const parts = rec.srcset.split(',').map(p => p.trim()).filter(Boolean);
-        for (const p of parts) {
-            const [u, w] = p.split(/\\s+/);
-            let width = parseInt((w || '').replace('w',''), 10);
-            if (isNaN(width)) width = 0;
-            candidates.push({u, w: width});
-        }
-    }
-    if (rec.src) candidates.push({u: rec.src, w: 0});
-    let best = null;
-    let maxw = -1;
-    for (const c of candidates) {
-        let abs = null;
-        try { abs = new URL(c.u, baseUrl).href; } catch(e) { abs = null; }
-        if (!abs) continue;
-        if (c.w > maxw) { maxw = c.w; best = abs; }
-    }
-    if (!best) return null;
-    return {url: best};
-}
-
-async function fetchPageAssets(url, cookies, page_spec, max_pages) {
-    const assets = [];
-    try {
-        const resp = await browser.runtime.sendMessage({
-            action: "fetch-assets",
-            url,
-            page_spec,
-            max_pages
-        });
-        if (resp && resp.assets) return resp.assets;
-    } catch (e) {
-        console.warn("fetchPageAssets failed", e);
-    }
-    return assets;
-}
 
 async function handleCookieToggle() {
     const box = document.getElementById('opt-cookies');
@@ -421,122 +337,6 @@ function showStatus(msg) {
     setTimeout(() => el.style.backgroundColor = "#eee", 500);
 }
 
-// --- PAYLOAD BUILDER (THE HYBRID ENGINE) ---
-// Combines URLs with raw HTML from open tabs to bypass paywalls
-async function preparePayload(urls, bundleTitle) {
-    const savedOpts = (await browser.storage.local.get("savedOptions")).savedOptions || {};
-    const options = getOptions();
-    const sources = [];
-    const page_spec = parsePageSpecInput(options.pages);
-    const max_pages = options.max_pages ? parseInt(options.max_pages, 10) || null : null;
-    const include_assets = options.include_cookies;
-    const is_forum = !!options.forum;
-    let hasForum = is_forum;
-
-    // 1. Get all tabs to check for matches
-    let allTabs = [];
-    try {
-        allTabs = await browser.tabs.query({});
-    } catch(e) {
-        console.warn("Cannot query tabs for HTML injection");
-    }
-
-    // 2. Iterate requested URLs
-    for (const url of urls) {
-        console.log(`Processing payload for: ${url}`);
-        let html = null;
-        // Find a tab that matches this URL and is fully loaded
-        const match = allTabs.find(t => t.url === url);
-
-        if (match) {
-            try {
-                if (match.status !== "complete") {
-                    console.log("⏳ Waiting for tab to fully load...");
-                    // Wait for completion OR timeout after 5s
-                    await new Promise(resolve => {
-                        let isResolved = false;
-                        const t = setTimeout(() => {
-                            if (!isResolved) {
-                                isResolved = true;
-                                browser.tabs.onUpdated.removeListener(listener);
-                                resolve();
-                            }
-                        }, 5000);
-                        const listener = (tabId, changeInfo) => {
-                            if (tabId === match.id && changeInfo.status === "complete") {
-                                if (!isResolved) {
-                                    isResolved = true;
-                                    clearTimeout(t);
-                                    browser.tabs.onUpdated.removeListener(listener);
-                                    resolve();
-                                }
-                            }
-                        };
-                        browser.tabs.onUpdated.addListener(listener);
-                    });
-                }
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                // Inject script to steal DOM
-                console.log(`Injecting script into tab ${match.id}...`);
-                
-                // MV3: chrome.scripting.executeScript
-                const results = await Promise.race([
-                    new Promise((resolve, reject) => {
-                        chrome.scripting.executeScript({
-                            target: { tabId: match.id },
-                            func: getPageHTML
-                        }, (res) => {
-                            if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
-                            else resolve(res);
-                        });
-                    }),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error("Script injection timed out")), 5000))
-                ]);
-
-                console.log("Script injection complete.");
-                // results is array of {frameId, result}
-                if (results && results[0] && results[0].result) {
-                    html = results[0].result;
-                    console.log("Injecting HTML for:", url);
-                }
-            } catch (e) {
-                // Fails on restricted domains (addons.mozilla.org) or discarded tabs
-                console.log("Could not grab HTML (using fallback):", url, e);
-            }
-        }
-        let cookies = null;
-        let assets = [];
-        if (include_assets) {
-            cookies = await getCookiesForUrl(url);
-            if (is_forum && match) {
-                assets = await fetchAssetsFromPage(match.id, url) || [];
-            }
-            if (is_forum && assets.length === 0) {
-                assets = await fetchPageAssets(url, cookies, page_spec, max_pages);
-            }
-        }
-        sources.push({ url: url, html: html, cookies: cookies, assets: assets, is_forum: is_forum });
-    }
-
-    const shouldFetchAssets = include_assets && hasForum;
-    return {
-        sources: sources,
-        bundle_title: bundleTitle,
-        no_comments: options.no_comments,
-        no_article: options.no_article,
-        no_images: options.no_images,
-        archive: options.archive,
-        summary: options.summary,
-        max_pages: max_pages,
-        page_spec: page_spec && page_spec.length ? page_spec : null,
-        fetch_assets: shouldFetchAssets,
-        termux_copy_dir: (savedOpts.termux_copy_dir || "").trim() || null,
-        llm_format: !!savedOpts.llm_format,
-        llm_model: (savedOpts.llm_model || "").trim() || null,
-        llm_api_key: (savedOpts.llm_api_key || "").trim() || null
-    };
-}
-
 // --- DOWNLOAD TRIGGERS ---
 async function safeDownloadSingle() {
     try {
@@ -550,13 +350,19 @@ async function safeDownloadSingle() {
             return;
         }
 
-        showStatus("Grabbing content...");
+        await saveOptions();
+        showStatus("Initiating download...");
         const title = document.getElementById('single-title').value;
-        const payload = await preparePayload([currentTab.url], title);
-
-        browser.runtime.sendMessage({ action: "download", payload: payload, isBundle: false });
+        
+        browser.runtime.sendMessage({ 
+            action: "init_download", 
+            urls: [currentTab.url],
+            title: title,
+            isBundle: false 
+        });
+        
         showStatus("Started in background...");
-        window.close();
+        setTimeout(() => window.close(), 1000);
     } catch (e) {
         showStatus("Error: " + e.message);
         console.error(e);
@@ -567,6 +373,8 @@ async function safeDownloadBundle() {
     try {
         console.log("Starting bundle download...");
         await saveQueueFromEditor();
+        await saveOptions();
+        
         const res = await browser.storage.local.get("urlQueue");
         const queue = res.urlQueue || [];
 
@@ -575,15 +383,19 @@ async function safeDownloadBundle() {
             return;
         }
 
-        showStatus("Preparing bundle...");
+        showStatus("Initiating bundle...");
         const title = document.getElementById('bundle-title').value;
-        const payload = await preparePayload(queue, title);
-        console.log("Payload prepared. Sending message to background...");
-
-        browser.runtime.sendMessage({ action: "download", payload: payload, isBundle: true });
+        
+        browser.runtime.sendMessage({ 
+            action: "init_download", 
+            urls: queue,
+            title: title,
+            isBundle: true 
+        });
+        
         console.log("Message sent.");
         showStatus("Bundle started...");
-        window.close();
+        setTimeout(() => window.close(), 1000);
     } catch (e) {
         showStatus("Error: " + e.message);
         console.error(e);
