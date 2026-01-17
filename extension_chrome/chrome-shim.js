@@ -3,13 +3,17 @@ if (!globalThis.browser) {
 
     const wrapAsync = (fn, thisArg) => (...args) => {
         return new Promise((resolve, reject) => {
-            fn.call(thisArg, ...args, (result) => {
-                if (chrome.runtime.lastError) {
-                    reject(chrome.runtime.lastError);
-                } else {
-                    resolve(result);
-                }
-            });
+            try {
+                fn.call(thisArg, ...args, (result) => {
+                    if (chrome.runtime.lastError) {
+                        reject(chrome.runtime.lastError);
+                    } else {
+                        resolve(result);
+                    }
+                });
+            } catch (e) {
+                reject(e);
+            }
         });
     };
 
