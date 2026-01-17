@@ -75,6 +75,111 @@ class ConversionRequest(BaseModel):
     llm_api_key: Optional[str] = None
     summary: bool = False
 
+class ScanRequest(BaseModel):
+    html: str
+    url: str
+
+@app.post("/helper/extract-links")
+async def extract_links(req: ScanRequest):
+    """
+    Helper for Chrome Extension (MV3) which cannot use DOMParser.
+    Extracts potential image assets and next-page links from HTML.
+    """
+    from bs4 import BeautifulSoup
+    from urllib.parse import urljoin, urlparse
+    import re
+
+    soup = BeautifulSoup(req.html, 'html.parser')
+    base_url = req.url
+    
+    # 1. Extract Images (matching background.js logic)
+    images = []
+    seen = set()
+    
+    # Selectors for forum posts
+    img_tags = soup.select(".message-body img, .messageContent img, .bbWrapper img, .bbImage img")
+    # Containers fallback
+    if not img_tags:
+        containers = soup.select("article.message, .message--post, [data-lb-id]")
+        for c in containers:
+            img_tags.extend(c.find_all("img"))
+
+    for img in img_tags:
+        src = img.get("src") or img.get("data-src")
+        if not src: continue
+        
+        # Skip junk
+        src_lower = src.lower()
+        if any(x in src_lower for x in ["/avatar", "/reaction", "/smilies", "/emoji", "data:image/gif"]):
+            continue
+            
+        parent = img.find_parent("a")
+        viewer = urljoin(base_url, parent["href"]) if (parent and parent.get("href")) else None
+        
+        # Collect URLs
+        primary = urljoin(base_url, src)
+        
+        if "/attachments/" not in primary and not viewer: 
+            # If it's not an attachment, maybe it's external?
+            pass
+        
+        key = primary.split("?")[0]
+        if key in seen: continue
+        seen.add(key)
+        
+        images.append({
+            "url": primary,
+            "viewer_url": viewer,
+            "filename_hint": src.split("/")[-1]
+        })
+
+    # External images (non-attachment)
+    externals = []
+    for img in img_tags:
+        src = img.get("src") or img.get("data-src")
+        if not src or src.startswith("data:"): continue
+        full = urljoin(base_url, src)
+        if full not in seen:
+            externals.append(full)
+            seen.add(full)
+
+    # 2. Find Next Page
+    next_page = None
+    
+    # <link rel="next">
+    link_next = soup.find("link", attrs={"rel": "next"})
+    if link_next and link_next.get("href"):
+        next_page = urljoin(base_url, link_next.get("href"))
+    
+    if not next_page:
+        # <a>Next</a>
+        for a in soup.find_all("a"):
+            txt = a.get_text(strip=True).lower()
+            if txt in ("next", "next >", "next>"):
+                if a.get("href"):
+                    next_page = urljoin(base_url, a.get("href"))
+                    break
+    
+    # Parse page number from next_url to return int if possible? 
+    # The extension logic expects a URL to fetch, or logic to build it.
+    # The extension builds it: `buildForumPageUrl`.
+    # But `findNextPage` in JS returned an integer page number.
+    # Let's return the integer if we can extract it.
+    
+    next_page_num = None
+    if next_page:
+        m = re.search(r'page[-=_/](\d+)', next_page)
+        if m:
+            try:
+                next_page_num = int(m.group(1))
+            except: pass
+
+    return {
+        "assets": images,
+        "externals": externals,
+        "next_page_num": next_page_num
+    }
+
 @app.get("/ping")
 async def ping(): return {"status": "ok"}
 

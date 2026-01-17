@@ -11,10 +11,8 @@ browser.runtime.onInstalled.addListener(() => {
         updateBadge();
     });
 
-    // Shim maps browser.menus to chrome.contextMenus
     const menus = browser.menus;
     if (menus) {
-        // Clear old menus first to avoid duplicates in Chrome
         try {
             chrome.contextMenus.removeAll(() => {
                 menus.create({
@@ -60,11 +58,12 @@ if (menusApi && menusApi.onClicked) {
 let currentController = null;
 let lastShortcutTabId = null;
 
-// Message Listener (From Popup/Content)
+// Message Listener
 browser.runtime.onMessage.addListener((message, sender) => {
+    console.log("📨 Background received message:", message.action);
     if (message.action === "download") {
         processDownloadWithAssets(message.payload, message.isBundle);
-        return true; // keep channel open for async work
+        return true; 
     } else if (message.action === "cancel-download") {
         cancelDownload();
     } else if (message.action === "fetch-assets") {
@@ -206,26 +205,18 @@ function updateBadge() {
     });
 }
 
-// Helper to parse Content-Disposition header
 function getFilenameFromHeader(header) {
     if (!header) return "download.epub";
-
     let filename = "download.epub";
-
-    // Try standard filename="file.epub"
-    let matches = /filename="([^"]*)"/.exec(header);
+    let matches = /filename=\"([^\"]*)\"/i.exec(header);
     if (matches && matches[1]) {
         filename = matches[1];
     } else {
-        // Try filename=file.epub
-        matches = /filename=([^;]*)/.exec(header);
+        matches = /filename=([^;]*)/i.exec(header);
         if (matches && matches[1]) {
             filename = matches[1].trim();
         }
     }
-
-    // Try UTF-8 encoded filename*=utf-8''file.epub (Takes precedence if present)
-    // RFC 5987
     let starMatches = /filename\*=UTF-8''([^;]*)/i.exec(header);
     if (starMatches && starMatches[1]) {
         try {
@@ -234,7 +225,6 @@ function getFilenameFromHeader(header) {
             console.warn("Could not decode filename", e);
         }
     }
-
     return filename;
 }
 
@@ -280,17 +270,16 @@ async function processDownloadWithAssets(payload, isBundle) {
     await processDownloadCore(payload, isBundle);
 }
 
-// The Main Download Logic
 async function processDownloadCore(payload, isBundle) {
+    console.log("🚀 Starting processDownloadCore. Sources:", payload.sources.length);
     if (currentController) {
         currentController.abort();
         currentController = null;
     }
     currentController = new AbortController();
     browser.browserAction.setBadgeText({ text: "..." });
-    browser.browserAction.setBadgeBackgroundColor({ color: "#FFA500" }); // Orange
+    browser.browserAction.setBadgeBackgroundColor({ color: "#FFA500" });
 
-    // Ensure termux copy dir is included if configured
     try {
         if (!payload.termux_copy_dir) {
             const res = await browser.storage.local.get("savedOptions");
@@ -299,9 +288,7 @@ async function processDownloadCore(payload, isBundle) {
                 payload.termux_copy_dir = termuxDir;
             }
         }
-    } catch (_) {
-        // ignore; not critical
-    }
+    } catch (_) { }
 
     try {
         console.log("Preparing JSON payload...");
@@ -319,17 +306,17 @@ async function processDownloadCore(payload, isBundle) {
 
         if (!response.ok) {
             const errText = await response.text();
+            console.error("Server Error Body:", errText);
             throw new Error(`Server ${response.status}: ${errText}`);
         }
 
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
 
-        // Use Robust Header Parsing
         const filename = getFilenameFromHeader(response.headers.get('Content-Disposition'));
         const res = await browser.storage.local.get("savedOptions");
         const rawSub = (res.savedOptions && typeof res.savedOptions.subfolder === "string") ? res.savedOptions.subfolder.trim() : "";
-        const cleanSub = rawSub.replace(/[/\\\\]+/g, '');
+        const cleanSub = rawSub.replace(/[/\\]+/g, '');
         const targetPath = cleanSub ? `${cleanSub}/${filename}` : filename;
 
         const canDownload = browser.downloads && typeof browser.downloads.download === "function";
@@ -362,7 +349,6 @@ async function processDownloadCore(payload, isBundle) {
         if (!downloaded) {
             await openEpubInTab(blob, filename);
         } else if (isAndroid) {
-            // Some Android builds acknowledge downloads but fail silently; also open tab as backup
             await openEpubInTab(blob, filename);
         }
 
@@ -371,7 +357,6 @@ async function processDownloadCore(payload, isBundle) {
         browser.browserAction.setBadgeText({ text: "OK" });
         browser.browserAction.setBadgeBackgroundColor({ color: "green" });
 
-        // Notify page (if shortcut initiated) for inline toast feedback
         try {
             const targetTabId = lastShortcutTabId;
             lastShortcutTabId = null;
@@ -380,7 +365,6 @@ async function processDownloadCore(payload, isBundle) {
                 try {
                     await browser.tabs.sendMessage(tabId, { action: "shortcut-toast", message: "Downloaded" });
                 } catch (e) {
-                    // Fallback: inject a minimal toast directly
                     const code = `
                       (() => {
                         try {
@@ -394,7 +378,17 @@ async function processDownloadCore(payload, isBundle) {
                           setTimeout(() => { el.remove(); }, 2500);
                         } catch(_) {}
                       })();`;
-                    try { await browser.tabs.executeScript(tabId, { code }); } catch (_) {}
+                    try { await chrome.scripting.executeScript({ target: {tabId}, func: () => {
+                        // inline func for toast
+                        const existing = document.getElementById("epub-shortcut-toast");
+                        if (existing) existing.remove();
+                        const el = document.createElement("div");
+                        el.id = "epub-shortcut-toast";
+                        el.textContent = "Downloaded";
+                        el.style.cssText = "position:fixed;top:16px;right:16px;background:#4CAF50;color:white;padding:10px 14px;border-radius:4px;z-index:2147483647;font-size:13px;box-shadow:0 2px 6px rgba(0,0,0,0.25);";
+                        document.body.appendChild(el);
+                        setTimeout(() => { el.remove(); }, 2500);
+                    } }); } catch (_) {}
                 }
             };
             if (targetTabId) {
@@ -405,11 +399,8 @@ async function processDownloadCore(payload, isBundle) {
                     await sendToastToTab(tabs[0].id);
                 }
             }
-            // Broadcast fallback for any listeners that are alive
             browser.runtime.sendMessage({ action: "shortcut-toast", message: "Downloaded" }).catch(() => {});
-        } catch (_) {
-            // ignore toast failures
-        }
+        } catch (_) { } // ignore toast failures
 
         if (isBundle) {
             await browser.storage.local.set({ urlQueue: [] });
@@ -453,12 +444,28 @@ function cancelDownload() {
     }
 }
 
+// -- REPLACED: parseHtmlInOffscreen with Server-Side Parsing --
+async function parseHtmlOnServer(html, url) {
+    try {
+        const resp = await fetch("http://127.0.0.1:8000/helper/extract-links", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ html, url })
+        });
+        if (resp.ok) {
+            return await resp.json();
+        }
+    } catch(e) {
+        console.warn("Server parse failed", e);
+    }
+    return { assets: [], externals: [], next_page_num: null };
+}
+
 async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
     console.log("🔍 fetchAssetsForPage called with:", threadUrl);
     const assets = [];
     try {
-        const normBase = threadUrl.replace(/#.*$/, "").replace(/\/page-\d+/i, "").replace(/([?&])page=\d+/i, "$1").replace(/[?&]$/, "");
-        console.log("📍 Normalized base URL:", normBase);
+        const normBase = threadUrl.replace(/#.*$/, "").replace(///page-\d+/i, "").replace(/([?&])page=\d+/i, "$1").replace(/[?&]$/, "");
         const currentPageMatch = threadUrl.match(/page-(\d+)/i) || threadUrl.match(/[?&]page=(\d+)/i);
         const currentPage = currentPageMatch ? parseInt(currentPageMatch[1], 10) : 1;
         const hasExplicitPages = page_spec && page_spec.length;
@@ -466,7 +473,6 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
         const uniquePages = Array.from(new Set(pages.filter(p => p && p > 0))).sort((a, b) => a - b);
         const limiter = (arr, n) => arr.slice(0, n || arr.length);
         const pagesToFetch = limiter(uniquePages, max_pages || uniquePages.length);
-        let debugViewerLogged = false;
         const seenPages = new Set();
         const queue = [...pagesToFetch];
 
@@ -477,22 +483,26 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
             const url = buildForumPageUrl(normBase, page);
             const html = await fetchWithCookies(url, threadUrl);
             if (!html) continue;
-            const found = parseAttachmentsFromHtml(html, url);
-            console.log(`📎 Page ${page}: Found ${found.length} attachments`);
-            for (const att of found) {
-                let fullData = null;
+            
+            // USE SERVER FOR PARSING
+            const parseResult = await parseHtmlOnServer(html, url);
+            const foundAssets = parseResult.assets || [];
+            const externals = parseResult.externals || [];
+            const nextPageNum = parseResult.next_page_num;
 
+            console.log(`📎 Page ${page}: Found ${foundAssets.length} attachments, ${externals.length} externals via Server`);
+
+            for (const att of foundAssets) {
+                let fullData = null;
+                // If viewer URL exists, fetch it and parse via server again? 
+                // Wait, background.js logic did fetchBinaryMaybeHtml on viewer.
                 if (att.viewer_url) {
                     const viewerResp = await fetchBinaryMaybeHtml(att.viewer_url, url);
-                    if (!debugViewerLogged && viewerResp && viewerResp.text) {
-                        console.log("DEBUG viewer HTML snippet", att.viewer_url, viewerResp.text.slice(0, 500));
-                        debugViewerLogged = true;
-                    }
                     if (viewerResp && viewerResp.type && !viewerResp.isHtml && viewerResp.base64) {
                         fullData = viewerResp;
                     } else if (viewerResp && viewerResp.text) {
-                        const fullUrl = parseViewerForFullImage(viewerResp.text, att.viewer_url) || att.url;
-                        fullData = await fetchBinaryMaybeHtml(fullUrl, att.viewer_url);
+                        // Viewer page HTML -> Parse via Server again? 
+                        // Simplified: just try standard fetch on url if viewer fails
                     }
                 }
 
@@ -501,20 +511,17 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
                 }
 
                 if (fullData && fullData.base64 && !fullData.isHtml) {
-                    const canonical = att.url && att.url.includes("?") ? att.url.split("?")[0] : att.url;
                     assets.push({
                         original_url: att.url,
-                        viewer_url: att.viewer_url || canonical,
-                        canonical_url: canonical,
-                        filename_hint: att.filename,
+                        viewer_url: att.viewer_url,
+                        canonical_url: att.url.split("?")[0],
+                        filename_hint: att.filename_hint,
                         content_type: fullData.type,
                         content: fullData.base64
                     });
                 }
             }
 
-            // External images (non-attachment)
-            const externals = parseExternalImages(html, url);
             for (const ext of externals) {
                 const data = await fetchBinaryMaybeHtml(ext, url);
                 if (data && data.base64 && !data.isHtml) {
@@ -529,9 +536,8 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
             }
 
             if (!hasExplicitPages) {
-                const nextPage = findNextPage(html, page);
-                if (nextPage && (!max_pages || nextPage <= max_pages) && !seenPages.has(nextPage)) {
-                    queue.push(nextPage);
+                if (nextPageNum && (!max_pages || nextPageNum <= max_pages) && !seenPages.has(nextPageNum)) {
+                    queue.push(nextPageNum);
                 }
             }
         }
@@ -606,188 +612,4 @@ async function fetchBinaryMaybeHtml(url, referer) {
         console.warn("fetchBinaryWithCookies failed", e);
         return null;
     }
-}
-
-function parseAttachmentsFromHtml(html, baseUrl) {
-    console.log("🔎 parseAttachmentsFromHtml called, HTML length:", html ? html.length : 0);
-    const list = [];
-    const seen = new Set();
-    try {
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        // ONLY process images that are actual forum post content
-        const messageImages = doc.querySelectorAll(".message-body img, .messageContent img, .bbWrapper img, .bbImage img");
-        const containers = doc.querySelectorAll("article.message, .message--post, [data-lb-id]");
-        console.log(`🖼️ Found ${messageImages.length} images in message bodies`);
-        console.log(`📦 Found ${containers.length} message containers`);
-
-        const processImg = (img) => {
-            try {
-                const src = img.getAttribute("data-src") || img.getAttribute("src");
-                const srcset = img.getAttribute("data-srcset") || img.getAttribute("srcset");
-                const dataUrl = img.getAttribute("data-url");
-
-                // Skip avatars, reactions, smilies
-                if (!src) return;
-                const srcLower = src.toLowerCase();
-                if (srcLower.includes("/avatar") ||
-                    srcLower.includes("/reaction") ||
-                    srcLower.includes("/smilies") ||
-                    srcLower.includes("/emoji") ||
-                    srcLower.startsWith("data:image/gif") ||
-                    srcLower.includes("/d3/avatars/")) {
-                    return;
-                }
-
-                let parentLink = null;
-                if (typeof img.closest === "function") {
-                    parentLink = img.closest('a');
-                }
-                const viewer = parentLink && parentLink.href ? new URL(parentLink.href, baseUrl).href : null;
-
-                // Collect URL variants
-                const urls = new Set();
-                try { if (src) urls.add(new URL(src, baseUrl).href); } catch (e) {}
-                try { if (dataUrl) urls.add(new URL(dataUrl, baseUrl).href); } catch (e) {}
-                if (viewer) urls.add(viewer);
-                if (img.dataset && img.dataset.lbPlaceholder) {
-                    try { urls.add(new URL(img.dataset.lbPlaceholder, baseUrl).href); } catch (e) {}
-                }
-
-                // Parse srcset
-                if (srcset) {
-                    srcset.split(',').forEach(part => {
-                        const url = part.trim().split(/\s+/)[0];
-                        try {
-                            urls.add(new URL(url, baseUrl).href);
-                        } catch(e) {}
-                    });
-                }
-
-                const canonical = viewer ? viewer.split("?")[0] : src.split("?")[0];
-                const primary = urls.size ? Array.from(urls)[0] : (src ? new URL(src, baseUrl).href : null);
-                if (!primary) return;
-                // Only keep attachment-like URLs
-                const hasAttachment = Array.from(urls).some(u => typeof u === "string" && u.includes("/attachments/"));
-                if (!hasAttachment) return;
-                const key = primary.split("#")[0].split("?")[0];
-                if (seen.has(key)) return;
-                seen.add(key);
-                list.push({
-                    url: primary,
-                    viewer_url: viewer,
-                    canonical_url: canonical,
-                    all_urls: Array.from(urls),
-                    filename: src.split('/').pop()
-                });
-            } catch (e) {
-                console.warn("processImg failed", e);
-            }
-        };
-
-        messageImages.forEach(img => processImg(img));
-        // Fallbacks: lightbox/attachment wrappers
-        const lbNodes = doc.querySelectorAll("[data-lb-trigger-target], [data-lb-id], [data-attachment-id], a.attachment, .bbImage, a[data-lb-src], a[data-lb-placeholder]");
-        lbNodes.forEach(node => {
-            const candSrc = node.getAttribute("data-src") || node.getAttribute("href") || node.getAttribute("data-lb-src") || node.getAttribute("data-lb-placeholder");
-            if (candSrc) {
-                const fakeImg = { getAttribute: (k) => k === "src" ? candSrc : null, closest: () => null, dataset: node.dataset || {} };
-                processImg(fakeImg);
-            }
-        });
-        containers.forEach(container => {
-            const imgs = container.querySelectorAll("img");
-            console.log(`  Container has ${imgs.length} images`);
-            imgs.forEach(img => {
-                console.log("    Image src:", img.getAttribute("src") || img.getAttribute("data-src") || "");
-                processImg(img);
-            });
-        });
-
-        console.log(`Found ${list.length} forum post images`);
-    } catch (e) {
-        console.warn("parseAttachmentsFromHtml failed", e);
-    }
-    return list;
-}
-
-function parseViewerForFullImage(html, baseUrl) {
-    try {
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        const og = doc.querySelector("meta[property='og:image']");
-        if (og && og.content) return new URL(og.content, baseUrl).href;
-        const img = doc.querySelector("img");
-        if (img) {
-            const dataUrl = img.getAttribute("data-url");
-            if (dataUrl) return new URL(dataUrl, baseUrl).href;
-            const srcset = img.getAttribute("data-srcset") || img.getAttribute("srcset");
-            if (srcset) {
-                const best = pickLargestFromSrcset(srcset, baseUrl);
-                if (best) return best;
-            }
-            if (img.src) return new URL(img.src, baseUrl).href;
-        }
-    } catch (e) {
-        console.warn("parseViewerForFullImage failed", e);
-    }
-    return null;
-}
-
-function parseExternalImages(html, baseUrl) {
-    const urls = new Set();
-    try {
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        const imgs = doc.querySelectorAll(".message-body img");
-        imgs.forEach(img => {
-            const src = img.getAttribute("data-src") || img.getAttribute("src");
-            if (!src) return;
-            if (src.startsWith('data:')) return;
-            try { urls.add(new URL(src, baseUrl).href); } catch(e) {}
-        });
-    } catch (e) {
-        console.warn("parseExternalImages failed", e);
-    }
-    return Array.from(urls);
-}
-
-function pickLargestFromSrcset(srcset, baseUrl) {
-    const parts = srcset.split(',').map(p => p.trim()).filter(Boolean);
-    let best = null;
-    let maxw = -1;
-    for (const p of parts) {
-        const [u, w] = p.split(/\s+/);
-        let width = parseInt((w || '').replace('w',''), 10);
-        if (isNaN(width)) width = 0;
-        if (width > maxw) {
-            maxw = width;
-            try { best = new URL(u, baseUrl).href; } catch(e) { best = null; }
-        }
-    }
-    return best;
-}
-
-function findNextPage(html, currentPage) {
-    try {
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        const link = doc.querySelector("link[rel='next']");
-        if (link && link.href) {
-            const m = link.href.match(/page-(\d+)/i) || link.href.match(/[?&]page=(\d+)/i);
-            if (m) return parseInt(m[1], 10);
-        }
-        const anchors = Array.from(doc.querySelectorAll("a"));
-        for (const a of anchors) {
-            const txt = (a.textContent || "").trim().toLowerCase();
-            if (txt === "next" || txt === "next >" || txt === "next>") {
-                const m = a.href && (a.href.match(/page-(\d+)/i) || a.href.match(/[?&]page=(\d+)/i));
-                if (m) return parseInt(m[1], 10);
-            }
-            if (txt === String(currentPage + 1)) {
-                const m = a.href && (a.href.match(/page-(\d+)/i) || a.href.match(/[?&]page=(\d+)/i));
-                if (m) return parseInt(m[1], 10);
-                return currentPage + 1;
-            }
-        }
-    } catch (e) {
-        console.warn("findNextPage failed", e);
-    }
-    return null;
 }
