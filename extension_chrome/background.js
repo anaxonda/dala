@@ -341,13 +341,21 @@ async function processDownloadCore(payload, isBundle) {
                     });
                     downloaded = true;
                 } catch (e2) {
-                    console.error("downloads API failed for", targetPath, e);
-                    browser.notifications.create({
-                        type: "basic",
-                        iconUrl: "icon.png",
-                        title: "Download Save Failed",
-                        message: `Browser refused to save '${targetPath}'. Error: ${e.message || e}`
-                    });
+                    console.warn("Generic filename failed; trying last resort (system default)", e2);
+                    try {
+                        // Last resort: let Chrome decide everything
+                        await browser.downloads.download({ url: url });
+                        downloaded = true;
+                    } catch (e3) {
+                        const msg = e3.message || JSON.stringify(e3);
+                        console.error("All download attempts failed", e3);
+                        browser.notifications.create({
+                            type: "basic",
+                            iconUrl: "icon.png",
+                            title: "Download Save Failed",
+                            message: `Final Error: ${msg}`
+                        });
+                    }
                 }
             }
         } else {
