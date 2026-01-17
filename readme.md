@@ -85,7 +85,7 @@ uv run web_to_epub.py "https://www.trek-lite.com/index.php?threads/arcdome-1.152
 
 - **Recursive Comment Fetching (latest):**
   - **HN + Source Comments:** When a Hacker News post links to a supported site (e.g. Substack), the downloader now fetches *both* the HN comments AND the original article's native comments.
-  - **Unified TOC:** The Table of Contents is structured with the Article at the top, and both comment threads ("Source Comments" and "HN Comments") nested as children for easy navigation.
+  - **Unified TOC:** The Table of Contents is structured with the Article at the top, and both comment threads (dynamically labeled, e.g., "Substack Comments" and "HN Comments") nested as children for easy navigation.
 
 - **Washington Post images (latest):**
   - Extract origin URLs from `imrs.php` proxies and try those first, so WaPo images download reliably.
