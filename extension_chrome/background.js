@@ -269,6 +269,15 @@ async function processDownloadWithAssets(payload, isBundle) {
     await processDownloadCore(payload, isBundle);
 }
 
+function blobToDataURL(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+}
+
 async function processDownloadCore(payload, isBundle) {
     if (currentController) {
         currentController.abort();
@@ -309,6 +318,7 @@ async function processDownloadCore(payload, isBundle) {
 
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
+        let dataUrl = null;
 
         const filename = getFilenameFromHeader(response.headers.get('Content-Disposition'));
         const res = await browser.storage.local.get("savedOptions");
@@ -341,10 +351,11 @@ async function processDownloadCore(payload, isBundle) {
                     });
                     downloaded = true;
                 } catch (e2) {
-                    console.warn("Generic filename failed; trying last resort (system default)", e2);
+                    console.warn("Generic filename failed; trying last resort (Data URI)", e2);
                     try {
-                        // Last resort: let Chrome decide everything
-                        await browser.downloads.download({ url: url });
+                        // Last resort: Data URL (bypasses blob permission issues)
+                        if (!dataUrl) dataUrl = await blobToDataURL(blob);
+                        await browser.downloads.download({ url: dataUrl });
                         downloaded = true;
                     } catch (e3) {
                         const msg = e3.message || JSON.stringify(e3);
