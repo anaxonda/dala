@@ -331,13 +331,24 @@ async function processDownloadCore(payload, isBundle) {
                 });
                 downloaded = true;
             } catch (e) {
-                console.error("downloads API failed for", targetPath, e);
-                browser.notifications.create({
-                    type: "basic",
-                    iconUrl: "icon.png",
-                    title: "Download Save Failed",
-                    message: `Browser refused to save '${targetPath}'. Error: ${e.message || e}`
-                });
+                console.warn("downloads API failed with specific filename; retrying with generic name", e);
+                try {
+                     await browser.downloads.download({
+                        url: url,
+                        filename: "web_to_epub_export.epub",
+                        saveAs: false,
+                        conflictAction: 'uniquify'
+                    });
+                    downloaded = true;
+                } catch (e2) {
+                    console.error("downloads API failed for", targetPath, e);
+                    browser.notifications.create({
+                        type: "basic",
+                        iconUrl: "icon.png",
+                        title: "Download Save Failed",
+                        message: `Browser refused to save '${targetPath}'. Error: ${e.message || e}`
+                    });
+                }
             }
         } else {
             console.warn("downloads API unavailable; will open blob in new tab");
@@ -349,7 +360,8 @@ async function processDownloadCore(payload, isBundle) {
             await openEpubInTab(blob, filename);
         }
 
-        URL.revokeObjectURL(url);
+        // Delay revocation to allow download to start
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
 
         browser.browserAction.setBadgeText({ text: "OK" });
         browser.browserAction.setBadgeBackgroundColor({ color: "green" });
