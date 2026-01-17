@@ -355,11 +355,15 @@ async function processDownloadCore(payload, isBundle) {
                     try {
                         // Last resort: Data URL (bypasses blob permission issues)
                         if (!dataUrl) dataUrl = await blobToDataURL(blob);
-                        await browser.downloads.download({ url: dataUrl });
+                        await browser.downloads.download({ 
+                            url: dataUrl,
+                            filename: "fallback.epub",
+                            conflictAction: 'uniquify' 
+                        });
                         downloaded = true;
                     } catch (e3) {
                         const msg = e3.message || JSON.stringify(e3);
-                        console.error("All download attempts failed", e3);
+                        console.error("All download attempts failed. Final error:", msg);
                         browser.notifications.create({
                             type: "basic",
                             iconUrl: "icon.png",
