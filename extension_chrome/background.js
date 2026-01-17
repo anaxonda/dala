@@ -320,15 +320,19 @@ async function processDownloadCore(payload, isBundle) {
         let downloadUrl = null;
         let isBlobUrl = false;
 
-        try {
-            if (typeof URL.createObjectURL === 'function') {
+        // MV3 Service Worker strategy: standard URL.createObjectURL is often disabled.
+        // Prefer Data URI if we can't create a Blob URL.
+        if (typeof URL.createObjectURL === 'function') {
+            try {
                 downloadUrl = URL.createObjectURL(blob);
                 isBlobUrl = true;
-            } else {
-                throw new Error("createObjectURL missing");
+            } catch (e) {
+                console.log("createObjectURL threw error, falling back to Data URI");
             }
-        } catch (e) {
-            console.log("URL.createObjectURL unavailable, converting to Data URI...", e);
+        }
+
+        if (!downloadUrl) {
+            console.log("Generating Data URI for download...");
             downloadUrl = await blobToDataURL(blob);
         }
 
