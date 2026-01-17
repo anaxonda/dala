@@ -12,8 +12,8 @@ def test_ping():
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
-@patch("server.core.process_urls", new_callable=AsyncMock)
-@patch("server.core.EpubWriter.write")
+@patch("main.process_urls", new_callable=AsyncMock)
+@patch("server.EpubWriter.write")
 def test_convert_endpoint(mock_write, mock_process):
     # Mock the core processing to return a dummy book
     dummy_book = BookData(

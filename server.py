@@ -28,7 +28,11 @@ from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-import web_to_epub as core
+import main as core_main
+from epub_downloader.models import ConversionOptions, Source, log
+from epub_downloader.core.session import get_session
+from epub_downloader.core.writer import EpubWriter
+from epub_downloader.models import sanitize_filename
 
 app = FastAPI()
 
@@ -94,7 +98,7 @@ async def convert(req: ConversionRequest):
                 ]
                 print(f"Source[{idx}] assets: {original_count} -> {len(s.assets)} (after filtering)")
 
-    options = core.ConversionOptions(
+    options = ConversionOptions(
         no_comments=req.no_comments,
         no_images=req.no_images,
         no_article=req.no_article,
@@ -114,7 +118,7 @@ async def convert(req: ConversionRequest):
     core_sources = []
     for s in req.sources:
         is_forum = bool(s.is_forum)
-        core_sources.append(core.Source(
+        core_sources.append(Source(
             url=s.url,
             html=s.html,
             cookies=s.cookies,
@@ -122,8 +126,8 @@ async def convert(req: ConversionRequest):
             is_forum=is_forum
         ))
 
-    async with core.get_session() as session:
-        processed_books = await core.process_urls(core_sources, options, session)
+    async with get_session() as session:
+        processed_books = await core_main.process_urls(core_sources, options, session)
 
     if not processed_books:
         raise HTTPException(status_code=500, detail="No content could be extracted.")
@@ -132,7 +136,7 @@ async def convert(req: ConversionRequest):
         if len(processed_books) > 1:
             title = req.bundle_title or f"Bundle_{len(processed_books)}_Articles"
             author = req.bundle_author or "Web to EPUB"
-            final_book = core.create_bundle(processed_books, title, author)
+            final_book = core_main.create_bundle(processed_books, title, author)
         else:
             final_book = processed_books[0]
             if req.bundle_title: final_book.title = req.bundle_title
@@ -140,8 +144,8 @@ async def convert(req: ConversionRequest):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".epub") as tmp:
             tmp_path = tmp.name
 
-        core.EpubWriter.write(final_book, tmp_path)
-        filename = f"{core.sanitize_filename(final_book.title)}.epub"
+        EpubWriter.write(final_book, tmp_path)
+        filename = f"{sanitize_filename(final_book.title)}.epub"
         print(f"✅ Generated EPUB at: {tmp_path}")
         print(f"✅ Sending as: {filename}")
 
