@@ -295,7 +295,7 @@ async function processDownloadCore(payload, isBundle) {
                 payload.termux_copy_dir = termuxDir;
             }
         }
-    } catch (_) { }
+    } catch (_) { } 
 
     try {
         console.log("Preparing JSON payload...");
@@ -317,8 +317,20 @@ async function processDownloadCore(payload, isBundle) {
         }
 
         const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        let dataUrl = null;
+        let downloadUrl = null;
+        let isBlobUrl = false;
+
+        try {
+            if (typeof URL.createObjectURL === 'function') {
+                downloadUrl = URL.createObjectURL(blob);
+                isBlobUrl = true;
+            } else {
+                throw new Error("createObjectURL missing");
+            }
+        } catch (e) {
+            console.log("URL.createObjectURL unavailable, converting to Data URI...", e);
+            downloadUrl = await blobToDataURL(blob);
+        }
 
         const filename = getFilenameFromHeader(response.headers.get('Content-Disposition'));
         const res = await browser.storage.local.get("savedOptions");
@@ -332,38 +344,40 @@ async function processDownloadCore(payload, isBundle) {
 
         if (canDownload) {
             try {
-                console.log(`Attempting download: URL=${url}, Filename=${targetPath}`);
+                console.log(`Attempting download 1: URL length=${downloadUrl.length}, Filename=${targetPath}`);
                 await browser.downloads.download({
-                    url: url,
+                    url: downloadUrl,
                     filename: targetPath,
                     saveAs: false,
                     conflictAction: 'uniquify'
                 });
                 downloaded = true;
             } catch (e) {
-                console.warn("downloads API failed with specific filename; retrying with generic name", e);
+                console.warn("Attempt 1 failed. Retrying with generic filename...", e);
                 try {
                      await browser.downloads.download({
-                        url: url,
+                        url: downloadUrl,
                         filename: "web_to_epub_export.epub",
                         saveAs: false,
                         conflictAction: 'uniquify'
                     });
                     downloaded = true;
                 } catch (e2) {
-                    console.warn("Generic filename failed; trying last resort (Data URI)", e2);
+                    console.warn("Attempt 2 failed. Trying last resort (Data URI + Default Name)...", e2);
                     try {
-                        // Last resort: Data URL (bypasses blob permission issues)
-                        if (!dataUrl) dataUrl = await blobToDataURL(blob);
+                        if (isBlobUrl) {
+                             downloadUrl = await blobToDataURL(blob);
+                             isBlobUrl = false;
+                        }
                         await browser.downloads.download({ 
-                            url: dataUrl,
+                            url: downloadUrl,
                             filename: "fallback.epub",
                             conflictAction: 'uniquify' 
                         });
                         downloaded = true;
                     } catch (e3) {
                         const msg = e3.message || JSON.stringify(e3);
-                        console.error("All download attempts failed. Final error:", msg);
+                        console.error("All download attempts failed", e3);
                         browser.notifications.create({
                             type: "basic",
                             iconUrl: "icon.png",
@@ -383,8 +397,9 @@ async function processDownloadCore(payload, isBundle) {
             await openEpubInTab(blob, filename);
         }
 
-        // Delay revocation to allow download to start
-        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        if (isBlobUrl && downloadUrl) {
+            setTimeout(() => URL.revokeObjectURL(downloadUrl), 30000);
+        }
 
         browser.browserAction.setBadgeText({ text: "OK" });
         browser.browserAction.setBadgeBackgroundColor({ color: "green" });
@@ -432,7 +447,7 @@ async function processDownloadCore(payload, isBundle) {
                 }
             }
             browser.runtime.sendMessage({ action: "shortcut-toast", message: "Downloaded" }).catch(() => {});
-        } catch (_) { } // ignore toast failures
+        } catch (_) { } 
 
         if (isBundle) {
             await browser.storage.local.set({ urlQueue: [] });
@@ -476,7 +491,6 @@ function cancelDownload() {
     }
 }
 
-// -- REPLACED: parseHtmlInOffscreen with Server-Side Parsing --
 async function parseHtmlOnServer(html, url) {
     try {
         const resp = await fetch("http://127.0.0.1:8000/helper/extract-links", {
@@ -515,26 +529,18 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
             const html = await fetchWithCookies(url, threadUrl);
             if (!html) continue;
             
-            // USE SERVER FOR PARSING
             const parseResult = await parseHtmlOnServer(html, url);
             const foundAssets = parseResult.assets || [];
             const externals = parseResult.externals || [];
             const nextPageNum = parseResult.next_page_num;
 
-            console.log(`📎 Page ${page}: Found ${foundAssets.length} attachments, ${externals.length} externals via Server`);
-
             for (const att of foundAssets) {
                 let fullData = null;
-                // If viewer URL exists, fetch it and parse via server again? 
-                // Wait, background.js logic did fetchBinaryMaybeHtml on viewer.
                 if (att.viewer_url) {
                     const viewerResp = await fetchBinaryMaybeHtml(att.viewer_url, url);
                     if (viewerResp && viewerResp.type && !viewerResp.isHtml && viewerResp.base64) {
                         fullData = viewerResp;
-                    } else if (viewerResp && viewerResp.text) {
-                        // Viewer page HTML -> Parse via Server again? 
-                        // Simplified: just try standard fetch on url if viewer fails
-                    }
+                    } 
                 }
 
                 if (!fullData) {
