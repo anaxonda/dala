@@ -3234,6 +3234,7 @@ class HackerNewsDriver(BaseDriver):
         comments_html = ""
         art_chap = None
         sub_com_chap = None
+        site_label = "Source"
 
         if (article_url and not options.no_article) or post_text:
             art_title = title
@@ -3249,7 +3250,8 @@ class HackerNewsDriver(BaseDriver):
                     
                     # If it's not Generic and not HN (recursive), use it
                     if not isinstance(temp_driver, (GenericDriver, HackerNewsDriver)):
-                        log.info(f"Delegating linked article to {temp_driver.__class__.__name__}")
+                        site_label = temp_driver.__class__.__name__.replace("Driver", "")
+                        log.info(f"Delegating linked article to {temp_driver.__class__.__name__} (Site: {site_label})")
                         sub_book = await temp_driver.prepare_book_data(context, temp_source)
                 except Exception as e:
                     log.warning(f"Failed to delegate to specialized driver: {e}")
@@ -3338,7 +3340,7 @@ class HackerNewsDriver(BaseDriver):
             
             # 1. Source Comments (e.g. Substack)
             if sub_com_chap:
-                children.append(epub.Link(sub_com_chap.filename, "Source Comments", sub_com_chap.uid))
+                children.append(epub.Link(sub_com_chap.filename, f"{site_label} Comments", sub_com_chap.uid))
             
             # 2. HN Comments
             if com_chap:
@@ -3352,7 +3354,7 @@ class HackerNewsDriver(BaseDriver):
         else:
             # No article (e.g. Ask HN or --no-article) -> Comments are top-level
             if sub_com_chap:
-                toc_structure.append(epub.Link(sub_com_chap.filename, "Source Comments", sub_com_chap.uid))
+                toc_structure.append(epub.Link(sub_com_chap.filename, f"{site_label} Comments", sub_com_chap.uid))
             if com_chap:
                 toc_structure.append(epub.Link(com_chap.filename, "HN Comments", com_chap.uid))
 

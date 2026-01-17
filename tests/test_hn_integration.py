@@ -103,7 +103,7 @@ async def test_hn_driver_delegates_to_substack():
                 children = toc[0][1]
                 assert len(children) == 2
                 assert children[0].href == "linked_sub_com.xhtml"
-                assert children[0].title == "Source Comments"
+                assert children[0].title == "Substack Comments"
                 
                 assert children[1].href == "hn_comments.xhtml"
                 assert children[1].title == "HN Comments"
