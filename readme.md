@@ -166,6 +166,18 @@ The extension needs a backend to build the EPUB.
 
 ---
 
+## 🌐 Chrome/Brave/Edge Extension Setup (Manifest V3)
+
+A port for Chromium-based browsers is available in `extension_chrome/`.
+
+1.  **Run the Server:** Ensure `uv run server.py` is running (see above).
+2.  **Open Extensions Page:** Go to `chrome://extensions` (or `brave://extensions`, `edge://extensions`).
+3.  **Enable Developer Mode:** Toggle the switch in the top right corner.
+4.  **Load Unpacked:** Click "Load unpacked" and select the `extension_chrome/` folder inside this project.
+5.  **Pin & Use:** Pin the extension to your toolbar. It works identically to the Firefox version.
+
+---
+
 ## ⚙️ Systemd Setup (Linux Auto-Start)
 
 To keep the server running in the background automatically on Linux:
