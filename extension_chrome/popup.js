@@ -447,7 +447,6 @@ async function preparePayload(urls, bundleTitle) {
         let html = null;
         // Find a tab that matches this URL and is fully loaded
         const match = allTabs.find(t => t.url === url);
-        console.log("Found match tab:", match ? match.id : "None");
 
         if (match) {
             try {
@@ -458,7 +457,6 @@ async function preparePayload(urls, bundleTitle) {
                         let isResolved = false;
                         const t = setTimeout(() => {
                             if (!isResolved) {
-                                console.log("Timed out waiting for tab load");
                                 isResolved = true;
                                 browser.tabs.onUpdated.removeListener(listener);
                                 resolve();
@@ -484,32 +482,22 @@ async function preparePayload(urls, bundleTitle) {
                 // MV3: chrome.scripting.executeScript
                 const results = await Promise.race([
                     new Promise((resolve, reject) => {
-                        try {
-                            chrome.scripting.executeScript({
-                                target: { tabId: match.id },
-                                func: getPageHTML
-                            }, (res) => {
-                                if (chrome.runtime.lastError) {
-                                    console.error("Injection runtime error:", chrome.runtime.lastError);
-                                    reject(chrome.runtime.lastError);
-                                } else {
-                                    console.log("Injection callback success");
-                                    resolve(res);
-                                }
-                            });
-                        } catch (err) {
-                            console.error("Injection sync error:", err);
-                            reject(err);
-                        }
+                        chrome.scripting.executeScript({
+                            target: { tabId: match.id },
+                            func: getPageHTML
+                        }, (res) => {
+                            if (chrome.runtime.lastError) reject(chrome.runtime.lastError);
+                            else resolve(res);
+                        });
                     }),
                     new Promise((_, reject) => setTimeout(() => reject(new Error("Script injection timed out")), 5000))
                 ]);
 
-                console.log("Script injection complete. Results:", results);
+                console.log("Script injection complete.");
                 // results is array of {frameId, result}
                 if (results && results[0] && results[0].result) {
                     html = results[0].result;
-                    console.log("Injecting HTML for:", url, "Length:", html.length);
+                    console.log("Injecting HTML for:", url);
                 }
             } catch (e) {
                 // Fails on restricted domains (addons.mozilla.org) or discarded tabs
@@ -551,36 +539,27 @@ async function preparePayload(urls, bundleTitle) {
 
 // --- DOWNLOAD TRIGGERS ---
 async function safeDownloadSingle() {
-    console.log("👉 safeDownloadSingle triggered");
     try {
         if (!currentTab) {
-            console.log("Querying for active tab...");
             const tabs = await browser.tabs.query({active: true, currentWindow: true});
             currentTab = tabs[0];
         }
 
-        console.log("Current Tab:", currentTab);
-
         if (!currentTab || !isValidUrl(currentTab.url)) {
             showStatus("Error: Invalid or empty tab.");
-            console.error("Invalid URL or Tab:", currentTab);
             return;
         }
 
         showStatus("Grabbing content...");
         const title = document.getElementById('single-title').value;
-        console.log("Preparing payload for:", currentTab.url);
-        
         const payload = await preparePayload([currentTab.url], title);
-        console.log("Payload ready:", payload ? "YES (size " + JSON.stringify(payload).length + ")" : "NO");
 
         browser.runtime.sendMessage({ action: "download", payload: payload, isBundle: false });
-        console.log("Message sent to background");
         showStatus("Started in background...");
-        // window.close(); // Don't close immediately during debug
+        window.close();
     } catch (e) {
         showStatus("Error: " + e.message);
-        console.error("safeDownloadSingle Failed:", e);
+        console.error(e);
     }
 }
 

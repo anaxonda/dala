@@ -60,7 +60,6 @@ let lastShortcutTabId = null;
 
 // Message Listener
 browser.runtime.onMessage.addListener((message, sender) => {
-    console.log("📨 Background received message:", message.action);
     if (message.action === "download") {
         processDownloadWithAssets(message.payload, message.isBundle);
         return true; 
@@ -271,7 +270,6 @@ async function processDownloadWithAssets(payload, isBundle) {
 }
 
 async function processDownloadCore(payload, isBundle) {
-    console.log("🚀 Starting processDownloadCore. Sources:", payload.sources.length);
     if (currentController) {
         currentController.abort();
         currentController = null;
@@ -306,7 +304,6 @@ async function processDownloadCore(payload, isBundle) {
 
         if (!response.ok) {
             const errText = await response.text();
-            console.error("Server Error Body:", errText);
             throw new Error(`Server ${response.status}: ${errText}`);
         }
 
@@ -462,10 +459,9 @@ async function parseHtmlOnServer(html, url) {
 }
 
 async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
-    console.log("🔍 fetchAssetsForPage called with:", threadUrl);
     const assets = [];
     try {
-        const normBase = threadUrl.replace(/#.*$/, "").replace(///page-\d+/i, "").replace(/([?&])page=\d+/i, "$1").replace(/[?&]$/, "");
+        const normBase = threadUrl.replace(/#.*$/, "").replace(/\/page-\d+/i, "").replace(/([?&])page=\d+/i, "$1").replace(/[?&]$/, "");
         const currentPageMatch = threadUrl.match(/page-(\d+)/i) || threadUrl.match(/[?&]page=(\d+)/i);
         const currentPage = currentPageMatch ? parseInt(currentPageMatch[1], 10) : 1;
         const hasExplicitPages = page_spec && page_spec.length;
