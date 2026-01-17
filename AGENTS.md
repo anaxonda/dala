@@ -1,16 +1,34 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `web_to_epub.py`: Core conversion pipeline, async scraping drivers (generic, Hacker News, Substack), EPUB assembly helpers.
-- `server.py`: FastAPI wrapper exposing `/convert` and `/ping` for the browser extension; uses the same conversion options.
-- `extension/`: Firefox add-on (background script, popup UI, manifest, icon) that forwards unlocked HTML to the server for EPUB creation.
-- Assets live alongside their feature (e.g., CSS/JS in `extension/`); keep new modules co-located with their primary feature to reduce churn.
+- **`epub_downloader/` (Package)**:
+    - **`drivers/`**: Specialized extractors (HN, Reddit, Substack, YouTube, WordPress, Forum).
+    - **`core/`**: Core logic including `ArticleExtractor` (text), `ImageProcessor` (media), and `DriverDispatcher`.
+    - **`models.py`**: Shared data structures (`BookData`, `Source`, etc.).
+- `main.py`: CLI entry point (replaces monolithic script).
+- `web_to_epub.py`: Legacy shim for backward compatibility (imports from `epub_downloader`).
+- `server.py`: FastAPI backend. Adds `/helper/extract-links` for server-side HTML parsing (Chrome MV3 compat).
+- `extension/`: Firefox add-on (Manifest V2).
+- `extension_chrome/`: Chrome/Brave/Edge add-on (Manifest V3). Uses a shim and server-side parsing to bypass Service Worker DOM limits.
 
 ## Build, Test, and Development Commands
-- `uv run web_to_epub.py https://example.com/article`: Run the CLI directly with inline deps resolved by `uv`.
-- `uv run web_to_epub.py -i links.txt --bundle`: Batch/bundle multiple URLs from a file.
-- `uv run server.py`: Start the FastAPI backend for extension-driven conversions (listens on 127.0.0.1:8000 by default).
-- `python -m web_to_epub --help`: Quick flag reference if you add a CLI wrapper; mirror new flags here.
+- `uv run main.py https://example.com/article`: Run the CLI directly.
+- `uv run server.py`: Start the FastAPI backend. Required for both Firefox and Chrome extensions.
+- **Chrome Extension Dev:** Load `extension_chrome/` unpacked in `chrome://extensions`.
+- **Packaging:** Run `./package_extensions.sh` to generate installable ZIPs/XPIs in `dist/`.
+
+## Chrome Extension (Manifest V3) Specifics
+- **Service Worker:** Runs in `background.js`. No access to DOM/`DOMParser`.
+- **HTML Parsing:** Offloaded to the local server (`/helper/extract-links`) via POST request.
+- **Downloads:** Uses a fallback chain:
+    1.  `URL.createObjectURL(blob)` (Standard, often blocked in SW).
+    2.  `browser.downloads.download` with specific filename.
+    3.  **Last Resort:** Converts Blob to **Data URI** (`data:application/epub...`) and downloads with `filename: fallback.epub`. This bypasses most filesystem/permissions issues.
+- **Shim:** `chrome-shim.js` polyfills `browser.*` APIs to `chrome.*` APIs, wrapping callbacks in Promises.
+
+## Known Limitations
+- **Popup Closure:** The extension popup handles the initial "Grabbing content..." phase (script injection to steal HTML). If the user closes the popup **before** the status changes to "Started in background", the process aborts.
+    - *Future Task:* Refactor `preparePayload` logic to run entirely in the background script to fix this.
 
 ## Coding Style & Naming Conventions
 - Python: 4-space indent, snake_case for functions/vars, CapWords for classes, prefer type hints and dataclasses where shared across API boundaries.
