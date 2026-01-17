@@ -12,3 +12,17 @@
     - "nav"
     - ".related-content"
     - ".hide-for-print"
+
+- name: "The New York Times"
+  domains:
+    - "nytimes.com"
+  content_selector: "article#story"
+  remove:
+    - "#top-wrapper"
+    - "#sponsor-wrapper"
+    - "#bottom-wrapper"
+    - "[data-testid='recirculation']"
+    - "#bottom-sheet-sensor"
+    - "a[href^='#after-']"
+    - "nav"
+    - "header > div > ul"
