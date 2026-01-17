@@ -211,12 +211,13 @@ To keep the server running in the background automatically on Linux:
 ## 🏗 Architecture & History
 *Why the code looks the way it does.*
 
-### 1. The Driver Pattern
-A single heuristic scraper was not enough.
-*   **Generic Driver:** Uses heuristics to find the main content on standard websites.
-*   **Hacker News Driver:** Uses the Firebase API to recursively fetch comment trees, preserving the discussion structure.
-*   **Substack Driver:** Finds hidden JSON in `window._preloads`, handles Cloudflare 403s via headers, and falls back to native `*.substack.com` API when custom domains break.
-*   **Reddit Driver:** Calls the Reddit JSON API (`raw_json=1`), renders self-post HTML or linked articles, and normalizes threaded comments for navigation.
+### 1. Modular Driver Pattern
+The project is structured as a Python package (`epub_downloader`) for maintainability:
+- **`epub_downloader/drivers/`**: Specialized extractors for different platforms (HN, Reddit, Substack, YouTube, WordPress, Forum).
+- **`epub_downloader/core/`**: Core logic including `ArticleExtractor` (text), `ImageProcessor` (media), and `DriverDispatcher` (routing).
+- **`epub_downloader/models.py`**: Shared data structures and constants.
+- **`main.py`**: CLI entry point.
+- **`server.py`**: FastAPI backend for the browser extension.
 
 ### 2. The Battle for Layout (E-Ink Optimization)
 Formatting for a 30-inch monitor breaks on a 6-inch Kindle.
