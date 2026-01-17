@@ -3233,12 +3233,45 @@ class HackerNewsDriver(BaseDriver):
 
         comments_html = ""
         art_chap = None
+        sub_com_chap = None
 
         if (article_url and not options.no_article) or post_text:
             art_title = title
             summary_html = None
             
+            sub_book = None
             if article_url and not options.no_article:
+                try:
+                    # Check if a specialized driver handles this URL
+                    temp_source = Source(url=article_url, cookies=source.cookies) # Pass cookies!
+                    temp_profile = ProfileManager.get_instance().get_profile(article_url)
+                    temp_driver = DriverDispatcher.get_driver(temp_source, temp_profile)
+                    
+                    # If it's not Generic and not HN (recursive), use it
+                    if not isinstance(temp_driver, (GenericDriver, HackerNewsDriver)):
+                        log.info(f"Delegating linked article to {temp_driver.__class__.__name__}")
+                        sub_book = await temp_driver.prepare_book_data(context, temp_source)
+                except Exception as e:
+                    log.warning(f"Failed to delegate to specialized driver: {e}")
+
+            if sub_book:
+                # Merge the sub-driver's chapters (Article + potentially Comments)
+                for chap in sub_book.chapters:
+                    # Prefix uid/filename to ensure uniqueness
+                    chap.uid = f"linked_{chap.uid}" 
+                    chap.filename = f"linked_{chap.filename}"
+                    chapters.append(chap)
+                    if chap.is_article: 
+                        art_chap = chap
+                        if sub_book.title and sub_book.title != "Unknown":
+                            art_title = sub_book.title
+                    if chap.is_comments:
+                        sub_com_chap = chap
+                
+                if sub_book.images:
+                    assets.extend(sub_book.images)
+
+            elif article_url and not options.no_article:
                 art_data = await ArticleExtractor.get_article_content(session, article_url, force_archive=options.archive, raw_html=source.html if not article_url else None, profile=context.profile)
                 if art_data['success']:
                     if art_data['title']: art_title = art_data['title']
@@ -3254,10 +3287,16 @@ class HackerNewsDriver(BaseDriver):
                         base = art_data.get('archive_url') if art_data.get('was_archived') else article_url
                         await ImageProcessor.process_images(session, body, base, assets)
                     art_html = body.prettify()
-                    context = f"<p><strong>HN Source:</strong> <a href=\"{url}\">{title}</a></p>"
-                    meta_html = ArticleExtractor.build_meta_block(article_url, art_data, context=context, summary_html=summary_html)
+                    context_html = f"<p><strong>HN Source:</strong> <a href=\"{url}\">{title}</a></p>"
+                    meta_html = ArticleExtractor.build_meta_block(article_url, art_data, context=context_html, summary_html=summary_html)
                     art_html = f"{meta_html}<hr/>{art_html}"
                 else: art_html = f"<p>Could not fetch article: <a href='{article_url}'>{article_url}</a></p>"
+                
+                final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{art_title}</title><link rel="stylesheet" href="style/default.css"/></head><body>
+                <h1>{art_title}</h1>{art_html}</body></html>"""
+                art_chap = Chapter(title=art_title, filename="article.xhtml", content_html=final_art_html, uid="article", is_article=True)
+                chapters.append(art_chap)
+
             elif post_text:
                 if options.summary:
                     log.info("Generating AI summary for HN Self Text...")
@@ -3265,13 +3304,10 @@ class HackerNewsDriver(BaseDriver):
                 
                 sum_div = f"<div class='ai-summary'><h3>AI Summary</h3>{summary_html}</div><hr/>" if summary_html else ""
                 art_html = f"{sum_div}<div>{post_text}</div>"
-            else: art_html = ""
-
-            final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{art_title}</title><link rel="stylesheet" href="style/default.css"/></head><body>
-            <h1>{art_title}</h1>{art_html}</body></html>"""
-
-            art_chap = Chapter(title=art_title, filename="article.xhtml", content_html=final_art_html, uid="article", is_article=True)
-            chapters.append(art_chap)
+                final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{art_title}</title><link rel="stylesheet" href="style/default.css"/></head><body>
+                <h1>{art_title}</h1>{art_html}</body></html>"""
+                art_chap = Chapter(title=art_title, filename="article.xhtml", content_html=final_art_html, uid="article", is_article=True)
+                chapters.append(art_chap)
 
         if post_data.get('kids') and not options.no_comments:
             kids = post_data['kids']
@@ -3292,16 +3328,33 @@ class HackerNewsDriver(BaseDriver):
         if comments_html:
              full_com_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Comments</title><link rel="stylesheet" href="style/default.css"/></head><body>
              <h1>Comments</h1>{comments_html}</body></html>"""
-             com_chap = Chapter(title="Comments", filename="comments.xhtml", content_html=full_com_html, uid="comments", is_comments=True)
+             com_chap = Chapter(title="HN Comments", filename="hn_comments.xhtml", content_html=full_com_html, uid="hn_comments", is_comments=True)
              chapters.append(com_chap)
 
         toc_structure = []
-        if art_chap and com_chap:
-            toc_structure.append((epub.Link(art_chap.filename, "Article", art_chap.uid), [epub.Link(com_chap.filename, "Comments", com_chap.uid)]))
-        elif art_chap:
-            toc_structure.append(epub.Link(art_chap.filename, "Article", art_chap.uid))
-        elif com_chap:
-            toc_structure.append(epub.Link(com_chap.filename, "Comments", com_chap.uid))
+        if art_chap:
+            # If we have an article, all comments become children
+            children = []
+            
+            # 1. Source Comments (e.g. Substack)
+            if sub_com_chap:
+                children.append(epub.Link(sub_com_chap.filename, "Source Comments", sub_com_chap.uid))
+            
+            # 2. HN Comments
+            if com_chap:
+                children.append(epub.Link(com_chap.filename, "HN Comments", com_chap.uid))
+            
+            if children:
+                toc_structure.append((epub.Link(art_chap.filename, "Article", art_chap.uid), children))
+            else:
+                toc_structure.append(epub.Link(art_chap.filename, "Article", art_chap.uid))
+
+        else:
+            # No article (e.g. Ask HN or --no-article) -> Comments are top-level
+            if sub_com_chap:
+                toc_structure.append(epub.Link(sub_com_chap.filename, "Source Comments", sub_com_chap.uid))
+            if com_chap:
+                toc_structure.append(epub.Link(com_chap.filename, "HN Comments", com_chap.uid))
 
         return BookData(title=title, author=author, uid=f"urn:hn:{item_id}", language='en', description=f"HN Thread {item_id}", source_url=url, chapters=chapters, images=assets, toc_structure=toc_structure)
 

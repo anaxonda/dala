@@ -83,6 +83,10 @@ uv run web_to_epub.py "https://www.trek-lite.com/index.php?threads/arcdome-1.152
   - **Error Notifications:** If download fails completely, a desktop notification now shows the exact error message from the browser API.
   - **Server-Side Backup:** The server now logs the full path of the generated EPUB in `/tmp` (e.g., `✅ Generated EPUB at: /tmp/tmpAbCdEf.epub`). If the browser download fails, the file can still be recovered from the server's temporary directory.
 
+- **Recursive Comment Fetching (latest):**
+  - **HN + Source Comments:** When a Hacker News post links to a supported site (e.g. Substack), the downloader now fetches *both* the HN comments AND the original article's native comments.
+  - **Unified TOC:** The Table of Contents is structured with the Article at the top, and both comment threads ("Source Comments" and "HN Comments") nested as children for easy navigation.
+
 - **Washington Post images (latest):**
   - Extract origin URLs from `imrs.php` proxies and try those first, so WaPo images download reliably.
   - If no images survive extraction, parse `__NEXT_DATA__` and inject the listed images into the article body.
