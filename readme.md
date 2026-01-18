@@ -5,7 +5,7 @@
 It solves the "read later" problem for the messy web:
 *   **Hacker News & Reddit:** Recursively fetches nested comments and adds a clickable "navigation cluster" to every post, making it possible to read deep threads on an e-reader.
 *   **Forums (XenForo, etc.):** Uses a browser extension to capture your login session, downloading gated attachments and high-res imagesthat CLI tools miss.
-*   **YouTube:** Downloads transcripts and optionally uses AI to format them into readable articles or generate summaries.
+*   **YouTube:** Downloads transcripts and optionally uses AI to format them into readable articles or generate summaries. Suprisingly nice to read youtube videos instead of watching them.
 *   **Paywalls:** The extension shares your browser's cookies with the backend to access subscriber-only content (Substack, newspapers). Checkout "bypass-paywalls-firefox-clean" extension from magnolia1234 on gitflic.
 
 <img src="firefox_extension/icon.png" alt="dala icon" width="72" />
@@ -76,6 +76,7 @@ The extension is the primary way to use **dala**. It acts as a "Thin Client," ca
 You can customize where your EPUBs are saved by clicking the **"Keyboard Shortcuts"** button in the extension popup:
 *   **Download Subfolder:** Specify a folder name (e.g., `Kindle`) to have EPUBs saved to `Downloads/Kindle/`.
 *   **Termux Copy Dir (Android):** Browsers on Android often hide files in `Android/data`. You can specify a Termux path (e.g., `/sdcard/Download`) to have the **server** drop a copy of the EPUB directly where you want it.
+* On koreader recommend to install [syncthing](https://github.com/jasonchoimtt/koreader-syncthing) to automatically sync article dir to ereader
 
 ### 2. Command Line Interface (CLI)
 For batch processing or automation, use the CLI directly. Doesn't work as well as the browser extension as it can't use already loaded content.
