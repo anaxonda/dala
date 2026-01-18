@@ -271,5 +271,8 @@ async def convert(req: ConversionRequest):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == "__main__":
+def start():
     uvicorn.run(app, host="127.0.0.1", port=8000)
+
+if __name__ == "__main__":
+    start()

@@ -184,5 +184,8 @@ async def async_main():
                 else: fname = f"{sanitize_filename(book.title)}_{args.output}"
             EpubWriter.write(book, fname, css_content)
 
-if __name__ == "__main__":
+def main():
     asyncio.run(async_main())
+
+if __name__ == "__main__":
+    main()
