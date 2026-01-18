@@ -160,7 +160,7 @@ You can define custom extraction rules for specific websites in a `sites.yaml` f
 ---
 
 ## 🛠 Detailed Installation
-
+**Only tested on Linux/android**
 ### Prerequisites
 *   **Python 3.8+**
 *   **uv** (Highly recommended for zero-config dependency management):
