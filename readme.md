@@ -203,7 +203,7 @@ You can run the full backend on your phone!
     source .venv/bin/activate
     
     # Install dependencies
-    UV_LINK_MODE=copy UV_CACHE_DIR=$HOME/.cache/uv uv pip install -r requirements.txt
+    UV_LINK_MODE=copy UV_CACHE_DIR=$HOME/.cache/uv uv pip install -e .
     ```
 5.  Run the server:
     ```bash
@@ -217,12 +217,12 @@ If you prefer not to use `uv`, you can use standard Python virtual environments:
 # macOS / Linux
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 
 # Windows
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ## 🏃 Run in Background
