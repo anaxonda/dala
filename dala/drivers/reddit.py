@@ -139,19 +139,19 @@ class RedditDriver(BaseDriver):
                     log.debug(f"Reddit comment image embed failed: {e}")
 
             if comments_html:
-                full_com_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Comments</title><link rel="stylesheet" href="style/default.css"/></head><body>
-                <h1>Comments</h1>{comments_html}</body></html>"""
-                com_chap = Chapter(title="Comments", filename="comments.xhtml", content_html=full_com_html, uid=f"reddit_com_{post_id}", is_comments=True)
+                full_com_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Reddit Comments</title><link rel="stylesheet" href="style/default.css"/></head><body>
+                <h1>Reddit Comments</h1>{comments_html}</body></html>"""
+                com_chap = Chapter(title="Reddit Comments", filename="comments.xhtml", content_html=full_com_html, uid=f"reddit_com_{post_id}", is_comments=True)
                 chapters.append(com_chap)
 
         toc_links = []
         if art_chap: toc_links.append(epub.Link(art_chap.filename, "Post", art_chap.uid))
         if art_chap and com_chap:
-            toc_links = [(epub.Link(art_chap.filename, "Post", art_chap.uid), [epub.Link(com_chap.filename, "Comments", com_chap.uid)])]
+            toc_links = [(epub.Link(art_chap.filename, "Post", art_chap.uid), [epub.Link(com_chap.filename, "Reddit Comments", com_chap.uid)])]
         elif art_chap:
             toc_links = [epub.Link(art_chap.filename, "Post", art_chap.uid)]
         elif com_chap:
-            toc_links = [epub.Link(com_chap.filename, "Comments", com_chap.uid)]
+            toc_links = [epub.Link(com_chap.filename, "Reddit Comments", com_chap.uid)]
 
         desc = f"Reddit thread r/{subreddit}" if subreddit else "Reddit thread"
         return BookData(title=title, author=author, uid=f"urn:reddit:{post_id}", language='en', description=desc, source_url=source.url, chapters=chapters, images=assets, toc_structure=toc_links)

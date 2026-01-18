@@ -104,14 +104,14 @@ class SubstackDriver(BaseDriver):
 
         com_chap = None
         if comments_html:
-             full_com_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Comments</title><link rel="stylesheet" href="style/default.css"/></head><body>
-             <h1>Comments</h1>{comments_html}</body></html>"""
-             com_chap = Chapter(title="Comments", filename=f"comments_{post_id}.xhtml", content_html=full_com_html, uid=f"com_{post_id}", is_comments=True)
+             full_com_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Substack Comments</title><link rel="stylesheet" href="style/default.css"/></head><body>
+             <h1>Substack Comments</h1>{comments_html}</body></html>"""
+             com_chap = Chapter(title="Substack Comments", filename=f"comments_{post_id}.xhtml", content_html=full_com_html, uid=f"com_{post_id}", is_comments=True)
              chapters.append(com_chap)
 
         toc_structure = []
         if art_chap and com_chap:
-             toc_structure.append((epub.Link(art_chap.filename, "Article", art_chap.uid), [epub.Link(com_chap.filename, "Comments", com_chap.uid)]))
+             toc_structure.append((epub.Link(art_chap.filename, "Article", art_chap.uid), [epub.Link(com_chap.filename, "Substack Comments", com_chap.uid)]))
         elif art_chap:
              toc_structure.append(epub.Link(art_chap.filename, "Article", art_chap.uid))
 
