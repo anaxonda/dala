@@ -22,6 +22,7 @@ It solves the "read later" problem for the messy web:
   - [macOS](#macos)
   - [Windows](#windows)
   - [Linux](#linux)
+  - [Android (Termux)](#android-termux)
 - [Run in Background](#-run-in-background)
 - [Configuration](#%EF%B8%8F-configuration)
 
@@ -125,7 +126,10 @@ uv run main.py [URL] --llm --api-key "AIzaSy..."
 *   `Ctrl + Shift + E` : **Download Page** immediately.
 *   `Ctrl + Shift + Q` : **Add to Queue**.
 
-*To change these, go to the Extension Options page (Right-click icon -> Manage Extension -> Preferences / Options).*
+### Managing Shortcuts
+*   **Firefox:** Go to the Extension Options page (Right-click icon -> Manage Extension -> Preferences / Options).
+*   **Chrome / Brave:** Go to `chrome://extensions/shortcuts` to remap keys globally. You can also toggle them in the Extension Options page.
+*   **Android (Firefox):** Configure them via the Extension Options page in the browser menu.
 
 ### 🏛️ Internet Archive Fallback
 **dala** tries to be resilient:
