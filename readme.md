@@ -65,22 +65,33 @@ This allows you to skip boring branches or jump back up the tree easily using th
 
 #### 🔐 Forums & Paywalls
 Many forums (like XenForo) hide attachments or high-res images from guests. CLI tools fail here.
-*   **How to use:** Log in to the site in your browser. Use the **Extension** to download.
-*   **How it works:** The extension sends your cookies to the backend, allowing it to fetch gated images and attachments as *you*. Need to select 
+*   **How to use:** Log in to the site in your browser. Use the **Extension** to download with 'use site cookies option' (there is also the 'force forum driver' option it it is not downloading correctly)
+*   **How it works:** The extension sends your cookies to the backend, allowing it to fetch gated images and attachments as *you*. 
 
 #### 📺 YouTube Transcripts & AI
-Convert videos into text.
-*   **Basic:** `uv run main.py [YouTube URL]` (Fetches transcript).
-*   **AI Formatting:** Use `--llm` to have Gemini/GPT clean up the transcript (punctuation, capitalization).
-*   **AI Summary:** Use `--summary` to add a 3-5 paragraph executive summary at the start.
+Convert videos into readable text.
+*   **Basic (No LLM required):** `uv run main.py [YouTube URL]`. This fetches the raw transcript and uses timestamp gaps to create basic paragraphs.
+*   **AI Formatting:** Use `--llm` to have an AI (Gemini/GPT) fix punctuation, capitalization, and remove filler words ("um", "uh"). The content remains the same but reads like a professionally edited article.
+*   **AI Summary:** Use `--summary` to insert a 3-5 paragraph "Executive Summary" at the top of the EPUB.
 
 **Setup for AI:**
-Set your API key in the environment or pass it via CLI:
+Set your API key in a `.env` file or pass it via CLI. **dala** supports Google Gemini (free tier works great), OpenAI, and OpenRouter.
 ```bash
 export GEMINI_API_KEY="AIzaSy..."
 # OR
 uv run main.py [URL] --llm --api-key "AIzaSy..."
 ```
+
+---
+
+## ⚙️ Extension Options Explained
+
+| Option | What it does | When to use it |
+| :--- | :--- | :--- |
+| **Use Site Cookies** | Sends your browser login tokens to the backend. | Paywalled articles (Substack, WaPo), private blogs, and forum attachments. |
+| **Force Forum Driver** | Triggers multi-page crawling and attachment scraping. | XenForo, vBulletin, or any threaded discussion board. |
+
+*Note: For forums, you usually need **both** enabled to download full-resolution attachments.*
 
 ---
 
