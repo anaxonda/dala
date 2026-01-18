@@ -225,7 +225,7 @@ You can run the full backend on your phone!
     ```bash
     python server.py
     ```
-6.  *Tip:* Install the **Firefox Extension** (use `about:debugging` or the signed XPI) and point it to `http://127.0.0.1:8000` (default). You can now download EPUBs directly to your phone's storage.
+6.  should work with FF android automatically
 
 ### Backend Setup (Alternative: PIP)
 If you prefer not to use `uv`, you can use standard Python virtual environments:
