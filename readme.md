@@ -329,5 +329,18 @@ LLM_MODEL=gemini-1.5-flash
 
 ---
 
+## 📸 Screenshots
+
+<p align="center">
+  <img src="screenshot/Screenshot_20260118_155731.png" width="45%" />
+  <img src="screenshot/Screenshot_20260118_155753.png" width="45%" />
+</p>
+<p align="center">
+  <img src="screenshot/Screenshot_20260118_162833.png" width="45%" />
+  <img src="screenshot/Screenshot_20260118_163015.png" width="45%" />
+</p>
+
+---
+
 ## 📄 License
 [MIT](LICENSE)
