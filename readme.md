@@ -115,6 +115,13 @@ uv run main.py [URL] --llm --api-key "AIzaSy..."
 
 *Note: For forums, you usually need **both** 'Use Site Cookies' and 'Force Forum Driver' enabled to download full-resolution attachments.*
 
+## ⌨️ Keyboard Shortcuts
+**dala** supports configurable shortcuts (defaulting to the same keys on Desktop & Android):
+*   `Ctrl + Shift + E` : **Download Page** immediately.
+*   `Ctrl + Shift + Q` : **Add to Queue**.
+
+*To change these, go to the Extension Options page (Right-click icon -> Manage Extension -> Preferences / Options).*
+
 ### 🏛️ Internet Archive Fallback
 **dala** tries to be resilient:
 1.  **Automatic:** If a live fetch fails (404 Not Found, 403 Forbidden), it **automatically** falls back to the Internet Archive (Wayback Machine) to find the latest snapshot.
@@ -151,6 +158,7 @@ You can define custom extraction rules for specific websites in a `sites.yaml` f
     *   **macOS (Homebrew):** `brew install uv`
     *   **Windows (PowerShell):** `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
     *   **Linux:** `curl -LsSf https://astral.sh/uv/install.sh | sh`
+    *   **Android (Termux):** `pkg install uv`
 
 ### 💻 Platform Specifics
 
@@ -169,6 +177,34 @@ You can define custom extraction rules for specific websites in a `sites.yaml` f
 
 #### Linux
 Standard installation as described in the [Quick Start](#-quick-start). For background execution, use the [Systemd guide](#-systemd-auto-start-linux).
+
+#### Android (Termux)
+You can run the full backend on your phone!
+1.  Install **Termux** (from F-Droid) and **Termux:API**.
+2.  Open Termux and install dependencies:
+    ```bash
+    pkg update && pkg install git python tur-repo
+    pkg install uv
+    ```
+3.  Clone the repo:
+    ```bash
+    git clone https://github.com/anaxonda/dala.git
+    cd dala
+    ```
+4.  Setup environment (fix for `uv` caching on Android):
+    ```bash
+    # Create venv manually
+    python -m venv .venv
+    source .venv/bin/activate
+    
+    # Install dependencies
+    UV_LINK_MODE=copy UV_CACHE_DIR=$HOME/.cache/uv uv pip install -r requirements.txt
+    ```
+5.  Run the server:
+    ```bash
+    python server.py
+    ```
+6.  *Tip:* Install the **Firefox Extension** (use `about:debugging` or the signed XPI) and point it to `http://127.0.0.1:8000` (default). You can now download EPUBs directly to your phone's storage.
 
 ### Backend Setup (Alternative: PIP)
 If you prefer not to use `uv`, you can use standard Python virtual environments:
