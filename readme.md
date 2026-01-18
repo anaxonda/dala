@@ -52,7 +52,7 @@ It solves the "read later" problem for the messy web:
     *(Requires [uv](https://github.com/astral-sh/uv) or Python 3.8+)*
     ```bash
     # This automatically installs dependencies and runs the backend
-    uv run server.py
+    uv run dala-server
     ```
 
 3.  **Install the Extension:**
@@ -76,17 +76,16 @@ The extension is the primary way to use **dala**. It acts as a "Thin Client," ca
 You can customize where your EPUBs are saved by clicking the **"Keyboard Shortcuts"** button in the extension popup:
 *   **Download Subfolder:** Specify a folder name (e.g., `Kindle`) to have EPUBs saved to `Downloads/Kindle/`.
 *   **Termux Copy Dir (Android):** Browsers on Android often hide files in `Android/data`. You can specify a Termux path (e.g., `/sdcard/Download`) to have the **server** drop a copy of the EPUB directly where you want it.
-* On koreader recommend to install [syncthing](https://github.com/jasonchoimtt/koreader-syncthing) to automatically sync article dir to ereader
 
 ### 2. Command Line Interface (CLI)
 For batch processing or automation, use the CLI directly. Doesn't work as well as the browser extension as it can't use already loaded content.
 
 ```bash
 # Single URL
-uv run main.py "https://news.ycombinator.com/item?id=123456"
+uv run dala "https://news.ycombinator.com/item?id=123456"
 
 # Bundle from a file (one URL per line)
-uv run main.py -i links.txt --bundle --bundle-title "Weekly Digest"
+uv run dala -i links.txt --bundle --bundle-title "Weekly Digest"
 ```
 
 ### 3. Drivers & Features
@@ -104,7 +103,7 @@ Many forums (like XenForo) hide attachments or high-res images from guests. CLI 
 
 #### 📺 YouTube Transcripts & AI
 Convert videos into readable text.
-*   **Basic (No LLM required):** `uv run main.py [YouTube URL]`. This fetches the raw transcript and uses timestamp gaps to create basic paragraphs.
+*   **Basic (No LLM required):** `uv run dala [YouTube URL]`. This fetches the raw transcript and uses timestamp gaps to create basic paragraphs.
 *   **AI Formatting:** Use `--llm` to have an AI (Gemini/GPT) fix punctuation, capitalization, and remove filler words ("um", "uh"). The content remains the same but reads like a professionally edited article.
 *   **AI Summary:** Use `--summary` to insert a 3-5 paragraph "Executive Summary" at the top of the EPUB.
 
@@ -113,7 +112,7 @@ Set your API key in a `.env` file or pass it via CLI. **dala** supports Google G
 ```bash
 export GEMINI_API_KEY="AIzaSy..."
 # OR
-uv run main.py [URL] --llm --api-key "AIzaSy..."
+uv run dala [URL] --llm --api-key "AIzaSy..."
 ```
 
 ---
