@@ -29,10 +29,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import main as core_main
-from epub_downloader.models import ConversionOptions, Source, log
-from epub_downloader.core.session import get_session
-from epub_downloader.core.writer import EpubWriter
-from epub_downloader.models import sanitize_filename
+from dala.models import ConversionOptions, Source, log
+from dala.core.session import get_session
+from dala.core.writer import EpubWriter
+from dala.models import sanitize_filename
 
 app = FastAPI()
 

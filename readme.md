@@ -45,7 +45,7 @@ The extension allows one-click downloading and handles session-based scraping (e
 1.  Type `about:debugging` in the address bar -> "This Firefox".
 2.  Click **"Load Temporary Add-on..."**.
 3.  Select `manifest.json` inside the `firefox_extension/` folder.
-    *   *Or install the signed `.xpi` from the [Releases](https://github.com/yourusername/epub_downloader/releases) page.*
+    *   *Or install the signed `.xpi` from the [Releases](https://github.com/yourusername/dala/releases) page.*
 
 **Chrome / Brave / Edge:**
 1.  Go to `chrome://extensions` and enable **Developer Mode** (top right).
@@ -99,7 +99,7 @@ To keep the server running in the background:
     After=network.target
 
     [Service]
-    WorkingDirectory=/path/to/epub_downloader
+    WorkingDirectory=/path/to/dala
     ExecStart=/path/to/uv run server.py
     Restart=always
 
@@ -116,8 +116,8 @@ To keep the server running in the background:
 ## 🏗 Architecture
 
 The project uses a **modular driver pattern**:
-- **`epub_downloader/drivers/`**: Site-specific logic (HN, Reddit, Forum, etc.).
-- **`epub_downloader/core/`**: Shared logic for text extraction, image processing, and EPUB generation.
+- **`dala/drivers/`**: Site-specific logic (HN, Reddit, Forum, etc.).
+- **`dala/core/`**: Shared logic for text extraction, image processing, and EPUB generation.
 - **Extensions**: act as "Thin Clients", injecting scripts to scrape DOM/Cookies and sending payloads to the Python backend for heavy lifting (EPUB building).
 
 See [CHANGELOG.md](CHANGELOG.md) for recent updates and [TODO.md](TODO.md) for the roadmap.

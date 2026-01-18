@@ -14,7 +14,7 @@ class ProfileManager:
     @classmethod
     def get_instance(cls):
         if not cls._instance:
-            paths = ["sites.yaml", os.path.expanduser("~/.config/epub_downloader/sites.yaml")]
+            paths = ["sites.yaml", os.path.expanduser("~/.config/dala/sites.yaml")]
             cls._instance = cls(paths)
         return cls._instance
     def load_config(self, path: str):

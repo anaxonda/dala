@@ -9,14 +9,14 @@ from typing import List, Dict, Optional
 from tqdm.asyncio import tqdm_asyncio
 from ebooklib import epub
 
-from epub_downloader.models import (
+from dala.models import (
     log, Source, ConversionOptions, BookData, ConversionContext, 
     GLOBAL_SEMAPHORE, REQUEST_TIMEOUT, sanitize_filename, parse_page_spec
 )
-from epub_downloader.core.profiles import ProfileManager
-from epub_downloader.core.dispatcher import DriverDispatcher
-from epub_downloader.core.session import get_session, load_cookie_file
-from epub_downloader.core.writer import EpubWriter
+from dala.core.profiles import ProfileManager
+from dala.core.dispatcher import DriverDispatcher
+from dala.core.session import get_session, load_cookie_file
+from dala.core.writer import EpubWriter
 
 async def process_urls(sources: List[Source], options: ConversionOptions, session) -> List[BookData]:
     processed_books = []

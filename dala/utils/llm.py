@@ -65,7 +65,7 @@ class LLMHelper:
                 "Content-Type": "application/json"
             }
             if "openrouter" in base_url:
-                headers["HTTP-Referer"] = "https://github.com/loki/epub_downloader"
+                headers["HTTP-Referer"] = "https://github.com/loki/dala"
                 headers["X-Title"] = "EPUB Downloader"
 
             payload = {

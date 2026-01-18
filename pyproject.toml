@@ -1,5 +1,5 @@
 [project]
-name = "epub-downloader"
+name = "dala"
 version = "0.1.0"
 description = "Web to EPUB Downloader with E-Ink Optimizations"
 readme = "readme.md"

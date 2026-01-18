@@ -1,12 +1,12 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- **`epub_downloader/` (Package)**:
+- **`dala/` (Package)**:
     - **`drivers/`**: Specialized extractors (HN, Reddit, Substack, YouTube, WordPress, Forum).
     - **`core/`**: Core logic including `ArticleExtractor` (text), `ImageProcessor` (media), and `DriverDispatcher`.
     - **`models.py`**: Shared data structures (`BookData`, `Source`, etc.).
 - `main.py`: CLI entry point (replaces monolithic script).
-- `web_to_epub.py`: Legacy shim for backward compatibility (imports from `epub_downloader`).
+- `web_to_epub.py`: Legacy shim for backward compatibility (imports from `dala`).
 - `server.py`: FastAPI backend. Adds `/helper/extract-links` for server-side HTML parsing (Chrome MV3 compat).
 - `firefox_extension/`: Firefox add-on (Manifest V2).
 - `extension_chrome/`: Chrome/Brave/Edge add-on (Manifest V3). Uses a shim and server-side parsing to bypass Service Worker DOM limits.
