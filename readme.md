@@ -10,6 +10,21 @@ It solves the "read later" problem for the messy web:
 
 <img src="firefox_extension/icon.png" alt="dala icon" width="72" />
 
+## Table of Contents
+- [Quick Start](#-quick-start)
+- [Usage Guide](#-usage-guide)
+  - [Extension](#1-the-browser-extension-recommended)
+  - [CLI](#2-command-line-interface-cli)
+  - [Drivers & Features](#3-drivers--features)
+- [Extension Options](#%EF%B8%8F-extension-options-explained)
+- [Customization (sites.yaml)](#-advanced-customization-sitesyaml)
+- [Detailed Installation](#-detailed-installation)
+  - [macOS](#macos)
+  - [Windows](#windows)
+  - [Linux](#linux)
+- [Run in Background](#-run-in-background)
+- [Configuration](#%EF%B8%8F-configuration)
+
 ---
 
 ## ⚡ Quick Start
