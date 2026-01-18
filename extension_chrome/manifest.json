@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "dala",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "Batch download web articles to EPUB via local server.",
   "icons": {
     "48": "icon.png"
@@ -41,5 +41,19 @@
     "default_icon": "icon.png",
     "default_title": "EPUB Manager",
     "default_popup": "popup.html"
+  },
+  "commands": {
+    "download-page": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+E"
+      },
+      "description": "Download current page to EPUB"
+    },
+    "add-to-queue": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Q"
+      },
+      "description": "Add current page to EPUB queue"
+    }
   }
 }

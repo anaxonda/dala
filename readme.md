@@ -1,335 +1,123 @@
 # Web-to-EPUB Downloader (E-Ink Optimized)
 
-Tool to convert web articles, Hacker News threads, Substack posts, and Reddit threads into EPUBs tuned for e-ink devices (Kindle, KOReader, Kobo). A bundled Firefox extension can capture unlocked page HTML from your browser and send it to the local FastAPI server for EPUB generation. Specialized drivers handle site-specific APIs, anti-bot hurdles, and layouts that survive older reader engines.
+A powerful tool to convert web articles, Hacker News threads, Substack posts, Reddit threads, and forums into clean, e-ink optimized EPUBs (Kindle, Kobo, KOReader).
 
-<img src="extension/icon.png" alt="Firefox Extension" width="72" />
+It solves the "read later" problem for complex content:
+- **Threaded Discussions:** Recursively fetches comments (HN, Reddit) and nests them with "next/previous" navigation buttons.
+- **Paywalls & Forums:** A bundled browser extension (Firefox/Chrome) captures your active session (cookies/HTML) to download gated content or forum attachments.
+- **E-Ink Optimization:** Flattens layouts, removes sidebars, and ensures high-contrast readability on small E-Ink screens.
 
-Allow threaded comment navigation with button links in the epub  to jump to different levels in hierarchy: top level, parent, sibling, next top level.
+<img src="firefox_extension/icon.png" alt="Extension Icon" width="72" />
 
-## Table of Contents
-- [Quick Usage](#quick-usage)
-- [Options & Flags](#options--flags)
-- [Examples](#examples)
-- [Updates](#-updates)
-- [Installation](#-installation)
-- [Firefox Extension Setup](#-firefox-extension-setup)
-- [Systemd Setup](#-systemd-setup)
-- [Architecture & History](#-architecture--history)
-
----
-
-## Quick Usage
-```bash
-uv run web_to_epub.py [URL]
-```
-- Supports single articles, HN threads, Substack posts (including custom domains), Reddit threads (old/new/redd.it), and forum threads (e.g., XenForo).
-- Bundle multiple URLs: `uv run web_to_epub.py -i links.txt --bundle --bundle-title "Morning Read"`
-- Run local server for the extension: `uv run server.py`
-- Install the signed Firefox add-on (unlisted, current): `extension/web-ext-artifacts/79556425c64b4e2c9b57-2.3.xpi` via “Install Add-on From File…” in `about:addons`.
-
-## Options & Flags
-
-| Flag | Description |
-| :--- | :--- |
-| `--bundle` | Anthology mode; combines all input into one EPUB with nested TOC. |
-| `--bundle-title "Name"` | Custom bundle title; defaults to `Domain - Date`. |
-| `--no-comments` | Article text only; skip comment fetch. |
-| `--no-article` | Comments only (useful for HN where the link is just context). |
-| `--no-images` | Text-only mode to shrink file size. |
-| `-a`, `--archive` | Force fetch from the Wayback Machine (dead links). |
-| `-i [file.txt]` | File with one URL per line. |
-| `--max-depth [N]` | Limit comment recursion depth (HN/Reddit). |
-| `--max-pages [N]` | Limit forum pages fetched. |
-| `--pages 1,3-5` | Fetch specific forum pages. |
-| `--css [file.css]` | Inject custom CSS into output. |
-| `-v` | Verbose logging (debug mode). |
-
-## Examples
-
-**Morning Digest Bundle**
-```bash
-uv run web_to_epub.py -i links.txt --bundle --bundle-title "Morning Read - Nov 20"
-```
-
-**Hacker News (Deep Dive)**
-```bash
-uv run web_to_epub.py "https://news.ycombinator.com/item?id=123456"
-```
-
-**Substack (Custom Domain)**
-```bash
-uv run web_to_epub.py https://www.astralcodexten.com/p/the-bloomers-paradox
-```
-
-**Reddit Thread**
-```bash
-uv run web_to_epub.py https://old.reddit.com/r/AskHistorians/comments/1p2uk19/ken_burns_the_american_revolution_claims_that_the/
-```
-
-**XenForo Forum Thread (pages 1–2)**
-```bash
-uv run web_to_epub.py "https://www.trek-lite.com/index.php?threads/arcdome-1.15243/" --pages 1-2
-```
-
----
-
-## 🔄 Updates
-- **Extension Reliability & Pipeline Alignment:**
-  - **Unified Data Context:** Refactored `background.js` to ensure keyboard shortcuts and context menu actions invoke the same data-gathering logic as the popup UI. Specifically, they now check the `include_cookies` option and fetch `browser.cookies.getAll()` for the target URL, transmitting the session state to the backend. This enables authenticated scraping (e.g., paywalls) via shortcuts which previously failed due to missing cookies.
-  - **Mitigating Background Throttling:** Bundle downloads previously hung on background tabs due to browser resource throttling of `executeScript` callbacks. Implemented a `Promise.race` wrapper around script injection with a 5-second timeout. If a background tab is unresponsive, the extension now fails soft, logging a timeout and proceeding to the next URL (falling back to server-side scraping) instead of stalling the entire queue.
-  - **Zombie/Discarded Tab Handling:** Added explicit checks for `tab.discarded` in `popup.js`. The extension now skips client-side DOM injection for suspended/unloaded tabs immediately, avoiding API errors and deadlocks, and relying on the backend to fetch the content freshly.
-- **Download Reliability (latest):**
-  - **Browser Download Retry:** If the browser fails to save the file with the specific filename (e.g. due to invalid characters), the extension now automatically retries with a safe, generic filename (`web_to_epub_export.epub`).
-  - **Error Notifications:** If download fails completely, a desktop notification now shows the exact error message from the browser API.
-  - **Server-Side Backup:** The server now logs the full path of the generated EPUB in `/tmp` (e.g., `✅ Generated EPUB at: /tmp/tmpAbCdEf.epub`). If the browser download fails, the file can still be recovered from the server's temporary directory.
-
-- **Recursive Comment Fetching (latest):**
-  - **HN + Source Comments:** When a Hacker News post links to a supported site (e.g. Substack), the downloader now fetches *both* the HN comments AND the original article's native comments.
-  - **Unified TOC:** The Table of Contents is structured with the Article at the top, and both comment threads (dynamically labeled, e.g., "Substack Comments" and "HN Comments") nested as children for easy navigation.
-
-- **Washington Post images (latest):**
-  - Extract origin URLs from `imrs.php` proxies and try those first, so WaPo images download reliably.
-  - If no images survive extraction, parse `__NEXT_DATA__` and inject the listed images into the article body.
-  - Safer image wrapping tolerates detached tags; `LOGLEVEL=DEBUG` now shows per-image candidates/fetches when needed.
-  - Added missing `parse_srcset_with_width`, configurable logging, and origin/`__NEXT_DATA__` handling to unblock image downloads and document the WaPo improvements.
-- **UI & queue polish (latest):**
-  - Popup queue is now an editable textarea: paste/edit URLs directly; changes auto-save and the queue persists across downloads.
-  - Added context-menu action “Download Page to EPUB” for immediate conversion of the current page/link; queue remains untouched.
-- **Metadata consistency:**
-  - Unified article meta block across drivers (Article Source/Author/Date/Site; archive notice where applicable). HN/Reddit external articles now show consistent metadata alongside thread context.
-- **Image cleanup:**
-  - Generic image processing strips placeholders (grey-placeholder), flattens wrappers, dedupes captions, and enforces `<div class="img-block"><img class="epub-image">` with a single caption when present.
-  - Figures/spans are unwrapped; duplicate captions removed.
-- **Reddit media fixes:**
-  - Image-link posts (`i.redd.it/...png`) render as the article with embedded images.
-  - Comment image links are inlined and fetched (skipping non-file wiki pages).
-- **Wikimedia fetch tuning:**
-  - Wikimedia images fetched with Commons referer + project UA; targeted fallbacks added and logging when blocked (ongoing).
-- **Forum image HTML simplification (latest):**
-  - **Problem:** XenForo lightbox markup (`lazyloadPreSize`, `lbContainer*`, zoomer stubs, `data-lb-*`, `data-zoom-target`, empty `title`) leaked into the EPUB, leaving nested wrappers and non-reader-safe attributes.
-  - **Fix:** Added forum-specific cleanup in `ForumImageProcessor` to strip lightbox attrs, unwrap XenForo containers, and remove zoomer divs while still running the same asset mapping/dedup logic.
-  - **Result:** EPUB now emits minimal image HTML (`<div class="img-block"><img class="epub-image" src="..."></div>` plus caption when found) without breaking filename mapping or preload reuse.
-- **Forum attachment reliability (latest):**
-  - **What was broken:** Page fragments (`#replies`) kept every fetch on page 1; popup closed before fetch finished; discovery crashed on lightbox nodes without `closest`; “enough assets” skipped re-fetch when only avatars/1x1s were present; 409/redirect fetches aborted; attachments on page 2/3 never entered the preload map, causing misses/dupes.
-  - **Fixes applied:** Strip fragments before building `page-N` URLs so pages 2/3 load; move all asset fetching to background after the popup closes; always re-fetch/merge assets and dedupe by URL instead of early-skipping; filter strictly to `/attachments/`, skip avatars/1x1/data GIFs; expand lightbox selectors (`[data-lb-*]`, `.bbImage`, `a.attachment`, `[data-attachment-id]`) with guards for missing `closest`; binary fetch uses `cache: reload` and retries query-stripped URLs on 409/opaque redirects. Result: all post attachments across pages are discovered and reused without duplication.
-- **Reddit Driver (new):** Reddit/old.reddit/redd.it links now fetch via the JSON API (`raw_json=1`), render self-posts or linked articles, and include threaded comments with navigation. Works in both CLI and the Firefox extension via the existing FastAPI backend.
-- **Forum Driver & Attachments:** Forum threads (e.g., XenForo) now support page ranges, asset preloading from the browser, and external images. The Firefox extension can fetch gated attachments with your session cookies and embed them into EPUBs.
+## ✨ Features
+- **Multi-Site Support:** Specialized drivers for Hacker News, Reddit, Substack, XenForo, WordPress, and a robust Generic driver for everything else.
+- **Anthology Mode:** Bundle multiple URLs (e.g., "Morning Reads") into a single EPUB with a nested Table of Contents.
+- **Anti-Bot Evasion:** Smart fallbacks to `requests`, "Fail Fast" logic for 403s, and optional Wayback Machine integration for dead links.
+- **Deep Content:** Hydrates Next.js apps (like WaPo) to find images hidden in JSON, and fetches full-resolution images from proxy URLs.
 
 ---
 
 ## 🚀 Installation
 
-**Prerequisites:** Python 3.8+
+### Prerequisites
+- Python 3.8+
+- [uv](https://github.com/astral-sh/uv) (Recommended) or `pip`
 
-### Recommended: Using `uv`
-This script contains inline dependency metadata. If you have [uv](https://github.com/astral-sh/uv), no manual install is needed.
+### 1. Backend Setup
+Clone the repository and run the server.
 
+**Using `uv` (Fastest, handles venv):**
 ```bash
-# Run immediately
-uv run web_to_epub.py [URL]
+# Run the server directly
+uv run server.py
 ```
 
-### Alternative: Standard PIP
+**Using `pip`:**
 ```bash
-pip install requests aiohttp beautifulsoup4 EbookLib trafilatura lxml pygments tqdm Pillow uvicorn fastapi
+pip install -r requirements.txt # (You may need to generate this or install manually: requests aiohttp beautifulsoup4 EbookLib trafilatura lxml pygments tqdm Pillow uvicorn fastapi)
+python server.py
 ```
 
----
+### 2. Browser Extension Setup
+The extension allows one-click downloading and handles session-based scraping (essential for paywalls or private forums).
 
-## 🦊 Firefox Extension Setup
+**Firefox:**
+1.  Type `about:debugging` in the address bar -> "This Firefox".
+2.  Click **"Load Temporary Add-on..."**.
+3.  Select `manifest.json` inside the `firefox_extension/` folder.
+    *   *Or install the signed `.xpi` from the [Releases](https://github.com/yourusername/epub_downloader/releases) page.*
 
-The project includes a **Firefox Extension** and a **Local Python Server**.
-The extension grabs unlocked HTML from your browser session; for gated forums, it can also fetch attachments and inline images with your cookies. Use the extension path when images/attachments are blocked via CLI (403/409 hotlink rules).
-
-### Step 1: Run the Server
-The extension needs a backend to build the EPUB.
-
-1.  Open a terminal in the project folder.
-2.  Run:
-    ```bash
-    uv run server.py
-    ```
-3.  Leave this terminal open (or see "Systemd Setup" below).
-
-### Step 2: Install the Extension (Temporary/Developer Mode)
-1.  Open Firefox and type `about:debugging` in the address bar.
-2.  Click **"This Firefox"** on the left.
-3.  Click **"Load Temporary Add-on..."**.
-4.  Navigate to the `epub-extension/` folder in this project.
-5.  Select `manifest.json`.
-   - Or install the signed XPI (`extension/web-ext-artifacts/79556425c64b4e2c9b57-2.3.xpi`) via “Install Add-on From File…” in `about:addons` (unlisted AMO-signed).
-
-### Step 3: Using the Extension
-*   **Download Page:** Click the extension icon -> "Download Page", or right-click and choose **"Download Page to EPUB"**.
-*   **Queue/Bundle:** Right-click to **"Add to EPUB Queue"**, or paste/edit URLs directly in the Queue textarea (one per line), then **Download Bundle**.
-*   **Add Tabs:** Use **+ Current / + Selected / + All** in the Queue tab to import open tabs.
+**Chrome / Brave / Edge:**
+1.  Go to `chrome://extensions` and enable **Developer Mode** (top right).
+2.  Click **"Load unpacked"**.
+3.  Select the `extension_chrome/` folder.
 
 ---
 
-## 🌐 Chrome/Brave/Edge Extension Setup (Manifest V3)
+## 📖 Usage
 
-A port for Chromium-based browsers is available in `extension_chrome/`.
+### CLI Usage
+The CLI is perfect for batch processing or automation.
 
-1.  **Run the Server:** Ensure `uv run server.py` is running (see above).
-2.  **Open Extensions Page:** Go to `chrome://extensions` (or `brave://extensions`, `edge://extensions`).
-3.  **Enable Developer Mode:** Toggle the switch in the top right corner.
-4.  **Load Unpacked:** Click "Load unpacked" and select the `extension_chrome/` folder inside this project.
-5.  **Pin & Use:** Pin the extension to your toolbar. It works identically to the Firefox version.
+```bash
+# Single URL
+uv run web_to_epub.py "https://news.ycombinator.com/item?id=123456"
+
+# Bundle multiple URLs from a file
+uv run web_to_epub.py -i links.txt --bundle --bundle-title "Weekly Digest"
+```
+
+### Options & Flags
+
+| Flag | Description |
+| :--- | :--- |
+| `--bundle` | Combine all inputs into one EPUB. |
+| `--bundle-title "Title"` | Title for the bundle (defaults to Domain - Date). |
+| `--no-comments` | Skip comments (article text only). |
+| `--no-article` | Skip article (comments only). |
+| `--no-images` | Text-only mode (smaller file size). |
+| `-a`, `--archive` | Force fetch from Wayback Machine. |
+| `--max-depth [N]` | Limit comment recursion depth. |
+| `--pages 1,3-5` | Fetch specific forum pages. |
+| `-v` | Verbose logging (debug mode). |
+
+### Extension Usage
+1.  Ensure `uv run server.py` is running.
+2.  **Download Page:** Click the extension icon or use the Right-Click menu -> "Download Page to EPUB".
+3.  **Queue:** Right-click links to "Add to EPUB Queue". Open the popup to view/edit the queue and "Download Bundle".
 
 ---
 
-## ⚙️ Systemd Setup (Linux Auto-Start)
+## ⚙️ Systemd Auto-Start (Linux)
 
-To keep the server running in the background automatically on Linux:
+To keep the server running in the background:
 
-1.  **Create Service File:**
-    ```bash
-    mkdir -p ~/.config/systemd/user/
-    nano ~/.config/systemd/user/epub-server.service
-    ```
-
-2.  **Paste Configuration:**
-    *Replace `/path/to/project` with your actual path.*
-    *Replace `/path/to/uv` with your uv path (run `which uv` to find it).*
-
+1.  Create `~/.config/systemd/user/epub-server.service`:
     ```ini
     [Unit]
-    Description=Web to EPUB Python Server
+    Description=Web to EPUB Server
     After=network.target
 
     [Service]
-    WorkingDirectory=/path/to/project
+    WorkingDirectory=/path/to/epub_downloader
     ExecStart=/path/to/uv run server.py
     Restart=always
-    RestartSec=5
 
     [Install]
     WantedBy=default.target
     ```
-
-3.  **Enable & Start:**
+2.  Enable it:
     ```bash
-    systemctl --user daemon-reload
     systemctl --user enable --now epub-server
-    ```
-
-4.  **Check Status:**
-    ```bash
-    systemctl --user status epub-server
     ```
 
 ---
 
-## 🏗 Architecture & History
-*Why the code looks the way it does.*
+## 🏗 Architecture
 
-### 1. Modular Driver Pattern
-The project is structured as a Python package (`epub_downloader`) for maintainability:
-- **`epub_downloader/drivers/`**: Specialized extractors for different platforms (HN, Reddit, Substack, YouTube, WordPress, Forum).
-- **`epub_downloader/core/`**: Core logic including `ArticleExtractor` (text), `ImageProcessor` (media), and `DriverDispatcher` (routing).
-- **`epub_downloader/models.py`**: Shared data structures and constants.
-- **`main.py`**: CLI entry point.
-- **`server.py`**: FastAPI backend for the browser extension.
+The project uses a **modular driver pattern**:
+- **`epub_downloader/drivers/`**: Site-specific logic (HN, Reddit, Forum, etc.).
+- **`epub_downloader/core/`**: Shared logic for text extraction, image processing, and EPUB generation.
+- **Extensions**: act as "Thin Clients", injecting scripts to scrape DOM/Cookies and sending payloads to the Python backend for heavy lifting (EPUB building).
 
-### 2. The Battle for Layout (E-Ink Optimization)
-Formatting for a 30-inch monitor breaks on a 6-inch Kindle.
-*   **"Squashed Text" Problem:** Deep nesting shrank the content column. Border-based indentation keeps hierarchy without collapsing width.
-*   **"Flexbox" Failure:** Older e-readers ignore `display: flex`. CSS table layout keeps headers and navigation on one line.
-
-### 3. Navigation (The "Cluster")
-Reading threaded conversations linearly is difficult.
-*   Solution: A navigation cluster (`↑ → ⏮ ⏭`) in each comment header with internal anchors for Parent / Next Sibling / Thread Root / Next Thread.
-
-### 4. Image Handling & The "Picture" Problem
-*   **Lazy Loading:** Detects `data-src`/`srcset` fallbacks to retrieve high-res images.
-*   **`<picture>` Trap:** Unwraps `<picture>` and `<source>` so e-readers use the bundled `<img>` instead of remote URLs.
-
-### 5. Forums & Gated Attachments (Browser Assist)
-*   **Problem:** XenForo and similar forums gate attachments behind session/anti-hotlink checks, returning 403/409 and serving only thumbnails to direct fetches.
-*   **Solution:** The Firefox extension preloads assets using the live browser session:
-    * Scrapes post-body images (src/srcset/data-url) from the active tab.
-    * Background-fetches forum pages/attachments with cookies; follows viewer pages and parses full-size URLs, and downloads external images (e.g., Flickr).
-*   **Latest Fix (multi-page reliability):** Asset fetch now runs entirely in the background after the popup closes, strips URL fragments so pages 2/3 load, filters out avatars/1x1s, guards lazy-load lightbox nodes, and retries attachment fetches when needed so all post images make it into the EPUB without duplication.
-    * Sends assets to the server; core matches them and skips re-downloading.
-*   **Result:** Full-size forum attachments embed correctly; use the extension path for gated content (CLI alone cannot replicate browser-only tokens/headers).
-
-### 6. Anti-Bot Defenses & "Fast Fail"
-*   **Problem:** Many sites (WaPo, etc.) block `aiohttp` requests with 403 Forbidden or timeouts (fingerprinting), causing long delays.
-*   **Image Strategy:** If `aiohttp` fails on the first attempt (403/timeout) for an image, the downloader **immediately** breaks the retry loop and falls back to a synchronous `requests` fetch, which often bypasses WAFs.
-*   **Article Strategy:** If the main article fetch returns 403, the tool **fails fast** (skipping 5 retries) and immediately falls back to the Internet Archive (Wayback Machine). This drastically reduces wait times for protected content.
-*   **Next.js Hydration:** For sites (like WaPo) that serve empty HTML shells, the tool parses `__NEXT_DATA__` JSON to find image content elements and injects them into placeholder `div`s (matching by ID) or appends them to the article body.
-
-### Forum Pipeline (Current)
-*   **Input:** Extension flags `is_forum`, passes cookies plus preloaded assets (base64 content with original/viewer/canonical URLs, queryless variants allowed), optional page ranges (`pages`, `max_pages`).
-*   **Pre-seed:** All preloaded assets are decoded once and added to `book_assets` with URL variants so they are available for every page before HTML processing.
-*   **Crawl:** Normalize base thread URL; fetch each page (sequentially or explicit range); parse posts; run the forum image processor.
-*   **Rewrite:** Build a map from every pre-seeded asset URL (including query-stripped and viewer/canonical variants) to its filename; swap matching `<img>`/attachment URLs in-place. Skip junk (reaction emoji) and prefer preloaded assets over network fetches.
-*   **Fallback fetch:** For unmatched attachment URLs, use requests-only with cookies, including queryless retries; avoid aiohttp 409 loops.
-*   **Output:** Single-thread chapter with page labels and all distinct attachments embedded; tightened CSS to reduce whitespace around images/posts.
-*   **Challenges solved:** MTBR-style attachments used multiple URL forms and 409-protected CDNs. The mapping of URL variants to preloaded assets prevented collapsing every image to the first, and request-only/queryless fallbacks plus multi-page asset fetch ensured coverage across thread pages.
-# todo
-- support wordpress comments, ex site: https://caseyhandmer.wordpress.com/2025/11/26/antimatter-development-program/
-- refactor code, see note (gemini?)
-- per site rules
-- should run in background not need popup open if many tabs are bundled
-- support crawling certain number of link hierarchy
-- sign extension
-- keyboard shortcut add selected to bundle
-- right click menu to add selected to bundle
-- keyboard shortcut to download bundle
-- headless mode, better for rss?
-- port to chrome extension 
-- on koreader siden plugin for saving links to special file? or could just parse highlights later.  
-- for youtube links: fetch transcript, optional formatting, optional summary?
-- for any link summary option
-
-# other ideas
-  1. Automated Testing Suite
-   * Problem: The codebase relies heavily on manual testing. As we've seen (e.g., with the Next.js
-     recursion issue), changes can easily introduce regressions or unexpected behavior on specific
-     sites.
-   * Suggestion: Implement a basic test suite using pytest.
-       * Unit Tests: Test individual components like _extract_origin_from_proxy, _clean_soup, and
-         _seed_images_from_nextjs_data with mocked inputs (HTML/JSON strings).
-       * Integration Tests: Use aioresponses or a mock server to simulate site responses (including
-         403s, Timeouts, and specific HTML structures like WaPo) and verify that the drivers (Generic,
-         HN, Reddit) behave as expected (retry logic, failover, extraction).
-       * Snapshot Testing: Save "known good" HTML inputs for key sites (WaPo, Substack, HN) and ensure
-         the extractor output matches a stored "golden" output. This detects layout breakages.
-
-  2. Refactor `GenericDriver` Complexity
-   * Problem: GenericDriver handles too much: standard scraping, Next.js hydration, fallback image
-     injection, and cleanup. It's becoming a "God Class".
-   * Suggestion: Split the responsibilities.
-       * Create a ContentEnhancer or HydrationManager class responsible for detecting and applying
-         special handling (like __NEXT_DATA__ seeding).
-       * Create a dedicated ImageInjector class to handle the logic of "finding placeholders vs
-         appending".
-       * GenericDriver would then orchestrate these smaller, testable components.
-
-  3. Configurable Site Profiles
-   * Problem: Site-specific logic (like imrs.php handling, though generalized now) is hardcoded or
-     relies on heuristics.
-   * Suggestion: Move site-specific configurations (proxy patterns, content selectors, anti-bot rules)
-     into a configuration file (YAML/JSON) or a SiteProfile class registry.
-       * Example: A profile for washingtonpost.com could define proxy_pattern: "imrs.php",
-         nextjs_hydration: true, fail_fast: true.
-       * This makes adding support for new problematic sites easier without modifying core logic.
-
-  4. Unified "Context" Object
-   * Problem: Data like cookies, raw_html, assets, and options are passed around as loose arguments to
-     many functions (prepare_book_data, process_images, seed...).
-   * Suggestion: Encapsulate this request context into a richer ConversionContext object that flows
-     through the pipeline. This makes function signatures cleaner and easier to extend (e.g., adding
-     headers or proxy settings later wouldn't require changing every function signature).
-
-  5. Better Progress Feedback
-   * Problem: Long operations (like the initial 5-minute timeout we saw) give little feedback to the
-     user via the extension (just "Processing...").
-   * Suggestion: Implement a WebSocket or Server-Sent Events (SSE) endpoint for the server. The
-     extension could listen to this to display real-time progress bars ("Fetching images: 3/10",
-     "Retrying...", "Using Archive fallback"). This greatly improves perceived performance and
-     troubleshooting.
-
-  Would you like me to elaborate on any of these or help you implement one? "Automated Testing" or
-  "Refactor GenericDriver" would be high-value next steps.
+See [CHANGELOG.md](CHANGELOG.md) for recent updates and [TODO.md](TODO.md) for the roadmap.

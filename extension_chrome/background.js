@@ -6,8 +6,24 @@ try {
 
 // Initialize
 browser.runtime.onInstalled.addListener(() => {
-    browser.storage.local.get("urlQueue").then((res) => {
+    browser.storage.local.get([
+        "urlQueue", 
+        "keyboardShortcutsEnabled",
+        "keyboardShortcutDownload",
+        "keyboardShortcutQueue"
+    ]).then((res) => {
         if (!res.urlQueue) browser.storage.local.set({ urlQueue: [] });
+        
+        // Initialize defaults if not set
+        const updates = {};
+        if (res.keyboardShortcutsEnabled === undefined) updates.keyboardShortcutsEnabled = true;
+        if (res.keyboardShortcutDownload === undefined) updates.keyboardShortcutDownload = "ctrl+shift+e";
+        if (res.keyboardShortcutQueue === undefined) updates.keyboardShortcutQueue = "ctrl+shift+q";
+        
+        if (Object.keys(updates).length > 0) {
+            browser.storage.local.set(updates);
+        }
+        
         updateBadge();
     });
 
@@ -21,6 +37,11 @@ browser.runtime.onInstalled.addListener(() => {
                     contexts: ["page", "link"]
                 });
                 menus.create({
+                    id: "add-selected-to-queue",
+                    title: "Add selected tabs to EPUB Queue",
+                    contexts: ["page"]
+                });
+                menus.create({
                     id: "download-page",
                     title: "Download Page to EPUB",
                     contexts: ["page", "link"]
@@ -31,6 +52,11 @@ browser.runtime.onInstalled.addListener(() => {
                 id: "add-to-queue",
                 title: "Add to EPUB Queue",
                 contexts: ["page", "link"]
+            });
+            menus.create({
+                id: "add-selected-to-queue",
+                title: "Add selected tabs to EPUB Queue",
+                contexts: ["page"]
             });
             menus.create({
                 id: "download-page",
@@ -48,9 +74,47 @@ if (menusApi && menusApi.onClicked) {
         if (info.menuItemId === "add-to-queue") {
             const url = info.linkUrl || tab.url;
             await addToQueue(url);
+        } else if (info.menuItemId === "add-selected-to-queue") {
+            try {
+                const tabs = await browser.tabs.query({currentWindow: true, highlighted: true});
+                let count = 0;
+                for (let t of tabs) {
+                    if (t.url && t.url.startsWith("http")) {
+                        await addToQueue(t.url);
+                        count++;
+                    }
+                }
+                console.log(`Added ${count} selected tabs to queue via context menu`);
+            } catch (e) {
+                console.error("Failed to add selected tabs to queue", e);
+            }
         } else if (info.menuItemId === "download-page") {
             const url = info.linkUrl || tab.url;
             await downloadSingleFromContext(url);
+        }
+    });
+}
+
+// Command Listener (Native Shortcuts)
+if (browser.commands && browser.commands.onCommand) {
+    browser.commands.onCommand.addListener(async (command) => {
+        const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+        const tab = tabs[0];
+        if (!tab || !tab.url || !tab.url.startsWith("http")) return;
+
+        if (command === "download-page") {
+            lastShortcutTabId = tab.id;
+            let html = null;
+            try {
+                const results = await chrome.scripting.executeScript({
+                    target: { tabId: tab.id },
+                    func: () => document.documentElement.outerHTML
+                });
+                if (results && results[0] && results[0].result) html = results[0].result;
+            } catch (e) { /* fallback */ }
+            downloadFromShortcut(tab.url, html);
+        } else if (command === "add-to-queue") {
+            addToQueue(tab.url);
         }
     });
 }
@@ -90,6 +154,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
         if (target && target.startsWith("http")) {
             downloadFromShortcut(target, message.html || null);
         }
+        return true;
     } else if (message.action === "shortcut-queue") {
         if (sender && sender.tab && sender.tab.id) {
             lastShortcutTabId = sender.tab.id;
@@ -98,6 +163,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
         if (target && target.startsWith("http")) {
             addToQueue(target);
         }
+        return true;
     }
 });
 

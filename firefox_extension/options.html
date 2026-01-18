@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>EPUB Downloader Options</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 16px; }
+    .row { margin-bottom: 12px; }
+    label { display: block; font-weight: bold; margin-bottom: 4px; }
+    input[type="text"] { width: 220px; padding: 6px; }
+    input[type="checkbox"] { margin-right: 6px; }
+    .hint { font-size: 12px; color: #555; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h2>Keyboard Shortcuts</h2>
+  <div class="row">
+    <label>
+      <input type="checkbox" id="enable-shortcuts">
+      Enable keyboard shortcuts
+    </label>
+    <div class="hint">Requires a hardware keyboard. Not available on about:/file: pages.</div>
+  </div>
+  <div class="row">
+    <label for="download-shortcut">Download page shortcut</label>
+    <input type="text" id="download-shortcut" placeholder="ctrl+shift+e" autocomplete="off">
+    <div class="hint">Press the desired combo while this field is focused.</div>
+  </div>
+  <div class="row">
+    <label for="queue-shortcut">Add to queue shortcut</label>
+    <input type="text" id="queue-shortcut" placeholder="ctrl+shift+q" autocomplete="off">
+    <div class="hint">Press the desired combo while this field is focused.</div>
+  </div>
+  <hr />
+  <h2>Downloads</h2>
+  <div class="row">
+    <label for="download-subfolder">Download Subfolder (inside default downloads)</label>
+    <input type="text" id="download-subfolder" placeholder="WebToEpub" autocomplete="off">
+    <div class="hint">Optional. Leave blank to use the default downloads root.</div>
+  </div>
+  <div class="row">
+    <label for="download-termux">Termux copy dir</label>
+    <input type="text" id="download-termux" placeholder="/data/data/com.termux/files/home/storage/downloads" autocomplete="off">
+    <div class="hint">Used on Android/Termux to drop a copy. Leave blank for default.</div>
+  </div>
+  <hr />
+  <h2>Experimental Features</h2>
+  <div class="row">
+    <label>
+      <input type="checkbox" id="llm-format">
+      Use LLM for YouTube Transcripts
+    </label>
+    <div class="hint">Requires GEMINI_API_KEY or OPENAI_API_KEY env var on server.</div>
+  </div>
+  <div class="row">
+    <label for="llm-model">LLM Model</label>
+    <input type="text" id="llm-model" placeholder="google/gemini-flash-1.5" autocomplete="off">
+    <div class="hint">Model ID for OpenRouter or Google. Default: gemini-1.5-flash</div>
+  </div>
+  <div class="row">
+    <label for="llm-api-key">LLM API Key</label>
+    <input type="password" id="llm-api-key" placeholder="AIza... or sk-..." autocomplete="off">
+    <div class="hint">Optional. Overrides server .env variables. Stored in browser local storage.</div>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

@@ -8,7 +8,7 @@
 - `main.py`: CLI entry point (replaces monolithic script).
 - `web_to_epub.py`: Legacy shim for backward compatibility (imports from `epub_downloader`).
 - `server.py`: FastAPI backend. Adds `/helper/extract-links` for server-side HTML parsing (Chrome MV3 compat).
-- `extension/`: Firefox add-on (Manifest V2).
+- `firefox_extension/`: Firefox add-on (Manifest V2).
 - `extension_chrome/`: Chrome/Brave/Edge add-on (Manifest V3). Uses a shim and server-side parsing to bypass Service Worker DOM limits.
 
 ## Build, Test, and Development Commands
@@ -40,7 +40,7 @@
 - No formal test suite is present; rely on targeted manual runs:
   - Single URL sanity: `uv run web_to_epub.py <url>`
   - Bundle path: `uv run web_to_epub.py -i links.txt --bundle`
-  - Extension round-trip: `uv run server.py` + load `extension/` temporary add-on, then trigger “Download Page”.
+  - Extension round-trip: `uv run server.py` + load `firefox_extension/` temporary add-on, then trigger “Download Page”.
 - When adding drivers/features, exercise problematic cases (lazy-loaded images, deep comment trees, Substack custom domains) and capture failures in the PR notes.
 
 ## Commit & Pull Request Guidelines
