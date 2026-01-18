@@ -88,11 +88,17 @@ uv run main.py [URL] --llm --api-key "AIzaSy..."
 
 | Option | What it does | When to use it |
 | :--- | :--- | :--- |
-| **Use Site Cookies** | Sends your browser login tokens to the backend. | Paywalled articles (Substack, WaPo), private blogs, and forum attachments. |
-| **Force Forum Driver** | Triggers multi-page crawling and attachment scraping. | XenForo, vBulletin, or any threaded discussion board. |
-| **Internet Archive** | Forces the backend to fetch the URL from the Wayback Machine. | Dead links, paywalls that block the scraper, or when the live site is broken. |
+| **No Comments** | Skips downloading comments. | If you only want the main article from Reddit/HN. |
+| **Comments Only** | Skips the main article body. | For "Ask HN" threads or when you only care about the discussion. |
+| **Text Only** | Removes all images. | To save space or data. |
+| **Archive.org** | Forces fetch from Wayback Machine. | Dead links or broken live sites. |
+| **AI Summary** | Generates a 3-5 paragraph summary. | Long articles/transcripts (requires API Key). |
+| **Use Site Cookies** | Sends browser cookies to backend. | Paywalls, private blogs, forum attachments. |
+| **Force Forum Driver** | Triggers multi-page crawling/scraping. | XenForo/vBulletin threads. |
+| **Forum Pages** | Specify page range (e.g., `1,3-5`). | To download only specific parts of a thread. |
+| **Max Pages** | Limit the number of pages crawled. | To prevent downloading thousands of posts. |
 
-*Note: For forums, you usually need **both** enabled to download full-resolution attachments.*
+*Note: For forums, you usually need **both** 'Use Site Cookies' and 'Force Forum Driver' enabled to download full-resolution attachments.*
 
 ### 🏛️ Internet Archive Fallback
 **dala** tries to be resilient:
