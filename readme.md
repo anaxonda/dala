@@ -1,6 +1,6 @@
 # dala: Web-to-EPUB Downloader (E-Ink Optimized)
 
-**dala** is a specialized tool to convert complex web content—threaded discussions, forums, transcripts, and paywalled articles—into clean, e-ink optimized EPUBs for devices like Kindle, Kobo, and Boox.
+**dala** is a specialized tool to convert complex web content—threaded discussions, forums, transcripts, and paywalled articles—into clean, e-ink optimized EPUBs. Koreader recommended.
 
 It solves the "read later" problem for the messy web:
 *   **Hacker News & Reddit:** Recursively fetches nested comments and adds a clickable "navigation cluster" to every post, making it possible to read deep threads on an e-reader.
@@ -28,7 +28,7 @@ It solves the "read later" problem for the messy web:
     ```
 
 3.  **Install the Extension:**
-    *   **Firefox:** Type `about:debugging` in the URL bar -> **This Firefox** -> **Load Temporary Add-on** -> Select `firefox_extension/manifest.json`.
+    *   **Firefox:** Signed XPI provided in releases (otherwise load from about:debugging)
     *   **Chrome/Brave:** Go to `chrome://extensions` -> Enable **Developer Mode** -> **Load unpacked** -> Select `extension_chrome/` folder.
 
 4.  **Download:**
@@ -45,7 +45,7 @@ The extension is the primary way to use **dala**. It acts as a "Thin Client," ca
 *   **Queue / Bundle:** Right-click multiple links and select **"Add to EPUB Queue"**. Open the popup to manage the queue and click **"Download Bundle"** to merge them into a single "Anthology" EPUB.
 
 ### 2. Command Line Interface (CLI)
-For batch processing or automation, use the CLI directly.
+For batch processing or automation, use the CLI directly. Doesn't work as well as the browser extension as it can't use already loaded content.
 
 ```bash
 # Single URL
@@ -66,7 +66,7 @@ This allows you to skip boring branches or jump back up the tree easily using th
 #### 🔐 Forums & Paywalls
 Many forums (like XenForo) hide attachments or high-res images from guests. CLI tools fail here.
 *   **How to use:** Log in to the site in your browser. Use the **Extension** to download.
-*   **How it works:** The extension sends your cookies to the backend, allowing it to fetch gated images and attachments as *you*.
+*   **How it works:** The extension sends your cookies to the backend, allowing it to fetch gated images and attachments as *you*. Need to select 
 
 #### 📺 YouTube Transcripts & AI
 Convert videos into text.
