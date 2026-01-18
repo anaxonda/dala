@@ -125,20 +125,42 @@ You can define custom extraction rules for specific websites in a `sites.yaml` f
 ## 🛠 Detailed Installation
 
 ### Prerequisites
-*   **Linux/macOS/Windows**
 *   **Python 3.8+**
 *   **uv** (Highly recommended for zero-config dependency management):
-    ```bash
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    ```
+    *   **macOS (Homebrew):** `brew install uv`
+    *   **Windows (PowerShell):** `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
+    *   **Linux:** `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
-### Backend Setup
-If you don't use `uv`, you can install dependencies manually using `pip`:
+### 💻 Platform Specifics
+
+#### macOS
+1.  Open **Terminal**.
+2.  Install `uv`: `brew install uv`
+3.  Clone and run: `git clone ... && cd dala && uv run server.py`
+4.  *Note:* macOS may prompt you to install "Command Line Tools" if you don't have Git installed.
+
+#### Windows
+1.  Open **PowerShell** (as Administrator).
+2.  Install `uv`: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
+3.  Close and reopen PowerShell to refresh your PATH.
+4.  Run the server: `uv run server.py`
+5.  *Troubleshooting:* If you see a "Execution Policy" error, run `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` then try again.
+
+#### Linux
+Standard installation as described in the [Quick Start](#-quick-start). For background execution, use the [Systemd guide](#-systemd-auto-start-linux).
+
+### Backend Setup (Alternative: PIP)
+If you prefer not to use `uv`, you can use standard Python virtual environments:
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+# macOS / Linux
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-# Note: You may need to manually install 'youtube-transcript-api', 'fastapi', 'uvicorn', etc. if not in requirements.
+
+# Windows
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
 ### Systemd Auto-Start (Linux)
