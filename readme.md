@@ -6,7 +6,7 @@ It solves the "read later" problem for the messy web:
 *   **Hacker News & Reddit:** Recursively fetches nested comments and adds a clickable "navigation cluster" to every post, making it possible to read deep threads on an e-reader.
 *   **Forums (XenForo, etc.):** Uses a browser extension to capture your login session, downloading gated attachments and high-res imagesthat CLI tools miss.
 *   **YouTube:** Downloads transcripts and optionally uses AI to format them into readable articles or generate summaries.
-*   **Paywalls:** The extension shares your browser's cookies with the backend to access subscriber-only content (Substack, newspapers).
+*   **Paywalls:** The extension shares your browser's cookies with the backend to access subscriber-only content (Substack, newspapers). Checkout "bypass-paywalls-firefox-clean" extension from magnolia1234 on gitflic.
 
 <img src="firefox_extension/icon.png" alt="dala icon" width="72" />
 
