@@ -10,6 +10,15 @@ It solves the "read later" problem for the messy web:
 
 <img src="firefox_extension/icon.png" alt="dala icon" width="72" />
 
+<p align="center">
+  <img src="screenshot/Screenshot_20260118_155731.png" width="45%" />
+  <img src="screenshot/Screenshot_20260118_155753.png" width="45%" />
+</p>
+<p align="center">
+  <img src="screenshot/Screenshot_20260118_162833.png" width="45%" />
+  <img src="screenshot/Screenshot_20260118_163015.png" width="45%" />
+</p>
+
 ## Table of Contents
 - [Quick Start](#-quick-start)
 - [Usage Guide](#-usage-guide)
@@ -326,19 +335,6 @@ LLM_MODEL=gemini-1.5-flash
 *   **`dala/drivers/`**: Contains site-specific logic (e.g., `hn.py`, `reddit.py`, `forum.py`).
 *   **`dala/core/`**: Shared logic for text extraction, image processing, and EPUB generation.
 *   **`firefox_extension/` & `extension_chrome/`**: Thin clients that handle the "View Source" & authentication part of the pipeline.
-
----
-
-## 📸 Screenshots
-
-<p align="center">
-  <img src="screenshot/Screenshot_20260118_155731.png" width="45%" />
-  <img src="screenshot/Screenshot_20260118_155753.png" width="45%" />
-</p>
-<p align="center">
-  <img src="screenshot/Screenshot_20260118_162833.png" width="45%" />
-  <img src="screenshot/Screenshot_20260118_163015.png" width="45%" />
-</p>
 
 ---
 
