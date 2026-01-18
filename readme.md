@@ -4,7 +4,7 @@
 
 It solves the "read later" problem for the messy web:
 *   **Hacker News & Reddit:** Recursively fetches nested comments and adds a clickable "navigation cluster" to every post, making it possible to read deep threads on an e-reader.
-*   **Forums (XenForo, etc.):** Uses a browser extension to capture your login session, downloading gated attachments and high-res images that CLI tools miss.
+*   **Forums (XenForo, etc.):** Uses a browser extension to capture your login session, downloading gated attachments and high-res imagesthat CLI tools miss.
 *   **YouTube:** Downloads transcripts and optionally uses AI to format them into readable articles or generate summaries.
 *   **Paywalls:** The extension shares your browser's cookies with the backend to access subscriber-only content (Substack, newspapers).
 
@@ -90,13 +90,13 @@ uv run main.py [URL] --llm --api-key "AIzaSy..."
 | :--- | :--- | :--- |
 | **No Comments** | Skips downloading comments. | If you only want the main article from Reddit/HN. |
 | **Comments Only** | Skips the main article body. | For "Ask HN" threads or when you only care about the discussion. |
-| **Text Only** | Removes all images. | To save space or data. |
+| **Text Only** | Removes all images. | To save space or data. Much faster download. |
 | **Archive.org** | Forces fetch from Wayback Machine. | Dead links or broken live sites. |
 | **AI Summary** | Generates a 3-5 paragraph summary. | Long articles/transcripts (requires API Key). |
-| **Use Site Cookies** | Sends browser cookies to backend. | Paywalls, private blogs, forum attachments. |
+| **Use Site Cookies** | Sends browser cookies to backend. | Mainly useful for forums, maybe for paywalls. |
 | **Force Forum Driver** | Triggers multi-page crawling/scraping. | XenForo/vBulletin threads. |
-| **Forum Pages** | Specify page range (e.g., `1,3-5`). | To download only specific parts of a thread. |
-| **Max Pages** | Limit the number of pages crawled. | To prevent downloading thousands of posts. |
+| **Forum Pages** | Specify specific pages (e.g., `1,3-5`). | To download only specific parts of a thread. Overrides 'Max Pages'. |
+| **Max Pages** | Limit the total number of sequential pages. | Stops crawling after N pages (e.g. "Download first 5 pages"). |
 
 *Note: For forums, you usually need **both** 'Use Site Cookies' and 'Force Forum Driver' enabled to download full-resolution attachments.*
 
