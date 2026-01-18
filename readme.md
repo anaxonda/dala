@@ -59,6 +59,11 @@ The extension is the primary way to use **dala**. It acts as a "Thin Client," ca
 *   **Single Page:** Click the icon -> "Download Page".
 *   **Queue / Bundle:** Right-click multiple links and select **"Add to EPUB Queue"**. Open the popup to manage the queue and click **"Download Bundle"** to merge them into a single "Anthology" EPUB.
 
+#### 📂 Custom Download Folders
+You can customize where your EPUBs are saved by clicking the **"Keyboard Shortcuts"** button in the extension popup:
+*   **Download Subfolder:** Specify a folder name (e.g., `Kindle`) to have EPUBs saved to `Downloads/Kindle/`.
+*   **Termux Copy Dir (Android):** Browsers on Android often hide files in `Android/data`. You can specify a Termux path (e.g., `/sdcard/Download`) to have the **server** drop a copy of the EPUB directly where you want it.
+
 ### 2. Command Line Interface (CLI)
 For batch processing or automation, use the CLI directly. Doesn't work as well as the browser extension as it can't use already loaded content.
 
