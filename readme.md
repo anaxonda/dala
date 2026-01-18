@@ -18,6 +18,9 @@ It solves the "read later" problem for the messy web:
   <img src="screenshot/Screenshot_20260118_162833.png" width="45%" />
   <img src="screenshot/Screenshot_20260118_163015.png" width="45%" />
 </p>
+<p align="center">
+  <img src="screenshot/Screenshot_20260118_155810.png" width="45%" />
+</p>
 
 ## Table of Contents
 - [Quick Start](#-quick-start)
