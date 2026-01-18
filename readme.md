@@ -90,8 +90,35 @@ uv run main.py [URL] --llm --api-key "AIzaSy..."
 | :--- | :--- | :--- |
 | **Use Site Cookies** | Sends your browser login tokens to the backend. | Paywalled articles (Substack, WaPo), private blogs, and forum attachments. |
 | **Force Forum Driver** | Triggers multi-page crawling and attachment scraping. | XenForo, vBulletin, or any threaded discussion board. |
+| **Internet Archive** | Forces the backend to fetch the URL from the Wayback Machine. | Dead links, paywalls that block the scraper, or when the live site is broken. |
 
 *Note: For forums, you usually need **both** enabled to download full-resolution attachments.*
+
+### 🏛️ Internet Archive Fallback
+**dala** tries to be resilient:
+1.  **Automatic:** If a live fetch fails (404 Not Found, 403 Forbidden), it **automatically** falls back to the Internet Archive (Wayback Machine) to find the latest snapshot.
+2.  **Manual:** You can force this behavior if you know a link is dead or want to view an older version:
+    *   **Extension:** Check the "Internet Archive" box in the popup before downloading.
+    *   **CLI:** Add the `-a` or `--archive` flag.
+
+---
+
+## 🎨 Advanced Customization (`sites.yaml`)
+You can define custom extraction rules for specific websites in a `sites.yaml` file in the project root. This is useful for stubborn sites with weird layouts.
+
+**Example `sites.yaml`:**
+```yaml
+- name: "The New York Times"
+  domains:
+    - "nytimes.com"
+  content_selector: "article#story"  # Only extract text from this ID
+  remove:                            # Delete these elements before generating EPUB
+    - "#top-wrapper"
+    - ".ad-container"
+    - "div[data-testid='recirculation']"
+```
+*   **content_selector:** CSS selector to pinpoint the main article text (ignores everything else).
+*   **remove:** List of CSS selectors to strip out (ads, sidebars, "read more" links).
 
 ---
 
