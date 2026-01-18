@@ -163,9 +163,50 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-### Systemd Auto-Start (Linux)
-To keep the server running in the background automatically:
+## 🏃 Run in Background
 
+#### macOS (`launchd`)
+1.  Create `~/Library/LaunchAgents/com.dala.server.plist`:
+    ```xml
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>Label</key>
+        <string>com.dala.server</string>
+        <key>ProgramArguments</key>
+        <array>
+            <string>/usr/local/bin/uv</string>
+            <string>run</string>
+            <string>server.py</string>
+        </array>
+        <key>WorkingDirectory</key>
+        <string>/path/to/dala</string>
+        <key>RunAtLoad</key>
+        <true/>
+        <key>KeepAlive</key>
+        <true/>
+        <key>StandardOutPath</key>
+        <string>/tmp/dala.log</string>
+        <key>StandardErrorPath</key>
+        <string>/tmp/dala.err</string>
+    </dict>
+    </plist>
+    ```
+2.  Load it: `launchctl load ~/Library/LaunchAgents/com.dala.server.plist`
+
+#### Windows (Startup Folder)
+1.  Create `start_dala.bat` in the project folder:
+    ```bat
+    @echo off
+    cd /d "%~dp0"
+    uv run server.py
+    ```
+2.  Press `Win + R`, type `shell:startup`, and press Enter.
+3.  Right-click in the folder -> **New Shortcut** -> browse to your `start_dala.bat`.
+4.  *Optional:* To run minimized, right-click the shortcut -> **Properties** -> **Run: Minimized**.
+
+#### Linux (Systemd)
 1.  Create `~/.config/systemd/user/dala.service`:
     ```ini
     [Unit]
@@ -180,10 +221,7 @@ To keep the server running in the background automatically:
     [Install]
     WantedBy=default.target
     ```
-2.  Enable it:
-    ```bash
-    systemctl --user enable --now dala
-    ```
+2.  Enable it: `systemctl --user enable --now dala`
 
 ---
 
