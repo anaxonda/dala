@@ -1,0 +1,19 @@
+# Environments
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.pytest_cache/
+.uvcache/
+
+# Project specific
+dist/
+dala-chrome-v*.zip
+dala-firefox-v*.xpi
+*.epub
+release_notes.md
