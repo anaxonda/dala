@@ -1,11 +1,13 @@
 # dala: Web-to-EPUB Downloader (E-Ink Optimized)
 
-**dala** is a specialized tool to convert complex web content—threaded discussions, forums, transcripts, and paywalled articles—into clean, e-ink optimized EPUBs. Koreader recommended.
+**dala** is a tool to convert  web content—articles, threaded discussions, forums, transcripts, and paywalled articles—into clean, e-ink optimized EPUBs. Koreader recommended.
+Its for when you have 30 tabs that you're going to read "soon". Make an ebook out of them instead. I was using the [Singlefile](https://github.com/gildas-lormeau/SingleFile) extension to download page html and reading that on Koreader; this works and is simpler, but much more limited to the pages and content that works.
 
-It solves the "read later" problem for the messy web:
+Supports sources including but not limited to:
 *   **Hacker News & Reddit:** Recursively fetches nested comments and adds a clickable "navigation cluster" to every post, making it possible to read deep threads on an e-reader.
+*   **Substack** Download and format post, optionally embedding images, and recursively fetches nested comments (like HN) as a subchapter. If a hacker news post links to substack it will fetch both substack and HN comment threads as subchapters.
 *   **Forums (XenForo, etc.):** Uses a browser extension to capture your login session, downloading gated attachments and high-res imagesthat CLI tools miss.
-*   **YouTube:** Downloads transcripts and optionally uses AI to format them into readable articles or generate summaries. Suprisingly nice to read youtube videos instead of watching them.
+*   **YouTube:** Downloads transcripts and optionally uses AI to format them into readable articles or generate summaries. Suprisingly nice to read youtube videos instead of watching them. Currently don't support comments.
 *   **Paywalls:** The extension shares your browser's cookies with the backend to access subscriber-only content (Substack, newspapers). Checkout "bypass-paywalls-firefox-clean" extension from magnolia1234 on gitflic.
 
 <img src="firefox_extension/icon.png" alt="dala icon" width="72" />
