@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "dala",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "description": "Batch download web articles to EPUB via local server.",
   "icons": {
     "48": "icon.png"

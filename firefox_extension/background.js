@@ -79,8 +79,31 @@ if (browser.commands && browser.commands.onCommand) {
         const tab = tabs[0];
         if (!tab || !tab.url || !tab.url.startsWith("http")) return;
 
+        const showNativeToast = async (tabId, text) => {
+            try {
+                // Try sending message first (cleaner)
+                await browser.tabs.sendMessage(tabId, { action: "shortcut-toast", message: text });
+            } catch (e) {
+                // Fallback to injection
+                browser.tabs.executeScript(tabId, {
+                    code: `
+                    (() => {
+                        const existing = document.getElementById("epub-shortcut-toast");
+                        if (existing) existing.remove();
+                        const el = document.createElement("div");
+                        el.id = "epub-shortcut-toast";
+                        el.textContent = "${text}";
+                        el.style.cssText = "position:fixed;top:16px;right:16px;background:#4CAF50;color:white;padding:10px 14px;border-radius:4px;z-index:2147483647;font-size:13px;box-shadow:0 2px 6px rgba(0,0,0,0.25);";
+                        document.body.appendChild(el);
+                        setTimeout(() => { el.remove(); }, 2500);
+                    })();`
+                }).catch(() => {});
+            }
+        };
+
         if (command === "download-page") {
             lastShortcutTabId = tab.id;
+            showNativeToast(tab.id, "Starting EPUB download…");
             // Native command doesn't have HTML, so we grab it if possible or fallback
             let html = null;
             try {
@@ -89,7 +112,8 @@ if (browser.commands && browser.commands.onCommand) {
             } catch (e) { /* fallback to no-html fetch */ }
             downloadFromShortcut(tab.url, html);
         } else if (command === "add-to-queue") {
-            addToQueue(tab.url);
+            await addToQueue(tab.url);
+            showNativeToast(tab.id, "Added to EPUB queue");
         }
     });
 }
@@ -128,18 +152,20 @@ browser.runtime.onMessage.addListener((message, sender) => {
         }
         const target = message.url;
         if (target && target.startsWith("http")) {
+            // Trigger download asynchronously; resolve immediately to show "Starting..." toast
             downloadFromShortcut(target, message.html || null);
         }
-        return true; 
+        return Promise.resolve(); 
     } else if (message.action === "shortcut-queue") {
         if (sender && sender.tab && sender.tab.id) {
             lastShortcutTabId = sender.tab.id;
         }
         const target = message.url;
         if (target && target.startsWith("http")) {
-            addToQueue(target);
+            // Return the promise so we wait for storage update before ack
+            return addToQueue(target);
         }
-        return true;
+        return Promise.resolve();
     }
 });
 

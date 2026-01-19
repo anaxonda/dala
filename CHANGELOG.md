@@ -2,6 +2,11 @@
 
 ## 🔄 Updates
 
+### Keyboard Shortcuts & Feedback
+- Fixed "Queue shortcut failed" error toast in Firefox by properly handling message responses.
+- Fixed missing toast notifications for keyboard shortcuts in Chrome by implementing robust response handling.
+- Added immediate visual feedback ("Starting EPUB download...", "Added to EPUB queue") for native keyboard shortcuts (Ctrl+Shift+E / Ctrl+Shift+Q) in both browsers, ensuring feedback even if the browser consumes the key event.
+
 ### Extension Reliability & Pipeline Alignment
 - **Unified Data Context:** Refactored `background.js` to ensure keyboard shortcuts and context menu actions invoke the same data-gathering logic as the popup UI. Specifically, they now check the `include_cookies` option and fetch `browser.cookies.getAll()` for the target URL, transmitting the session state to the backend. This enables authenticated scraping (e.g., paywalls) via shortcuts which previously failed due to missing cookies.
 - **Mitigating Background Throttling:** Bundle downloads previously hung on background tabs due to browser resource throttling of `executeScript` callbacks. Implemented a `Promise.race` wrapper around script injection with a 5-second timeout. If a background tab is unresponsive, the extension now fails soft, logging a timeout and proceeding to the next URL (falling back to server-side scraping) instead of stalling the entire queue.

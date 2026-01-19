@@ -102,8 +102,32 @@ if (browser.commands && browser.commands.onCommand) {
         const tab = tabs[0];
         if (!tab || !tab.url || !tab.url.startsWith("http")) return;
 
+        // Helper to send toast for native commands
+        const showNativeToast = async (tabId, text) => {
+            try {
+                await browser.tabs.sendMessage(tabId, { action: "shortcut-toast", message: text });
+            } catch (e) {
+                // Fallback if content script listener isn't ready
+                chrome.scripting.executeScript({
+                    target: { tabId },
+                    func: (msg) => {
+                        const existing = document.getElementById("epub-shortcut-toast");
+                        if (existing) existing.remove();
+                        const el = document.createElement("div");
+                        el.id = "epub-shortcut-toast";
+                        el.textContent = msg;
+                        el.style.cssText = "position:fixed;top:16px;right:16px;background:#4CAF50;color:white;padding:10px 14px;border-radius:4px;z-index:2147483647;font-size:13px;box-shadow:0 2px 6px rgba(0,0,0,0.25);";
+                        document.body.appendChild(el);
+                        setTimeout(() => { el.remove(); }, 2500);
+                    },
+                    args: [text]
+                }).catch(() => {});
+            }
+        };
+
         if (command === "download-page") {
             lastShortcutTabId = tab.id;
+            showNativeToast(tab.id, "Starting EPUB download…");
             let html = null;
             try {
                 const results = await chrome.scripting.executeScript({
@@ -114,7 +138,8 @@ if (browser.commands && browser.commands.onCommand) {
             } catch (e) { /* fallback */ }
             downloadFromShortcut(tab.url, html);
         } else if (command === "add-to-queue") {
-            addToQueue(tab.url);
+            await addToQueue(tab.url);
+            showNativeToast(tab.id, "Added to EPUB queue");
         }
     });
 }
@@ -123,7 +148,7 @@ let currentController = null;
 let lastShortcutTabId = null;
 
 // Message Listener
-browser.runtime.onMessage.addListener((message, sender) => {
+browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === "download") {
         processDownloadWithAssets(message.payload, message.isBundle);
         return true; 
@@ -145,7 +170,9 @@ browser.runtime.onMessage.addListener((message, sender) => {
     } else if (message.action === "cancel-download") {
         cancelDownload();
     } else if (message.action === "fetch-assets") {
-        return fetchAssetsForPage(message.url, message.page_spec, message.max_pages);
+        fetchAssetsForPage(message.url, message.page_spec, message.max_pages)
+            .then(res => sendResponse(res));
+        return true;
     } else if (message.action === "shortcut-download") {
         if (sender && sender.tab && sender.tab.id) {
             lastShortcutTabId = sender.tab.id;
@@ -154,19 +181,21 @@ browser.runtime.onMessage.addListener((message, sender) => {
         if (target && target.startsWith("http")) {
             downloadFromShortcut(target, message.html || null);
         }
-        return true;
+        sendResponse({started: true});
+        return false; 
     } else if (message.action === "shortcut-queue") {
         if (sender && sender.tab && sender.tab.id) {
             lastShortcutTabId = sender.tab.id;
         }
         const target = message.url;
         if (target && target.startsWith("http")) {
-            addToQueue(target);
+            addToQueue(target).then(() => sendResponse({added: true}));
+        } else {
+            sendResponse({added: false});
         }
         return true;
     }
 });
-
 function getPageHTML() { 
     return document.documentElement.outerHTML; 
 }
