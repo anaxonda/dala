@@ -132,6 +132,7 @@ uv run dala [URL] --llm --api-key "AIzaSy..."
 | **Text Only** | Removes all images. | To save space or data. Much faster download. |
 | **Archive.org** | Forces fetch from Wayback Machine. | Dead links or broken live sites. |
 | **AI Summary** | Generates a 3-5 paragraph summary. | Long articles/transcripts (requires API Key). |
+| **Video Thumbnails** | Embeds periodic screenshots (YouTube). | Adds visual context to transcripts at 25/50/75% marks. |
 | **Use Site Cookies** | Sends browser cookies to backend. | Mainly useful for forums, maybe for paywalls. |
 | **Force Forum Driver** | Triggers multi-page crawling/scraping. | XenForo/vBulletin threads. |
 | **Forum Pages** | Specify specific pages (e.g., `1,3-5`). | To download only specific parts of a thread. Overrides 'Max Pages'. |
