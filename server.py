@@ -74,6 +74,7 @@ class ConversionRequest(BaseModel):
     llm_model: Optional[str] = None
     llm_api_key: Optional[str] = None
     summary: bool = False
+    thumbnails: bool = False
 
 class ScanRequest(BaseModel):
     html: str
@@ -216,7 +217,8 @@ async def convert(req: ConversionRequest):
         llm_format=req.llm_format,
         llm_model=req.llm_model,
         llm_api_key=req.llm_api_key,
-        summary=req.summary
+        summary=req.summary,
+        thumbnails=req.thumbnails
     )
 
     # Map Pydantic to Core Dataclass

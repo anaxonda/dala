@@ -70,6 +70,33 @@ class YouTubeDriver(BaseDriver):
         if not transcript_list:
             log.error("Aborting: No transcript found.")
             return None
+        
+        # Calculate duration
+        total_duration = 0
+        if transcript_list:
+            last = transcript_list[-1]
+            total_duration = last['start'] + last['duration']
+
+        # Fetch Periodic Thumbnails if requested
+        thumbnail_map = {} # { ratio (0.25): filename }
+        if options.thumbnails and not options.no_images and total_duration > 60:
+            log.info("Fetching periodic thumbnails...")
+            # YouTube generates 1.jpg, 2.jpg, 3.jpg at approx 25%, 50%, 75%
+            # hq1, hq2, hq3 are 480x360
+            for i, ratio in [(1, 0.25), (2, 0.50), (3, 0.75)]:
+                t_url = f"https://img.youtube.com/vi/{video_id}/hq{i}.jpg"
+                try:
+                    headers, data, err = await ImageProcessor.fetch_image_data(session, t_url)
+                    if data:
+                        mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(t_url, headers, data)
+                        if final_data:
+                            fname = f"{IMAGE_DIR_IN_EPUB}/yt_thumb_{i}{ext}"
+                            uid = f"yt_thumb_{i}"
+                            asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=t_url)
+                            assets.append(asset)
+                            thumbnail_map[ratio] = fname
+                except Exception as e:
+                    log.warning(f"Failed to fetch periodic thumbnail {i}: {e}")
 
         # 3. Process Text
         if options.llm_format:
@@ -80,9 +107,12 @@ class YouTubeDriver(BaseDriver):
             # Wrap in paragraphs if LLM returned plain text block (LLMs usually add newlines)
             if "<p>" not in final_text:
                 final_text = "".join(f"<p>{p.strip()}</p>" for p in final_text.split('\n\n') if p.strip())
+            
+            if thumbnail_map:
+                log.warning("Periodic thumbnails are currently skipped in LLM mode to preserve formatting integrity.")
         else:
             # Basic cleanup using timestamps
-            final_text = self._basic_transcript_cleanup(transcript_list)
+            final_text = self._basic_transcript_cleanup(transcript_list, thumbnail_map, total_duration)
 
         # 4. Build Chapter
         assets = []
@@ -125,18 +155,38 @@ class YouTubeDriver(BaseDriver):
             toc_structure=[epub.Link("transcript.xhtml", title, "transcript")]
         )
 
-    def _basic_transcript_cleanup(self, transcript_list: List[Dict]) -> str:
+    def _basic_transcript_cleanup(self, transcript_list: List[Dict], thumbnails: Dict[float, str] = None, total_duration: float = 0) -> str:
         """Merges lines and creates paragraphs based on silence gaps (>2s)."""
         paragraphs = []
         current_para = []
         last_end = 0
-
+        
+        # Sort targets: 0.25, 0.50, 0.75
+        pending_thumbs = sorted(thumbnails.keys()) if thumbnails else []
+        
         for item in transcript_list:
             text = html.unescape(item['text']).replace('\n', ' ').strip()
             if not text: continue
             
             start = item['start']
             
+            # Check for thumbnail insertion
+            if pending_thumbs and total_duration > 0:
+                current_ratio = start / total_duration
+                # If we passed the target ratio
+                if current_ratio >= pending_thumbs[0]:
+                    target = pending_thumbs.pop(0)
+                    fname = thumbnails[target]
+                    # Flush current paragraph first
+                    if current_para:
+                        joined = " ".join(current_para)
+                        if joined: joined = joined[0].upper() + joined[1:]
+                        paragraphs.append(f"<p>{joined}</p>")
+                        current_para = []
+                    
+                    # Insert Image
+                    paragraphs.append(f'<div class="img-block"><img src="{fname}" alt="Timestamp {int(target*100)}%" class="epub-image"/></div>')
+
             # If gap > 2 seconds, start new paragraph
             if current_para and (start - last_end > 2.0):
                 # Join sentences, try to capitalize first letter

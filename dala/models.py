@@ -54,6 +54,7 @@ class ConversionOptions:
     llm_model: Optional[str] = None
     llm_api_key: Optional[str] = None
     summary: bool = False
+    thumbnails: bool = False
 
 @dataclass
 class Source:
