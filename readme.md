@@ -111,6 +111,10 @@ Convert videos into readable text.
 
 **Setup for AI:**
 Set your API key in a `.env` file or pass it via CLI. **dala** supports Google Gemini (free tier works great), OpenAI, and OpenRouter.
+
+> [!TIP]
+> **Extension Overrides:** You can also set your API Key and Model directly in the extension's **Settings** page. Values entered in the browser will override your server's `.env` configuration, allowing you to easily switch models or keys without restarting the server.
+
 ```bash
 export GEMINI_API_KEY="AIzaSy..."
 # OR
@@ -306,6 +310,12 @@ pip install -e .
 ---
 
 ## ⚙️ Configuration
+
+### LLM Configuration & Precedence
+You can configure LLM settings (Model & API Key) in multiple places. The priority order is:
+1.  **Extension Settings:** (Highest) If set in the browser popup's Settings page.
+2.  **CLI Flags:** If passed directly to the `dala` command.
+3.  **Environment Variables:** (Lowest) Set in the `.env` file or shell.
 
 ### Environment Variables (`.env`)
 Create a `.env` file in the root directory to persist settings:
