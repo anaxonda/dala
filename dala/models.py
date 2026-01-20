@@ -55,6 +55,8 @@ class ConversionOptions:
     llm_api_key: Optional[str] = None
     summary: bool = False
     thumbnails: bool = False
+    youtube_lang: str = "en"
+    youtube_prefer_auto: bool = False
 
 @dataclass
 class Source:

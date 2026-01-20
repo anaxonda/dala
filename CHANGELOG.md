@@ -9,6 +9,7 @@
 
 ### YouTube Improvements
 - **Periodic Thumbnails:** Added an option to embed 3 periodic thumbnails (at ~25%, 50%, 75% timestamps) into YouTube transcripts for visual context. Toggleable via the extension popup ("Video Thumbnails").
+- **Language & Caption Control:** New settings in the Extension Options page (and CLI flags `--yt-lang`, `--yt-auto`) allow you to specify preferred transcript languages (e.g., `en,es`) and whether to prioritize Manual or Auto-generated captions. The driver will now attempt to find the best match or auto-translate if necessary.
 
 ### Extension Reliability & Pipeline Alignment
 - **Unified Data Context:** Refactored `background.js` to ensure keyboard shortcuts and context menu actions invoke the same data-gathering logic as the popup UI. Specifically, they now check the `include_cookies` option and fetch `browser.cookies.getAll()` for the target URL, transmitting the session state to the backend. This enables authenticated scraping (e.g., paywalls) via shortcuts which previously failed due to missing cookies.

@@ -6,6 +6,8 @@ const termuxInput = document.getElementById("download-termux");
 const llmFormatBox = document.getElementById("llm-format");
 const llmModelInput = document.getElementById("llm-model");
 const llmApiKeyInput = document.getElementById("llm-api-key");
+const ytLangInput = document.getElementById("yt-lang");
+const ytAutoBox = document.getElementById("yt-auto");
 
 const DEFAULT_DOWNLOAD = "ctrl+shift+e";
 const DEFAULT_QUEUE = "ctrl+shift+q";
@@ -58,6 +60,8 @@ async function loadSettings() {
   llmFormatBox.checked = Boolean(savedOpts.llm_format);
   llmModelInput.value = (savedOpts.llm_model || "").trim();
   llmApiKeyInput.value = (savedOpts.llm_api_key || "").trim();
+  ytLangInput.value = (savedOpts.youtube_lang || "").trim();
+  ytAutoBox.checked = Boolean(savedOpts.youtube_prefer_auto);
 }
 
 async function saveSettings() {
@@ -69,6 +73,8 @@ async function saveSettings() {
   const llmFormat = llmFormatBox.checked;
   const llmModel = (llmModelInput.value || "").trim();
   const llmApiKey = (llmApiKeyInput.value || "").trim();
+  const ytLang = (ytLangInput.value || "").trim();
+  const ytAuto = ytAutoBox.checked;
   
   const res = await browser.storage.local.get("savedOptions");
   const existing = res.savedOptions || {};
@@ -82,7 +88,9 @@ async function saveSettings() {
       termux_copy_dir: termux,
       llm_format: llmFormat,
       llm_model: llmModel,
-      llm_api_key: llmApiKey
+      llm_api_key: llmApiKey,
+      youtube_lang: ytLang,
+      youtube_prefer_auto: ytAuto
     }
   });
 }
@@ -95,6 +103,8 @@ termuxInput.addEventListener("change", saveSettings);
 llmFormatBox.addEventListener("change", saveSettings);
 llmModelInput.addEventListener("change", saveSettings);
 llmApiKeyInput.addEventListener("change", saveSettings);
+ytLangInput.addEventListener("change", saveSettings);
+ytAutoBox.addEventListener("change", saveSettings);
 
 attachCapture(downloadInput);
 attachCapture(queueInput);

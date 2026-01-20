@@ -75,6 +75,8 @@ class ConversionRequest(BaseModel):
     llm_api_key: Optional[str] = None
     summary: bool = False
     thumbnails: bool = False
+    youtube_lang: Optional[str] = "en"
+    youtube_prefer_auto: bool = False
 
 class ScanRequest(BaseModel):
     html: str
@@ -218,7 +220,9 @@ async def convert(req: ConversionRequest):
         llm_model=req.llm_model,
         llm_api_key=req.llm_api_key,
         summary=req.summary,
-        thumbnails=req.thumbnails
+        thumbnails=req.thumbnails,
+        youtube_lang=req.youtube_lang or "en",
+        youtube_prefer_auto=req.youtube_prefer_auto
     )
 
     # Map Pydantic to Core Dataclass

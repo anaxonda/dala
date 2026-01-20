@@ -100,6 +100,8 @@ def parse_args():
     parser.add_argument("--forum", action="store_true", help="Enable forum driver for URLs (autodetected usually)")
     parser.add_argument("--cookie-file", help="Netscape cookie file for gated content")
     parser.add_argument("--compact-comments", action="store_true", help="Use compact comment layout")
+    parser.add_argument("--yt-lang", default="en", help="Languages for YouTube transcripts (comma-separated, default: en)")
+    parser.add_argument("--yt-auto", action="store_true", help="Prefer auto-generated YouTube captions")
     return parser.parse_args()
 
 async def async_main():
@@ -128,7 +130,9 @@ async def async_main():
         llm_format=args.llm_format,
         llm_model=args.llm_model,
         llm_api_key=args.api_key,
-        summary=args.summary
+        summary=args.summary,
+        youtube_lang=args.yt_lang,
+        youtube_prefer_auto=args.yt_auto
     )
 
     cookie_entries = load_cookie_file(args.cookie_file) if (args.cookie_file and args.forum) else []

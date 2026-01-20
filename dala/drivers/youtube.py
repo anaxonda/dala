@@ -21,6 +21,7 @@ class YouTubeDriver(BaseDriver):
         url = source.url
         log.info(f"YouTube Driver processing: {url}")
 
+        assets = []
         video_id = self._extract_video_id(url)
         if not video_id:
             log.error("Could not extract video ID")
@@ -57,11 +58,61 @@ class YouTubeDriver(BaseDriver):
         loop = asyncio.get_running_loop()
         transcript_list = []
         try:
-            # Using instance method fetch() which returns a FetchedTranscript object, then converting to raw dicts
-            transcript_list = await loop.run_in_executor(
-                None, 
-                lambda: YouTubeTranscriptApi().fetch(video_id).to_raw_data()
-            )
+            def _fetch_smart_transcript():
+                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                
+                # Parse user preferences
+                target_langs = [l.strip() for l in (options.youtube_lang or "en").split(",") if l.strip()]
+                if not target_langs: target_langs = ["en"]
+                prefer_auto = options.youtube_prefer_auto
+
+                # Iterate and filter
+                candidates = []
+                for t in transcript_list:
+                    candidates.append(t)
+                
+                # Sort candidates by preference
+                # Primary Key: Language match index (0 is best)
+                # Secondary Key: Manual vs Auto (based on preference)
+                def sort_key(t):
+                    lang_score = 999
+                    for idx, lang in enumerate(target_langs):
+                        if t.language_code.lower().startswith(lang.lower()):
+                            lang_score = idx
+                            break
+                    
+                    # Type score: if prefer_auto, generated=0, manual=1. Else manual=0, generated=1
+                    type_score = 0
+                    if prefer_auto:
+                        type_score = 0 if t.is_generated else 1
+                    else:
+                        type_score = 1 if t.is_generated else 0
+                    
+                    return (lang_score, type_score)
+
+                candidates.sort(key=sort_key)
+                
+                best = candidates[0]
+                log.info(f"Selected transcript: {best.language_code} ({'Auto' if best.is_generated else 'Manual'})")
+                
+                # If the best match isn't in our target languages, translate it
+                is_match = False
+                for lang in target_langs:
+                    if best.language_code.lower().startswith(lang.lower()):
+                        is_match = True
+                        break
+                
+                if not is_match:
+                    try:
+                        log.info(f"Translating transcript from {best.language_code} to {target_langs[0]}")
+                        best = best.translate(target_langs[0])
+                    except Exception as trans_err:
+                        log.warning(f"Translation failed: {trans_err}")
+
+                return best.fetch()
+
+            transcript_list = await loop.run_in_executor(None, _fetch_smart_transcript)
+
         except (TranscriptsDisabled, NoTranscriptFound) as e:
             log.warning(f"No transcript available: {e}")
         except Exception as e:
@@ -76,6 +127,8 @@ class YouTubeDriver(BaseDriver):
         if transcript_list:
             last = transcript_list[-1]
             total_duration = last['start'] + last['duration']
+        
+        log.info(f"Video duration: {total_duration:.1f}s. Thumbnails enabled: {options.thumbnails}")
 
         # Fetch Periodic Thumbnails if requested
         thumbnail_map = {} # { ratio (0.25): filename }
@@ -95,27 +148,69 @@ class YouTubeDriver(BaseDriver):
                             asset = ImageAsset(uid=uid, filename=fname, media_type=mime, content=final_data, original_url=t_url)
                             assets.append(asset)
                             thumbnail_map[ratio] = fname
+                            log.info(f"✓ Fetched thumb {i} ({fname})")
                 except Exception as e:
                     log.warning(f"Failed to fetch periodic thumbnail {i}: {e}")
+        else:
+            log.info("Skipping periodic thumbnails (disabled, no_images, or short video)")
 
         # 3. Process Text
         if options.llm_format:
-            full_text = " ".join([t['text'] for t in transcript_list])
+            # Prepare transcript with markers for LLM
+            marked_transcript = []
+            pending_thumbs = sorted(thumbnail_map.keys()) if thumbnail_map else []
+            
+            for item in transcript_list:
+                start = item['start']
+                if pending_thumbs and total_duration > 0:
+                    current_ratio = start / total_duration
+                    if current_ratio >= pending_thumbs[0]:
+                        ratio = pending_thumbs.pop(0)
+                        # We don't know the filename yet in the LLM's eyes, so use a marker
+                        marked_transcript.append(f"\n\n[[IMAGE_MARKER_{ratio}]]\n\n")
+                
+                marked_transcript.append(item['text'])
+            
+            full_text = " ".join(marked_transcript)
             full_text = html.unescape(full_text)
-            log.info("Formatting transcript with LLM...")
-            final_text = await LLMHelper.format_transcript(full_text, options.llm_model, options.llm_api_key)
-            # Wrap in paragraphs if LLM returned plain text block (LLMs usually add newlines)
+            
+            log.info("Formatting transcript with LLM (including markers)...")
+            # We pass a modified prompt hint to ensure markers are kept
+            llm_instruction = (
+                "IMPORTANT: You will see markers like [[IMAGE_MARKER_0.25]] in the text. "
+                "These represent where images should be placed. DO NOT REMOVE THEM. "
+                "Ensure they remain on their own line between paragraphs."
+            )
+            
+            final_text = await LLMHelper.format_transcript(
+                f"{llm_instruction}\n\n{full_text}", 
+                options.llm_model, 
+                options.llm_api_key
+            )
+            
+            # Wrap in paragraphs if LLM returned plain text block
             if "<p>" not in final_text:
                 final_text = "".join(f"<p>{p.strip()}</p>" for p in final_text.split('\n\n') if p.strip())
             
+            # Replace markers with actual HTML
             if thumbnail_map:
-                log.warning("Periodic thumbnails are currently skipped in LLM mode to preserve formatting integrity.")
+                for ratio, fname in thumbnail_map.items():
+                    marker = f"[[IMAGE_MARKER_{ratio}]]"
+                    img_html = f'</div><div class="img-block"><img src="{fname}" alt="Timestamp {int(ratio*100)}%" class="epub-image"/></div><div class="transcript-body">'
+                    # We might need to be careful about <p> tags the LLM added
+                    if marker in final_text:
+                        # If marker is inside a <p>, we need to break out or just replace
+                        final_text = final_text.replace(f"{marker}", f"</p>{img_html}<p>")
+                    else:
+                        # Fallback if LLM stripped brackets but kept text? 
+                        # Or if it moved it. We try to be robust.
+                        final_text = final_text.replace(marker.strip("[]"), f"</p>{img_html}<p>")
+            
         else:
             # Basic cleanup using timestamps
             final_text = self._basic_transcript_cleanup(transcript_list, thumbnail_map, total_duration)
 
         # 4. Build Chapter
-        assets = []
         cover_image_html = ""
         if not options.no_images and thumb_url:
             headers, data, err = await ImageProcessor.fetch_image_data(session, thumb_url)
