@@ -57,6 +57,18 @@
     </label>
     <div class="hint">If unchecked, prefers Manual (human) captions.</div>
   </div>
+  <div class="row">
+    <label for="yt-max-comments">Max Comments</label>
+    <input type="number" id="yt-max-comments" placeholder="25" min="0">
+    <div class="hint">Number of top-level comments to fetch. Default: 25</div>
+  </div>
+  <div class="row">
+    <label for="yt-comment-sort">Comment Sort</label>
+    <select id="yt-comment-sort">
+        <option value="top">Top (Popular)</option>
+        <option value="new">Newest</option>
+    </select>
+  </div>
   <hr />
   <h2>LLM Settings</h2>
   <div class="row">

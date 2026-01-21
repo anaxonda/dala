@@ -8,6 +8,9 @@ from urllib.parse import urlparse
 from typing import List, Dict, Optional
 from tqdm.asyncio import tqdm_asyncio
 from ebooklib import epub
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from dala.models import (
     log, Source, ConversionOptions, BookData, ConversionContext, 
@@ -102,6 +105,9 @@ def parse_args():
     parser.add_argument("--compact-comments", action="store_true", help="Use compact comment layout")
     parser.add_argument("--yt-lang", default="en", help="Languages for YouTube transcripts (comma-separated, default: en)")
     parser.add_argument("--yt-auto", action="store_true", help="Prefer auto-generated YouTube captions")
+    parser.add_argument("--thumbnails", action="store_true", help="Embed periodic thumbnails (YouTube only)")
+    parser.add_argument("--yt-max-comments", type=int, default=25, help="Max YouTube comments to fetch")
+    parser.add_argument("--yt-sort", choices=["top", "new"], default="top", help="YouTube comment sort order")
     return parser.parse_args()
 
 async def async_main():
@@ -132,7 +138,10 @@ async def async_main():
         llm_api_key=args.api_key,
         summary=args.summary,
         youtube_lang=args.yt_lang,
-        youtube_prefer_auto=args.yt_auto
+        youtube_prefer_auto=args.yt_auto,
+        thumbnails=args.thumbnails,
+        youtube_max_comments=args.yt_max_comments,
+        youtube_comment_sort=args.yt_sort
     )
 
     cookie_entries = load_cookie_file(args.cookie_file) if (args.cookie_file and args.forum) else []

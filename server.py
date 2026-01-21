@@ -27,6 +27,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import main as core_main
 from dala.models import ConversionOptions, Source, log
@@ -77,6 +80,8 @@ class ConversionRequest(BaseModel):
     thumbnails: bool = False
     youtube_lang: Optional[str] = "en"
     youtube_prefer_auto: bool = False
+    youtube_max_comments: int = 25
+    youtube_comment_sort: str = "top"
 
 class ScanRequest(BaseModel):
     html: str
@@ -189,6 +194,7 @@ async def ping(): return {"status": "ok"}
 @app.post("/convert")
 async def convert(req: ConversionRequest):
     print(f"📥 Received request: {len(req.sources)} sources")
+    print(f"🔧 Options: NoComments={req.no_comments}, NoImages={req.no_images}, Thumbnails={req.thumbnails}, YTLang={req.youtube_lang}, YTSort={req.youtube_comment_sort}")
     if req.sources:
         for idx, s in enumerate(req.sources):
             count_assets = len(s.assets) if s.assets else 0
@@ -222,7 +228,9 @@ async def convert(req: ConversionRequest):
         summary=req.summary,
         thumbnails=req.thumbnails,
         youtube_lang=req.youtube_lang or "en",
-        youtube_prefer_auto=req.youtube_prefer_auto
+        youtube_prefer_auto=req.youtube_prefer_auto,
+        youtube_max_comments=req.youtube_max_comments,
+        youtube_comment_sort=req.youtube_comment_sort
     )
 
     # Map Pydantic to Core Dataclass

@@ -8,6 +8,8 @@ const llmModelInput = document.getElementById("llm-model");
 const llmApiKeyInput = document.getElementById("llm-api-key");
 const ytLangInput = document.getElementById("yt-lang");
 const ytAutoBox = document.getElementById("yt-auto");
+const ytMaxCommentsInput = document.getElementById("yt-max-comments");
+const ytCommentSortSelect = document.getElementById("yt-comment-sort");
 
 const DEFAULT_DOWNLOAD = "ctrl+shift+e";
 const DEFAULT_QUEUE = "ctrl+shift+q";
@@ -62,6 +64,8 @@ async function loadSettings() {
   llmApiKeyInput.value = (savedOpts.llm_api_key || "").trim();
   ytLangInput.value = (savedOpts.youtube_lang || "").trim();
   ytAutoBox.checked = Boolean(savedOpts.youtube_prefer_auto);
+  ytMaxCommentsInput.value = savedOpts.youtube_max_comments !== undefined ? savedOpts.youtube_max_comments : "";
+  ytCommentSortSelect.value = savedOpts.youtube_comment_sort || "top";
 }
 
 async function saveSettings() {
@@ -75,6 +79,8 @@ async function saveSettings() {
   const llmApiKey = (llmApiKeyInput.value || "").trim();
   const ytLang = (ytLangInput.value || "").trim();
   const ytAuto = ytAutoBox.checked;
+  const ytMaxComments = parseInt(ytMaxCommentsInput.value, 10);
+  const ytCommentSort = ytCommentSortSelect.value;
   
   const res = await browser.storage.local.get("savedOptions");
   const existing = res.savedOptions || {};
@@ -90,7 +96,9 @@ async function saveSettings() {
       llm_model: llmModel,
       llm_api_key: llmApiKey,
       youtube_lang: ytLang,
-      youtube_prefer_auto: ytAuto
+      youtube_prefer_auto: ytAuto,
+      youtube_max_comments: isNaN(ytMaxComments) ? 25 : ytMaxComments,
+      youtube_comment_sort: ytCommentSort
     }
   });
 }
@@ -105,6 +113,8 @@ llmModelInput.addEventListener("change", saveSettings);
 llmApiKeyInput.addEventListener("change", saveSettings);
 ytLangInput.addEventListener("change", saveSettings);
 ytAutoBox.addEventListener("change", saveSettings);
+ytMaxCommentsInput.addEventListener("change", saveSettings);
+ytCommentSortSelect.addEventListener("change", saveSettings);
 
 attachCapture(downloadInput);
 attachCapture(queueInput);
