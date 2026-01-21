@@ -362,6 +362,7 @@ LLM_MODEL=gemini-1.5-flash
     *   **Crawler Mode:** Follow links `N` levels deep starting from a root URL. Defaults to only following links within the *main content* area to avoid navigation/footer noise.
     *   **Date-Range Archiver:** Download all posts from a blog (WordPress, Substack, etc.) published between specific dates. Perfect for creating "Yearly Anthology" volumes of your favorite writers.
 *   **Advanced Discovery:** RSS feed integration to automatically find and bundle new content from your favorite sites.
+*   **Headless Browser Integration:** Use a headless browser (like Playwright) as a fallback for the CLI. This would allow automated crawling of JavaScript-heavy sites and better session/cookie management for background tasks.
 
 ## 📄 License
 [MIT](LICENSE)
