@@ -292,21 +292,23 @@ pip install -e .
 4.  *Optional:* To run minimized, right-click the shortcut -> **Properties** -> **Run: Minimized**.
 
 #### Linux (Systemd)
-1.  Create `~/.config/systemd/user/dala.service`:
+1.  Create `~/.config/systemd/user/epub_server.service`:
     ```ini
     [Unit]
-    Description=dala EPUB Server
+    Description=Web to EPUB Python Server
     After=network.target
 
     [Service]
     WorkingDirectory=/path/to/dala
-    ExecStart=/path/to/uv run server.py
+    # Using the venv python directly is most reliable for systemd
+    ExecStart=/path/to/dala/.venv/bin/python server.py
     Restart=always
+    RestartSec=5
 
     [Install]
     WantedBy=default.target
     ```
-2.  Enable it: `systemctl --user enable --now dala`
+2.  Enable it: `systemctl --user enable --now epub_server`
 
 ---
 
