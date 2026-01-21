@@ -354,7 +354,14 @@ LLM_MODEL=gemini-1.5-flash
 *   **`dala/core/`**: Shared logic for text extraction, image processing, and EPUB generation.
 *   **`firefox_extension/` & `extension_chrome/`**: Thin clients that handle the "View Source" & authentication part of the pipeline.
 
----
+## 🚀 Future Roadmap
+*   **Additional Formats:**
+    *   **PDF Output:** High-quality, printable PDFs with linked Tables of Contents and side-panel bookmarks.
+    *   **Markdown Output:** Clean `.md` files optimized for note-taking apps like Obsidian, Logseq, and Notion.
+*   **Intelligent Crawling:**
+    *   **Crawler Mode:** Follow links `N` levels deep starting from a root URL. Defaults to only following links within the *main content* area to avoid navigation/footer noise.
+    *   **Date-Range Archiver:** Download all posts from a blog (WordPress, Substack, etc.) published between specific dates. Perfect for creating "Yearly Anthology" volumes of your favorite writers.
+*   **Advanced Discovery:** RSS feed integration to automatically find and bundle new content from your favorite sites.
 
 ## 📄 License
 [MIT](LICENSE)
