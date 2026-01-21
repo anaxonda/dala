@@ -1,6 +1,7 @@
 import html
 import asyncio
 import json
+import re
 from itertools import islice
 from urllib.parse import urlparse, parse_qs
 from bs4 import BeautifulSoup
@@ -70,6 +71,7 @@ class YouTubeDriver(BaseDriver):
         # 2. Fetch Transcript
         loop = asyncio.get_running_loop()
         transcript_list = []
+        is_generated = False
         try:
             def _fetch_smart_transcript():
                 # Adjusted for installed library version which requires instantiation
@@ -116,11 +118,12 @@ class YouTubeDriver(BaseDriver):
                     except Exception as trans_err:
                         log.warning(f"Translation failed: {trans_err}")
 
-                return best.fetch().to_raw_data()
+                return best.fetch().to_raw_data(), best.is_generated
 
-            transcript_list = await loop.run_in_executor(None, _fetch_smart_transcript)
+            transcript_list, is_generated = await loop.run_in_executor(None, _fetch_smart_transcript)
 
         except (TranscriptsDisabled, NoTranscriptFound) as e:
+
             log.warning(f"No transcript available: {e}")
         except Exception as e:
             log.error(f"Transcript fetch error: {e}")
@@ -189,7 +192,7 @@ class YouTubeDriver(BaseDriver):
                     else:
                         final_text = final_text.replace(marker.strip("[]"), f"</p>{img_html}<p>")
         else:
-            final_text = self._basic_transcript_cleanup(transcript_list, thumbnail_map, total_duration)
+            final_text = self._basic_transcript_cleanup(transcript_list, thumbnail_map, total_duration, is_generated)
 
         # 4. Build Chapter
         cover_image_html = ""
@@ -299,30 +302,93 @@ class YouTubeDriver(BaseDriver):
 
         return BookData(title=title, author=author, uid=f"urn:youtube:{video_id}", language='en', description=description, source_url=url, chapters=chapters, images=assets, toc_structure=toc_structure)
 
-    def _basic_transcript_cleanup(self, transcript_list: List[Dict], thumbnails: Dict[float, str] = None, total_duration: float = 0) -> str:
+    def _basic_transcript_cleanup(self, transcript_list: List[Dict], thumbnails: Dict[float, str] = None, total_duration: float = 0, is_auto: bool = False) -> str:
         paragraphs, current_para, last_end = [], [], 0
+        current_len = 0
         pending_thumbs = sorted(thumbnails.keys()) if thumbnails else []
+        
+        SENTENCE_STARTERS = {"i", "we", "the", "it", "so", "but", "and", "they", "this", "there", "you", "my", "our"}
+
+        def flush_para():
+            nonlocal current_para, current_len
+            if current_para:
+                text = " ".join(current_para)
+                # Clean up whitespace
+                text = re.sub(r'\s+', ' ', text).strip()
+                if text:
+                    # Ensure it starts with uppercase if it's a normal word
+                    if text[0].islower():
+                        text = text[0].upper() + text[1:]
+                    
+                    # Add a trailing period if it's auto-generated and lacks punctuation
+                    if is_auto and text[-1] not in {'.', '!', '?', ':'}:
+                        text += "."
+                    
+                    paragraphs.append(f"<p>{text}</p>")
+                current_para = []
+                current_len = 0
+
         for item in transcript_list:
             text = html.unescape(item['text']).replace('\n', ' ').strip()
             if not text: continue
+            
             start = item['start']
+            duration = item['duration']
+            gap = start - last_end
+            
+            # 1. Check for thumbnails
             if pending_thumbs and total_duration > 0:
                 if (start / total_duration) >= pending_thumbs[0]:
                     target = pending_thumbs.pop(0)
-                    if current_para:
-                        joined = " ".join(current_para)
-                        paragraphs.append(f"<p>{joined[0].upper() + joined[1:]}</p>")
-                        current_para = []
+                    flush_para()
                     paragraphs.append(f'<div class="img-block"><img src="{thumbnails[target]}" alt="Timestamp {int(target*100)}%" class="epub-image"/></div>')
-            if current_para and (start - last_end > 2.0):
-                joined = " ".join(current_para)
-                paragraphs.append(f"<p>{joined[0].upper() + joined[1:]}</p>")
-                current_para = []
-            current_para.append(text)
-            last_end = start + item['duration']
-        if current_para:
-            joined = " ".join(current_para)
-            paragraphs.append(f"<p>{joined[0].upper() + joined[1:]}</p>")
+
+            # 2. Heuristic for paragraph split
+            should_split = False
+            if current_para:
+                first_word = text.split()[0].lower().strip(">,.!") if text.split() else ""
+                
+                # Split on speaker change
+                if ">>" in text:
+                    should_split = True
+                # Split on brackets like [Music] or [Laughter]
+                elif text.startswith("[") and text.endswith("]"):
+                    should_split = True
+                # Split on significant pause
+                elif gap > 1.5:
+                    should_split = True
+                # Auto-generated transcript heuristic: split more aggressively on pauses
+                elif is_auto:
+                    if gap > 0.3 and (first_word in SENTENCE_STARTERS or current_len > 300):
+                        should_split = True
+                    elif current_len > 600:
+                        should_split = True
+                # Manual transcript heuristic
+                else:
+                    if gap > 0.5 and current_len > 500:
+                        should_split = True
+                    elif current_len > 1000:
+                        should_split = True
+
+            if should_split:
+                flush_para()
+
+            # Handle mid-item speaker changes
+            if ">>" in text and not text.startswith(">>"):
+                parts = text.split(">>")
+                current_para.append(parts[0].strip())
+                flush_para()
+                for p in parts[1:]:
+                    current_para.append(">> " + p.strip())
+                    if p != parts[-1]:
+                        flush_para()
+            else:
+                current_para.append(text)
+                current_len += len(text) + 1
+            
+            last_end = start + duration
+
+        flush_para()
         return "".join(paragraphs)
 
     def _extract_video_id(self, url):
