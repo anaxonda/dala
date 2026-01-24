@@ -57,6 +57,10 @@ class BaseImageProcessor:
         if not data:
             return None, None, None, "No Data"
         content_type = headers.get('Content-Type', '').split(';')[0].strip().lower()
+
+        if 'svg' in content_type or (url and url.split('?')[0].lower().endswith('.svg')):
+            return 'image/svg+xml', '.svg', data, None
+
         if len(data) < 12 * 1024:
             if not content_type:
                 content_type = mimetypes.guess_type(url)[0] or 'application/octet-stream'

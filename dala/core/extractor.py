@@ -82,6 +82,33 @@ class ArticleExtractor:
             if not content_soup:
                 content_soup = ArticleExtractor._smart_selector_extract(soup)
 
+            # Check for paywalls/truncation markers
+            paywall_selectors = [
+                '[data-testid="optimistic-truncator-message"]',
+                '#gateway-content',
+                '.paywall-content',
+                '.subscribe-promo',
+                '#reg-wall-message'
+            ]
+            for ps in paywall_selectors:
+                if soup.select_one(ps):
+                    log.warning(f"Paywall/Truncation detected using selector: {ps}")
+                    # Return extracted HTML (truncated) but keep success=False to trigger archive
+                    truncated_html = None
+                    if content_soup:
+                         ArticleExtractor._clean_soup(content_soup)
+                         truncated_html = content_soup.prettify()
+                    return {
+                        'success': False, 
+                        'html': truncated_html, 
+                        'error': 'Paywall detected', 
+                        'is_paywall': True,
+                        'title': metadata.title if metadata else None,
+                        'author': metadata.author if metadata else None,
+                        'date': metadata.date if metadata else None,
+                        'sitename': metadata.sitename if metadata else None
+                    }
+
             extracted_html = None
             if content_soup:
                 ArticleExtractor._clean_soup(content_soup)
@@ -145,12 +172,17 @@ class ArticleExtractor:
     async def get_wayback_url(session, target_url):
         api_url = f"{ARCHIVE_ORG_API_BASE}?url={quote(target_url)}"
         try:
+            log.info(f"Checking Wayback Machine: {api_url}")
             data, _ = await fetch_with_retry(session, api_url, 'json')
+            log.debug(f"Wayback API response: {data}")
             if data and data.get('archived_snapshots', {}).get('closest', {}).get('available'):
                 snap = data['archived_snapshots']['closest']['url']
                 if snap.startswith('http:'): snap = snap.replace('http:', 'https:', 1)
+                log.info(f"Found archive snapshot: {snap}")
                 return snap
-        except Exception: pass
+        except Exception as e:
+            log.error(f"Wayback check failed: {e}")
+        log.warning("No archive snapshot found.")
         return None
 
     @staticmethod
@@ -189,12 +221,30 @@ class ArticleExtractor:
                  raw_html = req_html
                  final_url = req_url
 
+        fallback_extracted = None
+
         if raw_html:
              extracted = await loop.run_in_executor(None, ArticleExtractor.extract_from_html, raw_html, url, profile)
              if extracted['success']:
                  result.update(extracted)
                  result['raw_html_for_metadata'] = raw_html
                  return result
+             
+             if extracted.get('is_paywall'):
+                 log.info("Paywall detected. Storing truncated content as fallback.")
+                 fallback_extracted = extracted
 
         log.warning(f"Live fetch failed. Trying archive...")
-        return await ArticleExtractor.get_article_content(session, url, force_archive=True, profile=profile)
+        archive_result = await ArticleExtractor.get_article_content(session, url, force_archive=True, profile=profile)
+
+        if archive_result['success']:
+            return archive_result
+
+        if fallback_extracted:
+            log.warning("Archive fallback failed. Using truncated live content.")
+            result.update(fallback_extracted)
+            result['success'] = True
+            result['raw_html_for_metadata'] = raw_html
+            return result
+        
+        return archive_result
