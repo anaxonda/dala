@@ -270,6 +270,8 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
         max_pages: max_pages,
         page_spec: page_spec && page_spec.length ? page_spec : null,
         fetch_assets: shouldFetchAssets,
+        server_save_dir: (savedOpts.server_save_dir || savedOpts.termux_copy_dir || "").trim() || null,
+        archive_server: !!savedOpts.archive_server,
         termux_copy_dir: (savedOpts.termux_copy_dir || "").trim() || null,
         llm_format: !!savedOpts.llm_format,
         llm_model: (savedOpts.llm_model || "").trim() || null,
@@ -351,7 +353,7 @@ async function downloadFromShortcut(url, html) {
     const page_spec = parsePageSpecInput(opts.pages);
     const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
     const is_forum = !!opts.forum;
-    const termux_copy_dir = (opts.termux_copy_dir || "").trim() || null;
+    const server_save_dir = (opts.server_save_dir || opts.termux_copy_dir || "").trim() || null;
     
     let cookies = null;
     if (opts.include_cookies) {
@@ -367,10 +369,16 @@ async function downloadFromShortcut(url, html) {
         archive: !!opts.archive,
         summary: !!opts.summary,
         thumbnails: !!opts.thumbnails,
+        youtube_lang: (opts.youtube_lang || "").trim() || "en",
+        youtube_prefer_auto: !!opts.youtube_prefer_auto,
+        youtube_max_comments: opts.youtube_max_comments || 25,
+        youtube_comment_sort: opts.youtube_comment_sort || "top",
         max_pages,
         page_spec: page_spec && page_spec.length ? page_spec : null,
         fetch_assets: false,
-        termux_copy_dir,
+        server_save_dir,
+        archive_server: !!opts.archive_server,
+        termux_copy_dir: server_save_dir, // Legacy
         llm_format: !!opts.llm_format,
         llm_model: (opts.llm_model || "").trim() || null,
         llm_api_key: (opts.llm_api_key || "").trim() || null
@@ -416,7 +424,7 @@ async function downloadSingleFromContext(url) {
     const page_spec = parsePageSpecInput(opts.pages);
     const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
     const is_forum = !!opts.forum;
-    const termux_copy_dir = (opts.termux_copy_dir || "").trim() || null;
+    const server_save_dir = (opts.server_save_dir || opts.termux_copy_dir || "").trim() || null;
     
     let cookies = null;
     if (opts.include_cookies) {
@@ -439,7 +447,9 @@ async function downloadSingleFromContext(url) {
         max_pages,
         page_spec: page_spec && page_spec.length ? page_spec : null,
         fetch_assets: false,
-        termux_copy_dir,
+        server_save_dir,
+        archive_server: !!opts.archive_server,
+        termux_copy_dir: server_save_dir, // Legacy
         llm_format: !!opts.llm_format,
         llm_model: (opts.llm_model || "").trim() || null,
         llm_api_key: (opts.llm_api_key || "").trim() || null

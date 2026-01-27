@@ -39,9 +39,16 @@
     <div class="hint">Optional. Leave blank to use the default downloads root.</div>
   </div>
   <div class="row">
-    <label for="download-termux">Termux copy dir</label>
-    <input type="text" id="download-termux" placeholder="/data/data/com.termux/files/home/storage/downloads" autocomplete="off">
-    <div class="hint">Used on Android/Termux to drop a copy. Leave blank for default.</div>
+    <label for="server-save-dir">Save Directory (on Server)</label>
+    <input type="text" id="server-save-dir" placeholder="e.g. /home/user/Ebooks" autocomplete="off">
+    <div class="hint">Absolute path on the machine running server.py. If blank, tries default Downloads.</div>
+  </div>
+  <div class="row">
+    <label>
+      <input type="checkbox" id="opt-archive-server">
+      Always archive a copy in server 'exports/' folder
+    </label>
+    <div class="hint">Guarantees a backup is kept even if browser download fails.</div>
   </div>
   <hr />
   <h2>YouTube Settings</h2>

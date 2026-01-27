@@ -72,7 +72,9 @@ class ConversionRequest(BaseModel):
     max_pages: Optional[int] = None
     max_posts: Optional[int] = None
     page_spec: Optional[List[int]] = None
-    termux_copy_dir: Optional[str] = None
+    server_save_dir: Optional[str] = None
+    termux_copy_dir: Optional[str] = None # Alias for backward compatibility
+    archive_server: bool = False
     llm_format: bool = False
     llm_model: Optional[str] = None
     llm_api_key: Optional[str] = None
@@ -268,15 +270,85 @@ async def convert(req: ConversionRequest):
         print(f"✅ Generated EPUB at: {tmp_path}")
         print(f"✅ Sending as: {filename}")
 
-        # If running inside Termux with shared storage mounted, drop a copy to Downloads
-        termux_dl = (req.termux_copy_dir or "").strip() or "/data/data/com.termux/files/home/storage/downloads"
-        if os.path.isdir(termux_dl):
+        # --- Smart Server-Side Saving ---
+        project_root = os.path.dirname(os.path.abspath(__file__))
+        exports_dir = os.path.join(project_root, "exports")
+        
+        # 1. Explicit Archive Request (Optional)
+        # If user checked 'Archive' in extension, we force a copy to exports/
+        if req.archive_server:
             try:
-                dst = os.path.join(termux_dl, filename)
-                shutil.copy2(tmp_path, dst)
-                print(f"📥 Copied EPUB to Termux downloads: {dst}")
-            except Exception as copy_err:
-                print(f"⚠️  Could not copy to Termux downloads: {copy_err}")
+                os.makedirs(exports_dir, exist_ok=True)
+                archive_path = os.path.join(exports_dir, filename)
+                shutil.copy2(tmp_path, archive_path)
+                print(f"✅ Archived to project exports: {archive_path}")
+            except Exception as e:
+                print(f"⚠️  Archive failed: {e}")
+
+        # 2. User Copy (Single Best Destination)
+        # We determine the best location to save the 'User Copy'. 
+        # Only ONE copy is made in this step.
+        candidates = []
+        
+        # Priority A: Explicit Path from Extension
+        # Support new 'server_save_dir' or legacy 'termux_copy_dir'
+        explicit_dir = (req.server_save_dir or req.termux_copy_dir or "").strip()
+        if explicit_dir:
+            candidates.append(explicit_dir)
+            
+        # Priority B: Termux Default (if we are on Android/Termux)
+        # We keep this hardcoded for convenience on that specific platform
+        candidates.append("/data/data/com.termux/files/home/storage/downloads")
+        
+        # Priority C: System Downloads (Linux XDG or Standard Home)
+        sys_downloads = None
+        try:
+            if os.name == 'posix':
+                import subprocess
+                res = subprocess.run(['xdg-user-dir', 'DOWNLOAD'], capture_output=True, text=True)
+                if res.returncode == 0 and res.stdout.strip():
+                    sys_downloads = res.stdout.strip()
+        except: pass
+        
+        if not sys_downloads:
+            # Fallback for Windows/Mac/Linux
+            possible = os.path.join(os.path.expanduser("~"), "Downloads")
+            if os.path.isdir(possible):
+                sys_downloads = possible
+        
+        if sys_downloads:
+            candidates.append(sys_downloads)
+            
+        # Priority D: Project Exports (Fallback)
+        # If all else fails (e.g. permission errors), save to exports/ so file isn't lost.
+        candidates.append(exports_dir)
+
+        saved_user_copy = False
+        for dest in candidates:
+            if not dest: continue
+            
+            # Optimization: If we already archived to exports (Step 1) and this candidate IS exports,
+            # we don't need to copy again, just consider it 'saved'.
+            if dest == exports_dir and req.archive_server:
+                saved_user_copy = True
+                break
+
+            try:
+                # Create directory if it's the project exports fallback
+                if dest == exports_dir:
+                    os.makedirs(dest, exist_ok=True)
+                
+                if os.path.isdir(dest):
+                    final_path = os.path.join(dest, filename)
+                    shutil.copy2(tmp_path, final_path)
+                    saved_user_copy = True
+                    print(f"📥 Saved local copy to: {final_path}")
+                    break # Stop after first success
+            except Exception as e:
+                continue
+        
+        if not saved_user_copy:
+             print("⚠️  Could not save a server-side copy to any location.")
 
         return FileResponse(path=tmp_path, filename=filename, media_type='application/epub+zip')
 

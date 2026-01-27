@@ -2,7 +2,8 @@ const enableBox = document.getElementById("enable-shortcuts");
 const downloadInput = document.getElementById("download-shortcut");
 const queueInput = document.getElementById("queue-shortcut");
 const subfolderInput = document.getElementById("download-subfolder");
-const termuxInput = document.getElementById("download-termux");
+const serverSaveDirInput = document.getElementById("download-termux"); // Reuse ID for simplicity
+const archiveServerBox = document.getElementById("opt-archive-server");
 const llmFormatBox = document.getElementById("llm-format");
 const llmModelInput = document.getElementById("llm-model");
 const llmApiKeyInput = document.getElementById("llm-api-key");
@@ -58,7 +59,13 @@ async function loadSettings() {
   queueInput.value = normalizeCombo(res.keyboardShortcutQueue) || DEFAULT_QUEUE;
   const savedOpts = res.savedOptions || {};
   subfolderInput.value = (savedOpts.subfolder || "").trim();
-  termuxInput.value = (savedOpts.termux_copy_dir || "").trim();
+  
+  // Backward compatibility: load legacy termux_copy_dir if present
+  const legacyTermux = (savedOpts.termux_copy_dir || "").trim();
+  const newSaveDir = (savedOpts.server_save_dir || "").trim();
+  serverSaveDirInput.value = newSaveDir || legacyTermux;
+  
+  archiveServerBox.checked = Boolean(savedOpts.archive_server);
   llmFormatBox.checked = Boolean(savedOpts.llm_format);
   llmModelInput.value = (savedOpts.llm_model || "").trim();
   llmApiKeyInput.value = (savedOpts.llm_api_key || "").trim();
@@ -73,7 +80,8 @@ async function saveSettings() {
   const dl = normalizeCombo(downloadInput.value) || DEFAULT_DOWNLOAD;
   const q = normalizeCombo(queueInput.value) || DEFAULT_QUEUE;
   const subfolder = (subfolderInput.value || "").trim();
-  const termux = (termuxInput.value || "").trim();
+  const serverSaveDir = (serverSaveDirInput.value || "").trim();
+  const archiveServer = archiveServerBox.checked;
   const llmFormat = llmFormatBox.checked;
   const llmModel = (llmModelInput.value || "").trim();
   const llmApiKey = (llmApiKeyInput.value || "").trim();
@@ -91,7 +99,9 @@ async function saveSettings() {
     savedOptions: {
       ...existing,
       subfolder,
-      termux_copy_dir: termux,
+      server_save_dir: serverSaveDir,
+      termux_copy_dir: serverSaveDir, // Keep legacy synced
+      archive_server: archiveServer,
       llm_format: llmFormat,
       llm_model: llmModel,
       llm_api_key: llmApiKey,
@@ -107,7 +117,8 @@ enableBox.addEventListener("change", saveSettings);
 downloadInput.addEventListener("change", saveSettings);
 queueInput.addEventListener("change", saveSettings);
 subfolderInput.addEventListener("change", saveSettings);
-termuxInput.addEventListener("change", saveSettings);
+serverSaveDirInput.addEventListener("change", saveSettings);
+archiveServerBox.addEventListener("change", saveSettings);
 llmFormatBox.addEventListener("change", saveSettings);
 llmModelInput.addEventListener("change", saveSettings);
 llmApiKeyInput.addEventListener("change", saveSettings);
