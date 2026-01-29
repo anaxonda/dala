@@ -270,12 +270,56 @@ async def convert(req: ConversionRequest):
         print(f"✅ Generated EPUB at: {tmp_path}")
         print(f"✅ Sending as: {filename}")
 
-        # --- Smart Server-Side Saving ---
+        # --- Smart Server-Side Saving (Single Copy) ---
+        # We attempt to save a single copy to the best available location.
+        # Priority: 1. User Path -> 2. System Downloads -> 3. Project Exports (Fallback)
+        
+        candidates = []
+        user_input = (req.server_save_dir or req.termux_copy_dir or "").strip()
+        
+        # Determine System Downloads (Cross-Platform)
+        sys_downloads = None
+        try:
+            # Android/Termux check
+            termux_path = "/data/data/com.termux/files/home/storage/downloads"
+            if os.path.isdir(termux_path):
+                sys_downloads = termux_path
+            # Linux XDG check
+            elif os.name == 'posix':
+                import subprocess
+                res = subprocess.run(['xdg-user-dir', 'DOWNLOAD'], capture_output=True, text=True)
+                if res.returncode == 0 and res.stdout.strip():
+                    sys_downloads = res.stdout.strip()
+        except Exception: 
+            pass
+            
+        if not sys_downloads:
+            # Windows/macOS/Linux Fallback
+            possible_dl = os.path.join(os.path.expanduser("~"), "Downloads")
+            if os.path.isdir(possible_dl):
+                sys_downloads = possible_dl
+
+        # Logic for User Input
+        if user_input:
+            # Check if Absolute
+            is_absolute = os.path.isabs(user_input) or (os.name == 'nt' and len(user_input) > 1 and user_input[1] == ':')
+            if is_absolute:
+                candidates.append(user_input)
+            elif sys_downloads:
+                # Relative to system downloads
+                candidates.append(os.path.join(sys_downloads, user_input))
+            else:
+                # If no system downloads, just use the relative path as-is (current dir)
+                candidates.append(user_input)
+        
+        if sys_downloads and sys_downloads not in candidates:
+            candidates.append(sys_downloads)
+
+        # 3. Project Fallback (Archive)
         project_root = os.path.dirname(os.path.abspath(__file__))
         exports_dir = os.path.join(project_root, "exports")
         
-        # 1. Explicit Archive Request (Optional)
-        # If user checked 'Archive' in extension, we force a copy to exports/
+        # If user EXPLICITLY requested archive, force copy there first
         if req.archive_server:
             try:
                 os.makedirs(exports_dir, exist_ok=True)
@@ -285,58 +329,21 @@ async def convert(req: ConversionRequest):
             except Exception as e:
                 print(f"⚠️  Archive failed: {e}")
 
-        # 2. User Copy (Single Best Destination)
-        # We determine the best location to save the 'User Copy'. 
-        # Only ONE copy is made in this step.
-        candidates = []
-        
-        # Priority A: Explicit Path from Extension
-        # Support new 'server_save_dir' or legacy 'termux_copy_dir'
-        explicit_dir = (req.server_save_dir or req.termux_copy_dir or "").strip()
-        if explicit_dir:
-            candidates.append(explicit_dir)
-            
-        # Priority B: Termux Default (if we are on Android/Termux)
-        # We keep this hardcoded for convenience on that specific platform
-        candidates.append("/data/data/com.termux/files/home/storage/downloads")
-        
-        # Priority C: System Downloads (Linux XDG or Standard Home)
-        sys_downloads = None
-        try:
-            if os.name == 'posix':
-                import subprocess
-                res = subprocess.run(['xdg-user-dir', 'DOWNLOAD'], capture_output=True, text=True)
-                if res.returncode == 0 and res.stdout.strip():
-                    sys_downloads = res.stdout.strip()
-        except: pass
-        
-        if not sys_downloads:
-            # Fallback for Windows/Mac/Linux
-            possible = os.path.join(os.path.expanduser("~"), "Downloads")
-            if os.path.isdir(possible):
-                sys_downloads = possible
-        
-        if sys_downloads:
-            candidates.append(sys_downloads)
-            
-        # Priority D: Project Exports (Fallback)
-        # If all else fails (e.g. permission errors), save to exports/ so file isn't lost.
-        candidates.append(exports_dir)
+        # Now try to save the 'User Copy' (Single Best Location)
+        candidates.append(exports_dir) 
 
         saved_user_copy = False
         for dest in candidates:
             if not dest: continue
             
-            # Optimization: If we already archived to exports (Step 1) and this candidate IS exports,
-            # we don't need to copy again, just consider it 'saved'.
+            # Optimization: Skip if matches archive
             if dest == exports_dir and req.archive_server:
                 saved_user_copy = True
                 break
 
             try:
-                # Create directory if it's the project exports fallback
-                if dest == exports_dir:
-                    os.makedirs(dest, exist_ok=True)
+                # Ensure path exists (recursively create if relative)
+                os.makedirs(dest, exist_ok=True)
                 
                 if os.path.isdir(dest):
                     final_path = os.path.join(dest, filename)
@@ -344,7 +351,7 @@ async def convert(req: ConversionRequest):
                     saved_user_copy = True
                     print(f"📥 Saved local copy to: {final_path}")
                     break # Stop after first success
-            except Exception as e:
+            except Exception:
                 continue
         
         if not saved_user_copy:

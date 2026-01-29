@@ -270,7 +270,7 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
         max_pages: max_pages,
         page_spec: page_spec && page_spec.length ? page_spec : null,
         fetch_assets: shouldFetchAssets,
-        server_save_dir: (savedOpts.server_save_dir || savedOpts.termux_copy_dir || "").trim() || null,
+        server_save_dir: (savedOpts.save_folder || savedOpts.server_save_dir || savedOpts.termux_copy_dir || "").trim() || null,
         archive_server: !!savedOpts.archive_server,
         termux_copy_dir: (savedOpts.termux_copy_dir || "").trim() || null,
         llm_format: !!savedOpts.llm_format,
@@ -353,7 +353,7 @@ async function downloadFromShortcut(url, html) {
     const page_spec = parsePageSpecInput(opts.pages);
     const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
     const is_forum = !!opts.forum;
-    const server_save_dir = (opts.server_save_dir || opts.termux_copy_dir || "").trim() || null;
+    const server_save_dir = (opts.save_folder || opts.server_save_dir || opts.termux_copy_dir || "").trim() || null;
     
     let cookies = null;
     if (opts.include_cookies) {
@@ -424,7 +424,7 @@ async function downloadSingleFromContext(url) {
     const page_spec = parsePageSpecInput(opts.pages);
     const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
     const is_forum = !!opts.forum;
-    const server_save_dir = (opts.server_save_dir || opts.termux_copy_dir || "").trim() || null;
+    const server_save_dir = (opts.save_folder || opts.server_save_dir || opts.termux_copy_dir || "").trim() || null;
     
     let cookies = null;
     if (opts.include_cookies) {
@@ -587,8 +587,12 @@ async function processDownloadCore(payload, isBundle) {
         // Use Robust Header Parsing
         const filename = getFilenameFromHeader(response.headers.get('Content-Disposition'));
         const res = await browser.storage.local.get("savedOptions");
-        const rawSub = (res.savedOptions && typeof res.savedOptions.subfolder === "string") ? res.savedOptions.subfolder.trim() : "";
-        const cleanSub = rawSub.replace(/[/\\\\]+/g, '');
+        const saveFolder = (res.savedOptions && typeof res.savedOptions.save_folder === "string") ? res.savedOptions.save_folder.trim() : "";
+        
+        // Determine Browser Target Path
+        // Browsers can only save relative to Downloads.
+        const isAbsolute = saveFolder.startsWith("/") || /^[a-zA-Z]:\\/.test(saveFolder);
+        const cleanSub = isAbsolute ? "" : saveFolder.replace(/[/\\\\]+/g, '/').replace(/^\/+|\/+$/g, '');
         const targetPath = cleanSub ? `${cleanSub}/${filename}` : filename;
 
         const canDownload = browser.downloads && typeof browser.downloads.download === "function";

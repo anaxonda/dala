@@ -1,8 +1,7 @@
 const enableBox = document.getElementById("enable-shortcuts");
 const downloadInput = document.getElementById("download-shortcut");
 const queueInput = document.getElementById("queue-shortcut");
-const subfolderInput = document.getElementById("download-subfolder");
-const serverSaveDirInput = document.getElementById("server-save-dir");
+const saveFolderInput = document.getElementById("opt-save-folder");
 const archiveServerBox = document.getElementById("opt-archive-server");
 const llmFormatBox = document.getElementById("llm-format");
 const llmModelInput = document.getElementById("llm-model");
@@ -58,11 +57,11 @@ async function loadSettings() {
   downloadInput.value = normalizeCombo(res.keyboardShortcutDownload) || DEFAULT_DOWNLOAD;
   queueInput.value = normalizeCombo(res.keyboardShortcutQueue) || DEFAULT_QUEUE;
   const savedOpts = res.savedOptions || {};
-  subfolderInput.value = (savedOpts.subfolder || "").trim();
-  // Map old termux_copy_dir to new field if new field is empty
-  const legacyTermux = (savedOpts.termux_copy_dir || "").trim();
-  const newSaveDir = (savedOpts.server_save_dir || "").trim();
-  serverSaveDirInput.value = newSaveDir || legacyTermux;
+  
+  // Migration: Use subfolder or server_save_dir if save_folder is empty
+  const legacySub = (savedOpts.subfolder || "").trim();
+  const legacyDir = (savedOpts.server_save_dir || savedOpts.termux_copy_dir || "").trim();
+  saveFolderInput.value = (savedOpts.save_folder || legacyDir || legacySub || "").trim();
   
   archiveServerBox.checked = Boolean(savedOpts.archive_server);
   llmFormatBox.checked = Boolean(savedOpts.llm_format);
@@ -78,8 +77,7 @@ async function saveSettings() {
   const enabled = enableBox.checked;
   const dl = normalizeCombo(downloadInput.value) || DEFAULT_DOWNLOAD;
   const q = normalizeCombo(queueInput.value) || DEFAULT_QUEUE;
-  const subfolder = (subfolderInput.value || "").trim();
-  const serverSaveDir = (serverSaveDirInput.value || "").trim();
+  const saveFolder = (saveFolderInput.value || "").trim();
   const archiveServer = archiveServerBox.checked;
   const llmFormat = llmFormatBox.checked;
   const llmModel = (llmModelInput.value || "").trim();
@@ -97,9 +95,9 @@ async function saveSettings() {
     keyboardShortcutQueue: q,
     savedOptions: {
       ...existing,
-      subfolder,
-      server_save_dir: serverSaveDir,
-      termux_copy_dir: serverSaveDir, // Keep legacy in sync
+      save_folder: saveFolder,
+      server_save_dir: saveFolder, // Sync for server
+      subfolder: saveFolder,       // Sync for browser
       archive_server: archiveServer,
       llm_format: llmFormat,
       llm_model: llmModel,
@@ -115,8 +113,7 @@ async function saveSettings() {
 enableBox.addEventListener("change", saveSettings);
 downloadInput.addEventListener("change", saveSettings);
 queueInput.addEventListener("change", saveSettings);
-subfolderInput.addEventListener("change", saveSettings);
-serverSaveDirInput.addEventListener("change", saveSettings);
+saveFolderInput.addEventListener("change", saveSettings);
 archiveServerBox.addEventListener("change", saveSettings);
 llmFormatBox.addEventListener("change", saveSettings);
 llmModelInput.addEventListener("change", saveSettings);

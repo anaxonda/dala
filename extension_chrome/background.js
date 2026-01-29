@@ -639,8 +639,13 @@ async function processDownloadCore(payload, isBundle) {
 
         const filename = getFilenameFromHeader(response.headers.get('Content-Disposition'));
         const res = await browser.storage.local.get("savedOptions");
-        const rawSub = (res.savedOptions && typeof res.savedOptions.subfolder === "string") ? res.savedOptions.subfolder.trim() : "";
-        const cleanSub = rawSub.replace(/[/\\]+/g, '');
+        const saveFolder = (res.savedOptions && typeof res.savedOptions.save_folder === "string") ? res.savedOptions.save_folder.trim() : "";
+        
+        // Determine Browser Target Path
+        // Browsers can only save relative to Downloads. 
+        // We detect if it's an absolute path; if so, we just use the filename for the browser side.
+        const isAbsolute = saveFolder.startsWith("/") || /^[a-zA-Z]:\\/.test(saveFolder);
+        const cleanSub = isAbsolute ? "" : saveFolder.replace(/[/\\]+/g, '/').replace(/^\/+|\/+$/g, '');
         const targetPath = cleanSub ? `${cleanSub}/${filename}` : filename;
 
         const canDownload = browser.downloads && typeof browser.downloads.download === "function";
