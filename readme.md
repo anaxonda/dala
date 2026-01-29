@@ -7,8 +7,8 @@ Supports sources including but not limited to:
 *   **Hacker News & Reddit:** Recursively fetches nested comments and adds a clickable "navigation cluster" to every post, making it possible to read deep threads on an e-reader.
 *   **Substack** Download and format post, optionally embedding images, and recursively fetches nested comments (like HN) as a subchapter. If a hacker news post links to substack it will fetch both substack and HN comment threads as subchapters.
 *   **Forums (XenForo, etc.):** Uses a browser extension to capture your login session, downloading gated attachments and high-res imagesthat CLI tools miss.
-*   **YouTube:** Downloads transcripts and optionally uses AI to format them into readable articles or generate summaries. Suprisingly nice to read youtube videos instead of watching them. Currently don't support comments.
-*   **Paywalls:** The extension shares your browser's cookies with the backend to access subscriber-only content (Substack, newspapers). Checkout "bypass-paywalls-firefox-clean" extension from magnolia1234 on gitflic.
+*   **YouTube:** Downloads transcripts and optionally uses AI to format them to be more readable (although they basic python parsing does ok and is much faster) or generate summaries. Suprisingly nice to read youtube videos instead of watching them. Optionally specify some number of comments to dl.
+*   **Paywalls:** The extension shares your browser's cookies with the backend to access gated content. (Substack, newspapers). Checkout "bypass-paywalls-firefox-clean" extension from magnolia1234 on gitflic.
 
 <img src="firefox_extension/icon.png" alt="dala icon" width="72" />
 
