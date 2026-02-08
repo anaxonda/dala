@@ -1,6 +1,9 @@
 # Changelog
 
-## 🔄 Updates
+## v2.3.6
+- **Package:** Include missing Firefox extension XPI (v2.3.5) in the release.
+
+## v2.3.5
 
 ### Keyboard Shortcuts & Feedback
 - Fixed "Queue shortcut failed" error toast in Firefox by properly handling message responses.

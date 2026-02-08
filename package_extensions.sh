@@ -6,9 +6,9 @@ mkdir -p dist
 # Package Chrome Extension
 echo "Packaging Chrome extension..."
 cd extension_chrome
-zip -r ../dist/dala-chrome-v2.3.5.zip . -x "web-ext-artifacts/*" -x ".*"
+zip -r ../dist/dala-chrome-v2.3.6.zip . -x "web-ext-artifacts/*" -x ".*"
 cd ..
-echo "Created dist/dala-chrome-v2.3.5.zip"
+echo "Created dist/dala-chrome-v2.3.6.zip"
 
 # Copy Firefox Extension (Signed)
 echo "Copying Firefox extension..."
