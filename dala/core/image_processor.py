@@ -705,6 +705,19 @@ class ImageProcessor(BaseImageProcessor):
                     log.debug(f"Failed to fetch/validate image after candidates: {candidate_urls}")
                     return
 
+                # Double-check if asset was added by another task while we were fetching
+                existing_after_fetch = next((a for a in book_assets if a.original_url == full_url), None)
+                if existing_after_fetch:
+                    img_tag['src'] = existing_after_fetch.filename
+                    for attr in ['srcset', 'data-src', 'data-srcset', 'loading', 'decoding', 'style', 'class', 'width', 'height']:
+                        if img_tag.has_attr(attr):
+                            del img_tag[attr]
+                    img_tag['class'] = 'epub-image'
+                    caption_text = ImageProcessor.find_caption(img_tag)
+                    ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
+                    ImageProcessor._cleanup_generic_wrapper(img_tag, caption_text)
+                    return
+
                 alt_urls = []
                 for u in candidate_urls:
                     if u:

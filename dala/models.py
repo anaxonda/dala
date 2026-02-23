@@ -28,7 +28,7 @@ MAX_IMAGE_DIMENSION = 1000
 JPEG_QUALITY = 65
 
 # Concurrency Control
-GLOBAL_SEMAPHORE = asyncio.Semaphore(2)
+GLOBAL_SEMAPHORE = asyncio.Semaphore(5)
 
 # --- Logging ---
 _LOGLEVEL = os.getenv("LOGLEVEL", "INFO").upper()

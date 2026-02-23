@@ -45,9 +45,16 @@ class EpubWriter:
         css_item = epub.EpubItem(uid="style_default", file_name="style/default.css", media_type="text/css", content=base_css)
         book.add_item(css_item)
 
+        added_filenames = set()
+        added_filenames.add("style/default.css")
+
         for asset in book_data.images:
+            if asset.filename in added_filenames:
+                log.warning(f"Skipping duplicate image filename in writer: {asset.filename}")
+                continue
             img = epub.EpubImage(uid=asset.uid, file_name=asset.filename, media_type=asset.media_type, content=asset.content)
             book.add_item(img)
+            added_filenames.add(asset.filename)
 
         epub_chapters = []
         for chap in book_data.chapters:
