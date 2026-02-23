@@ -50,7 +50,7 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition"],
+    expose_headers=["Content-Disposition", "X-Dala-Server-Saved"],
 )
 
 class SourceItem(BaseModel):
@@ -357,7 +357,12 @@ async def convert(req: ConversionRequest):
         if not saved_user_copy:
              print("⚠️  Could not save a server-side copy to any location.")
 
-        return FileResponse(path=tmp_path, filename=filename, media_type='application/epub+zip')
+        return FileResponse(
+            path=tmp_path,
+            filename=filename,
+            media_type='application/epub+zip',
+            headers={"X-Dala-Server-Saved": "1" if saved_user_copy else "0"},
+        )
 
     except Exception as e:
         import traceback

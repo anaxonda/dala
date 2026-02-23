@@ -120,6 +120,40 @@ if (browser.commands && browser.commands.onCommand) {
 
 let currentController = null;
 let lastShortcutTabId = null;
+const pendingBlobUrls = new Map();
+
+function trackBlobUrlForDownload(downloadId, blobUrl) {
+    if (typeof downloadId !== "number" || !blobUrl) return;
+    const existing = pendingBlobUrls.get(downloadId);
+    if (existing && existing.cleanupTimer) {
+        clearTimeout(existing.cleanupTimer);
+    }
+    const cleanupTimer = setTimeout(() => {
+        const tracked = pendingBlobUrls.get(downloadId);
+        if (tracked && tracked.url) {
+            try { URL.revokeObjectURL(tracked.url); } catch (_) {}
+            pendingBlobUrls.delete(downloadId);
+        }
+    }, 10 * 60 * 1000); // Hard cleanup if browser never emits completion event.
+    pendingBlobUrls.set(downloadId, { url: blobUrl, cleanupTimer });
+}
+
+function releaseBlobUrlForDownload(downloadId) {
+    const tracked = pendingBlobUrls.get(downloadId);
+    if (!tracked) return;
+    if (tracked.cleanupTimer) clearTimeout(tracked.cleanupTimer);
+    try { URL.revokeObjectURL(tracked.url); } catch (_) {}
+    pendingBlobUrls.delete(downloadId);
+}
+
+if (browser.downloads && browser.downloads.onChanged) {
+    browser.downloads.onChanged.addListener((delta) => {
+        if (!delta || typeof delta.id !== "number" || !delta.state || !delta.state.current) return;
+        if (delta.state.current === "complete" || delta.state.current === "interrupted") {
+            releaseBlobUrlForDownload(delta.id);
+        }
+    });
+}
 
 // Message Listener (From Popup/Content)
 browser.runtime.onMessage.addListener((message, sender) => {
@@ -498,6 +532,19 @@ function getFilenameFromHeader(header) {
 }
 
 async function openEpubInTab(blob, filename) {
+    // Prefer blob URL for large files; data URIs can exceed browser URL limits.
+    try {
+        const blobUrl = URL.createObjectURL(blob);
+        await browser.tabs.create({ url: blobUrl });
+        setTimeout(() => {
+            try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+        }, 10 * 60 * 1000);
+        console.warn(`Opened EPUB blob URL in tab for manual save: ${filename}`);
+        return;
+    } catch (e) {
+        console.warn("Blob URL tab open failed; trying data URI fallback", e);
+    }
+
     try {
         const buffer = await blob.arrayBuffer();
         const bytes = new Uint8Array(buffer);
@@ -575,6 +622,7 @@ async function processDownloadCore(payload, isBundle) {
         });
 
         console.log("Server response received:", response.status);
+        const serverSaved = response.headers.get("X-Dala-Server-Saved") === "1";
 
         if (!response.ok) {
             const errText = await response.text();
@@ -602,34 +650,56 @@ async function processDownloadCore(payload, isBundle) {
         if (canDownload) {
             try {
                 console.log(`Attempting download: URL=${url}, Filename=${targetPath}`);
-                await browser.downloads.download({
+                const downloadId = await browser.downloads.download({
                     url: url,
                     filename: targetPath,
                     saveAs: false,
                     conflictAction: 'uniquify'
                 });
+                if (typeof downloadId === "number") {
+                    trackBlobUrlForDownload(downloadId, url);
+                } else {
+                    // Keep blob URL alive long enough for browser to consume it.
+                    setTimeout(() => {
+                        try { URL.revokeObjectURL(url); } catch (_) {}
+                    }, 2 * 60 * 1000);
+                }
                 downloaded = true;
             } catch (e) {
                 console.error("downloads API failed for", targetPath, e);
-                browser.notifications.create({
-                    type: "basic",
-                    iconUrl: "icon.png",
-                    title: "Download Save Failed",
-                    message: `Browser refused to save '${targetPath}'. Error: ${e.message || e}`
-                });
+                if (!serverSaved) {
+                    browser.notifications.create({
+                        type: "basic",
+                        iconUrl: "icon.png",
+                        title: "Download Save Failed",
+                        message: `Browser refused to save '${targetPath}'. Error: ${e.message || e}`
+                    });
+                } else {
+                    browser.notifications.create({
+                        type: "basic",
+                        iconUrl: "icon.png",
+                        title: "Saved on Server",
+                        message: "Browser save failed, but the EPUB was saved by the server."
+                    });
+                }
             }
         } else {
             console.warn("downloads API unavailable; will open blob in new tab");
         }
 
         if (!downloaded) {
-            await openEpubInTab(blob, filename);
+            if (serverSaved) {
+                console.warn("Treating as success because server saved EPUB locally.");
+                try { URL.revokeObjectURL(url); } catch (_) {}
+                downloaded = true;
+            } else {
+                try { URL.revokeObjectURL(url); } catch (_) {}
+                await openEpubInTab(blob, filename);
+            }
         } else if (isAndroid) {
             // Some Android builds acknowledge downloads but fail silently; also open tab as backup
             await openEpubInTab(blob, filename);
         }
-
-        URL.revokeObjectURL(url);
 
         browser.browserAction.setBadgeText({ text: "OK" });
         browser.browserAction.setBadgeBackgroundColor({ color: "green" });
