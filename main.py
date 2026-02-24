@@ -3,9 +3,11 @@ import sys
 import asyncio
 import aiohttp
 import socket
+import time
 from datetime import datetime
 from urllib.parse import urlparse
-from typing import List, Dict, Optional
+from inspect import isawaitable
+from typing import Any, Callable, Dict, List, Optional
 from tqdm.asyncio import tqdm_asyncio
 from ebooklib import epub
 from dotenv import load_dotenv
@@ -21,10 +23,42 @@ from dala.core.dispatcher import DriverDispatcher
 from dala.core.session import get_session, load_cookie_file
 from dala.core.writer import EpubWriter
 
-async def process_urls(sources: List[Source], options: ConversionOptions, session) -> List[BookData]:
+async def process_urls(
+    sources: List[Source],
+    options: ConversionOptions,
+    session,
+    progress_callback: Optional[Callable[[int, int, Optional[str]], Any]] = None,
+    source_timing_callback: Optional[Callable[[str, int, bool, Optional[str]], Any]] = None,
+) -> List[BookData]:
     processed_books = []
+    progress_lock = asyncio.Lock()
+    completed = 0
+    total = len(sources)
+
+    async def emit_progress(processed: int, current_url: Optional[str]) -> None:
+        if not progress_callback:
+            return
+        maybe = progress_callback(processed, total, current_url)
+        if isawaitable(maybe):
+            await maybe
+
+    async def emit_source_timing(
+        url: str,
+        duration_ms: int,
+        success: bool,
+        error_type: Optional[str],
+    ) -> None:
+        if not source_timing_callback:
+            return
+        maybe = source_timing_callback(url, duration_ms, success, error_type)
+        if isawaitable(maybe):
+            await maybe
 
     async def safe_process(source):
+        nonlocal completed
+        started_at = time.perf_counter()
+        success = False
+        error_type = None
         async with GLOBAL_SEMAPHORE:
             profile = ProfileManager.get_instance().get_profile(source.url)
             driver = DriverDispatcher.get_driver(source, profile)
@@ -41,13 +75,21 @@ async def process_urls(sources: List[Source], options: ConversionOptions, sessio
 
             try:
                 context = ConversionContext(session=local_session, options=options, profile=profile)
-                return await driver.prepare_book_data(context, source)
+                book = await driver.prepare_book_data(context, source)
+                success = book is not None
+                return book
             except Exception as e:
+                error_type = type(e).__name__
                 log.exception(f"Failed to process {source.url}: {e}")
                 return None
             finally:
                 if local_session is not session:
                     await local_session.close()
+                duration_ms = int((time.perf_counter() - started_at) * 1000)
+                await emit_source_timing(source.url, duration_ms, success, error_type)
+                async with progress_lock:
+                    completed += 1
+                    await emit_progress(completed, source.url)
 
     results = await tqdm_asyncio.gather(*[safe_process(s) for s in sources], desc="Processing URLs")
     return [b for b in results if b]

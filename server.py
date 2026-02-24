@@ -20,9 +20,11 @@
 
 import asyncio
 import uvicorn
+import json
 import os
 import tempfile
 import shutil
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from inspect import isawaitable
@@ -150,6 +152,16 @@ JOB_RUN_SEMAPHORE = asyncio.Semaphore(int(os.getenv("DALA_JOB_CONCURRENCY", "1")
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _timing_log(run_id: str, event: str, **fields: Any) -> None:
+    payload = {
+        "run_id": run_id,
+        "event": event,
+        "ts": _utc_now(),
+    }
+    payload.update(fields)
+    print(f"TIMING {json.dumps(payload, separators=(',', ':'), ensure_ascii=True)}")
 
 
 async def _create_job(total_sources: int) -> JobRecord:
@@ -341,50 +353,150 @@ async def run_conversion_job(
     req: ConversionRequest,
     is_cancelled: Optional[Callable[[], bool]] = None,
     progress_callback: Optional[Callable[[int, int, Optional[str]], Any]] = None,
+    job_id: Optional[str] = None,
 ) -> ConversionResult:
+    run_id = job_id or uuid4().hex
+    run_started_at = time.perf_counter()
     options, core_sources = _build_options_and_sources(req)
     total_sources = len(core_sources)
+    source_timings: List[Tuple[str, int, bool, Optional[str]]] = []
 
-    await _emit_progress(progress_callback, 0, total_sources, core_sources[0].url if core_sources else None)
-    _raise_if_cancelled(is_cancelled)
-
-    async with get_session() as session:
-        processed_books = await core_main.process_urls(core_sources, options, session)
-
-    _raise_if_cancelled(is_cancelled)
-    processed_count = len(processed_books)
-    await _emit_progress(progress_callback, processed_count, total_sources, None)
-
-    if not processed_books:
-        raise ValueError("No content could be extracted.")
-
-    if len(processed_books) > 1:
-        title = req.bundle_title or f"Bundle_{len(processed_books)}_Articles"
-        author = req.bundle_author or "Web to EPUB"
-        final_book = core_main.create_bundle(processed_books, title, author)
-    else:
-        final_book = processed_books[0]
-        if req.bundle_title:
-            final_book.title = req.bundle_title
-
-    _raise_if_cancelled(is_cancelled)
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".epub") as tmp:
-        tmp_path = tmp.name
-
-    EpubWriter.write(final_book, tmp_path)
-    filename = f"{sanitize_filename(final_book.title)}.epub"
-    print(f"✅ Generated EPUB at: {tmp_path}")
-    print(f"✅ Sending as: {filename}")
-
-    saved_user_copy = _save_server_copy(req, tmp_path, filename)
-    return ConversionResult(
-        tmp_path=tmp_path,
-        filename=filename,
-        saved_user_copy=saved_user_copy,
+    _timing_log(
+        run_id,
+        "job_start",
+        mode="jobs" if job_id else "convert",
         total_sources=total_sources,
-        processed_sources=processed_count,
     )
+
+    async def source_timing_cb(url: str, duration_ms: int, success: bool, error_type: Optional[str]) -> None:
+        source_timings.append((url, duration_ms, success, error_type))
+        _timing_log(
+            run_id,
+            "source_done",
+            url=url,
+            duration_ms=duration_ms,
+            success=1 if success else 0,
+            error_type=error_type,
+        )
+
+    try:
+        await _emit_progress(progress_callback, 0, total_sources, core_sources[0].url if core_sources else None)
+        _raise_if_cancelled(is_cancelled)
+
+        stage_started_at = time.perf_counter()
+        async with get_session() as session:
+            processed_books = await core_main.process_urls(
+                core_sources,
+                options,
+                session,
+                progress_callback=progress_callback,
+                source_timing_callback=source_timing_cb,
+            )
+        _timing_log(
+            run_id,
+            "stage_done",
+            stage="process_urls",
+            duration_ms=int((time.perf_counter() - stage_started_at) * 1000),
+        )
+
+        _raise_if_cancelled(is_cancelled)
+        processed_count = len(processed_books)
+        await _emit_progress(progress_callback, processed_count, total_sources, None)
+
+        if not processed_books:
+            raise ValueError("No content could be extracted.")
+
+        stage_started_at = time.perf_counter()
+        if len(processed_books) > 1:
+            title = req.bundle_title or f"Bundle_{len(processed_books)}_Articles"
+            author = req.bundle_author or "Web to EPUB"
+            final_book = core_main.create_bundle(processed_books, title, author)
+            bundle_mode = "bundle"
+        else:
+            final_book = processed_books[0]
+            if req.bundle_title:
+                final_book.title = req.bundle_title
+            bundle_mode = "single"
+        _timing_log(
+            run_id,
+            "stage_done",
+            stage="prepare_output_book",
+            mode=bundle_mode,
+            duration_ms=int((time.perf_counter() - stage_started_at) * 1000),
+        )
+
+        _raise_if_cancelled(is_cancelled)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".epub") as tmp:
+            tmp_path = tmp.name
+
+        stage_started_at = time.perf_counter()
+        EpubWriter.write(final_book, tmp_path)
+        _timing_log(
+            run_id,
+            "stage_done",
+            stage="write_epub",
+            duration_ms=int((time.perf_counter() - stage_started_at) * 1000),
+        )
+        filename = f"{sanitize_filename(final_book.title)}.epub"
+        print(f"✅ Generated EPUB at: {tmp_path}")
+        print(f"✅ Sending as: {filename}")
+
+        stage_started_at = time.perf_counter()
+        saved_user_copy = _save_server_copy(req, tmp_path, filename)
+        _timing_log(
+            run_id,
+            "stage_done",
+            stage="save_server_copy",
+            duration_ms=int((time.perf_counter() - stage_started_at) * 1000),
+            server_saved=1 if saved_user_copy else 0,
+        )
+
+        failed_sources = sum(1 for _, _, success, _ in source_timings if not success)
+        slowest_sources = [
+            {"url": url, "ms": duration_ms, "success": 1 if success else 0}
+            for url, duration_ms, success, _ in sorted(
+                source_timings,
+                key=lambda item: item[1],
+                reverse=True
+            )[:5]
+        ]
+
+        _timing_log(
+            run_id,
+            "job_summary",
+            duration_ms=int((time.perf_counter() - run_started_at) * 1000),
+            total_sources=total_sources,
+            processed_sources=processed_count,
+            failed_sources=failed_sources,
+            output_filename=filename,
+            server_saved=1 if saved_user_copy else 0,
+            slowest_sources=slowest_sources,
+        )
+
+        return ConversionResult(
+            tmp_path=tmp_path,
+            filename=filename,
+            saved_user_copy=saved_user_copy,
+            total_sources=total_sources,
+            processed_sources=processed_count,
+        )
+    except asyncio.CancelledError:
+        _timing_log(
+            run_id,
+            "job_cancelled",
+            duration_ms=int((time.perf_counter() - run_started_at) * 1000),
+        )
+        raise
+    except Exception as exc:
+        _timing_log(
+            run_id,
+            "job_error",
+            duration_ms=int((time.perf_counter() - run_started_at) * 1000),
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        raise
 
 @app.post("/helper/extract-links")
 async def extract_links(req: ScanRequest):
@@ -519,7 +631,8 @@ async def _run_job_task(job_id: str, req: ConversionRequest) -> None:
             result = await run_conversion_job(
                 req,
                 is_cancelled=_is_cancelled_factory(record),
-                progress_callback=progress_cb
+                progress_callback=progress_cb,
+                job_id=job_id,
             )
             await _update_job(
                 job_id,
