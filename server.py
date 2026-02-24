@@ -18,11 +18,16 @@
 # ]
 # ///
 
+import asyncio
 import uvicorn
 import os
 import tempfile
 import shutil
-from typing import List, Optional
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from inspect import isawaitable
+from typing import Any, Callable, Dict, List, Optional, Tuple
+from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -88,6 +93,298 @@ class ConversionRequest(BaseModel):
 class ScanRequest(BaseModel):
     html: str
     url: str
+
+
+class JobSubmitResponse(BaseModel):
+    job_id: str
+    status: str
+
+
+@dataclass
+class ConversionResult:
+    tmp_path: str
+    filename: str
+    saved_user_copy: bool
+    total_sources: int
+    processed_sources: int
+
+
+@dataclass
+class JobRecord:
+    job_id: str
+    status: str
+    created_at: str
+    updated_at: str
+    total_sources: int = 0
+    processed_sources: int = 0
+    current_url: Optional[str] = None
+    error: Optional[str] = None
+    output_path: Optional[str] = None
+    output_filename: Optional[str] = None
+    server_saved: bool = False
+    cancel_requested: bool = False
+    task: Optional[asyncio.Task] = None
+    cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def to_public(self) -> Dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "status": self.status,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "total_sources": self.total_sources,
+            "processed_sources": self.processed_sources,
+            "current_url": self.current_url,
+            "error": self.error,
+            "server_saved": self.server_saved,
+            "output_filename": self.output_filename,
+            "download_ready": self.status == "completed" and bool(self.output_path),
+            "cancel_requested": self.cancel_requested,
+        }
+
+
+JOBS: Dict[str, JobRecord] = {}
+JOBS_LOCK = asyncio.Lock()
+JOB_RUN_SEMAPHORE = asyncio.Semaphore(int(os.getenv("DALA_JOB_CONCURRENCY", "1")))
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _create_job(total_sources: int) -> JobRecord:
+    now = _utc_now()
+    record = JobRecord(
+        job_id=uuid4().hex,
+        status="queued",
+        created_at=now,
+        updated_at=now,
+        total_sources=total_sources,
+        processed_sources=0,
+    )
+    async with JOBS_LOCK:
+        JOBS[record.job_id] = record
+    return record
+
+
+async def _get_job(job_id: str) -> Optional[JobRecord]:
+    async with JOBS_LOCK:
+        return JOBS.get(job_id)
+
+
+async def _update_job(job_id: str, **fields: Any) -> Optional[JobRecord]:
+    async with JOBS_LOCK:
+        record = JOBS.get(job_id)
+        if not record:
+            return None
+        for key, value in fields.items():
+            if hasattr(record, key):
+                setattr(record, key, value)
+        record.updated_at = _utc_now()
+        return record
+
+
+async def _set_job_task(job_id: str, task: asyncio.Task) -> None:
+    await _update_job(job_id, task=task)
+
+
+def _is_cancelled_factory(record: JobRecord) -> Callable[[], bool]:
+    return record.cancel_event.is_set
+
+
+def _raise_if_cancelled(is_cancelled: Optional[Callable[[], bool]]) -> None:
+    if is_cancelled and is_cancelled():
+        raise asyncio.CancelledError("Job cancelled.")
+
+
+async def _emit_progress(
+    callback: Optional[Callable[[int, int, Optional[str]], Any]],
+    processed_sources: int,
+    total_sources: int,
+    current_url: Optional[str],
+) -> None:
+    if not callback:
+        return
+    maybe = callback(processed_sources, total_sources, current_url)
+    if isawaitable(maybe):
+        await maybe
+
+
+def _build_options_and_sources(req: ConversionRequest) -> Tuple[ConversionOptions, List[Source]]:
+    print(f"📥 Received request: {len(req.sources)} sources")
+    print(
+        f"🔧 Options: NoComments={req.no_comments}, NoImages={req.no_images}, "
+        f"Thumbnails={req.thumbnails}, YTLang={req.youtube_lang}, YTSort={req.youtube_comment_sort}"
+    )
+    if req.sources:
+        for idx, s in enumerate(req.sources):
+            count_assets = len(s.assets) if s.assets else 0
+            print(f"Source[{idx}] assets: {count_assets}")
+            if s.assets:
+                original_count = len(s.assets)
+                s.assets = [
+                    a for a in s.assets
+                    if a.get("original_url")
+                    and a.get("original_url") != s.url
+                    and (
+                        "image" in str(a.get("content_type", "")).lower()
+                        or "/attachments/" in str(a.get("original_url"))
+                    )
+                ]
+                print(f"Source[{idx}] assets: {original_count} -> {len(s.assets)} (after filtering)")
+
+    options = ConversionOptions(
+        no_comments=req.no_comments,
+        no_images=req.no_images,
+        no_article=req.no_article,
+        archive=req.archive,
+        compact_comments=True,
+        max_depth=req.max_depth,
+        max_pages=req.max_pages,
+        max_posts=req.max_posts,
+        page_spec=req.page_spec,
+        llm_format=req.llm_format,
+        llm_model=req.llm_model,
+        llm_api_key=req.llm_api_key,
+        summary=req.summary,
+        thumbnails=req.thumbnails,
+        youtube_lang=req.youtube_lang or "en",
+        youtube_prefer_auto=req.youtube_prefer_auto,
+        youtube_max_comments=req.youtube_max_comments,
+        youtube_comment_sort=req.youtube_comment_sort
+    )
+
+    core_sources = []
+    for s in req.sources:
+        core_sources.append(Source(
+            url=s.url,
+            html=s.html,
+            cookies=s.cookies,
+            assets=s.assets,
+            is_forum=bool(s.is_forum)
+        ))
+    return options, core_sources
+
+
+def _save_server_copy(req: ConversionRequest, tmp_path: str, filename: str) -> bool:
+    candidates = []
+    user_input = (req.server_save_dir or req.termux_copy_dir or "").strip()
+
+    sys_downloads = None
+    try:
+        termux_path = "/data/data/com.termux/files/home/storage/downloads"
+        if os.path.isdir(termux_path):
+            sys_downloads = termux_path
+        elif os.name == 'posix':
+            import subprocess
+            res = subprocess.run(['xdg-user-dir', 'DOWNLOAD'], capture_output=True, text=True)
+            if res.returncode == 0 and res.stdout.strip():
+                sys_downloads = res.stdout.strip()
+    except Exception:
+        pass
+
+    if not sys_downloads:
+        possible_dl = os.path.join(os.path.expanduser("~"), "Downloads")
+        if os.path.isdir(possible_dl):
+            sys_downloads = possible_dl
+
+    if user_input:
+        is_absolute = os.path.isabs(user_input) or (os.name == 'nt' and len(user_input) > 1 and user_input[1] == ':')
+        if is_absolute:
+            candidates.append(user_input)
+        elif sys_downloads:
+            candidates.append(os.path.join(sys_downloads, user_input))
+        else:
+            candidates.append(user_input)
+
+    if sys_downloads and sys_downloads not in candidates:
+        candidates.append(sys_downloads)
+
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    exports_dir = os.path.join(project_root, "exports")
+
+    if req.archive_server:
+        try:
+            os.makedirs(exports_dir, exist_ok=True)
+            archive_path = os.path.join(exports_dir, filename)
+            shutil.copy2(tmp_path, archive_path)
+            print(f"✅ Archived to project exports: {archive_path}")
+        except Exception as e:
+            print(f"⚠️  Archive failed: {e}")
+
+    candidates.append(exports_dir)
+
+    saved_user_copy = False
+    for dest in candidates:
+        if not dest:
+            continue
+        if dest == exports_dir and req.archive_server:
+            saved_user_copy = True
+            break
+        try:
+            os.makedirs(dest, exist_ok=True)
+            if os.path.isdir(dest):
+                final_path = os.path.join(dest, filename)
+                shutil.copy2(tmp_path, final_path)
+                saved_user_copy = True
+                print(f"📥 Saved local copy to: {final_path}")
+                break
+        except Exception:
+            continue
+
+    if not saved_user_copy:
+        print("⚠️  Could not save a server-side copy to any location.")
+    return saved_user_copy
+
+
+async def run_conversion_job(
+    req: ConversionRequest,
+    is_cancelled: Optional[Callable[[], bool]] = None,
+    progress_callback: Optional[Callable[[int, int, Optional[str]], Any]] = None,
+) -> ConversionResult:
+    options, core_sources = _build_options_and_sources(req)
+    total_sources = len(core_sources)
+
+    await _emit_progress(progress_callback, 0, total_sources, core_sources[0].url if core_sources else None)
+    _raise_if_cancelled(is_cancelled)
+
+    async with get_session() as session:
+        processed_books = await core_main.process_urls(core_sources, options, session)
+
+    _raise_if_cancelled(is_cancelled)
+    processed_count = len(processed_books)
+    await _emit_progress(progress_callback, processed_count, total_sources, None)
+
+    if not processed_books:
+        raise ValueError("No content could be extracted.")
+
+    if len(processed_books) > 1:
+        title = req.bundle_title or f"Bundle_{len(processed_books)}_Articles"
+        author = req.bundle_author or "Web to EPUB"
+        final_book = core_main.create_bundle(processed_books, title, author)
+    else:
+        final_book = processed_books[0]
+        if req.bundle_title:
+            final_book.title = req.bundle_title
+
+    _raise_if_cancelled(is_cancelled)
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".epub") as tmp:
+        tmp_path = tmp.name
+
+    EpubWriter.write(final_book, tmp_path)
+    filename = f"{sanitize_filename(final_book.title)}.epub"
+    print(f"✅ Generated EPUB at: {tmp_path}")
+    print(f"✅ Sending as: {filename}")
+
+    saved_user_copy = _save_server_copy(req, tmp_path, filename)
+    return ConversionResult(
+        tmp_path=tmp_path,
+        filename=filename,
+        saved_user_copy=saved_user_copy,
+        total_sources=total_sources,
+        processed_sources=processed_count,
+    )
 
 @app.post("/helper/extract-links")
 async def extract_links(req: ScanRequest):
@@ -193,177 +490,121 @@ async def extract_links(req: ScanRequest):
 @app.get("/ping")
 async def ping(): return {"status": "ok"}
 
-@app.post("/convert")
-async def convert(req: ConversionRequest):
-    print(f"📥 Received request: {len(req.sources)} sources")
-    print(f"🔧 Options: NoComments={req.no_comments}, NoImages={req.no_images}, Thumbnails={req.thumbnails}, YTLang={req.youtube_lang}, YTSort={req.youtube_comment_sort}")
-    if req.sources:
-        for idx, s in enumerate(req.sources):
-            count_assets = len(s.assets) if s.assets else 0
-            print(f"Source[{idx}] assets: {count_assets}")
-            if s.assets:
-                original_count = len(s.assets)
-                s.assets = [
-                    a for a in s.assets
-                    if a.get("original_url")
-                    and a.get("original_url") != s.url
-                    and (
-                        "image" in str(a.get("content_type", "")).lower()
-                        or "/attachments/" in str(a.get("original_url"))
-                    )
-                ]
-                print(f"Source[{idx}] assets: {original_count} -> {len(s.assets)} (after filtering)")
+async def _run_job_task(job_id: str, req: ConversionRequest) -> None:
+    async with JOB_RUN_SEMAPHORE:
+        record = await _get_job(job_id)
+        if not record:
+            return
 
-    options = ConversionOptions(
-        no_comments=req.no_comments,
-        no_images=req.no_images,
-        no_article=req.no_article,
-        archive=req.archive,
-        compact_comments=True,
-        max_depth=req.max_depth,
-        max_pages=req.max_pages,
-        max_posts=req.max_posts,
-        page_spec=req.page_spec,
-        llm_format=req.llm_format,
-        llm_model=req.llm_model,
-        llm_api_key=req.llm_api_key,
-        summary=req.summary,
-        thumbnails=req.thumbnails,
-        youtube_lang=req.youtube_lang or "en",
-        youtube_prefer_auto=req.youtube_prefer_auto,
-        youtube_max_comments=req.youtube_max_comments,
-        youtube_comment_sort=req.youtube_comment_sort
-    )
+        if record.cancel_event.is_set():
+            await _update_job(job_id, status="cancelled", error="Job cancelled before start.")
+            return
 
-    # Map Pydantic to Core Dataclass
-    core_sources = []
-    for s in req.sources:
-        is_forum = bool(s.is_forum)
-        core_sources.append(Source(
-            url=s.url,
-            html=s.html,
-            cookies=s.cookies,
-            assets=s.assets,
-            is_forum=is_forum
-        ))
-
-    async with get_session() as session:
-        processed_books = await core_main.process_urls(core_sources, options, session)
-
-    if not processed_books:
-        raise HTTPException(status_code=500, detail="No content could be extracted.")
-
-    try:
-        if len(processed_books) > 1:
-            title = req.bundle_title or f"Bundle_{len(processed_books)}_Articles"
-            author = req.bundle_author or "Web to EPUB"
-            final_book = core_main.create_bundle(processed_books, title, author)
-        else:
-            final_book = processed_books[0]
-            if req.bundle_title: final_book.title = req.bundle_title
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".epub") as tmp:
-            tmp_path = tmp.name
-
-        EpubWriter.write(final_book, tmp_path)
-        filename = f"{sanitize_filename(final_book.title)}.epub"
-        print(f"✅ Generated EPUB at: {tmp_path}")
-        print(f"✅ Sending as: {filename}")
-
-        # --- Smart Server-Side Saving (Single Copy) ---
-        # We attempt to save a single copy to the best available location.
-        # Priority: 1. User Path -> 2. System Downloads -> 3. Project Exports (Fallback)
-        
-        candidates = []
-        user_input = (req.server_save_dir or req.termux_copy_dir or "").strip()
-        
-        # Determine System Downloads (Cross-Platform)
-        sys_downloads = None
-        try:
-            # Android/Termux check
-            termux_path = "/data/data/com.termux/files/home/storage/downloads"
-            if os.path.isdir(termux_path):
-                sys_downloads = termux_path
-            # Linux XDG check
-            elif os.name == 'posix':
-                import subprocess
-                res = subprocess.run(['xdg-user-dir', 'DOWNLOAD'], capture_output=True, text=True)
-                if res.returncode == 0 and res.stdout.strip():
-                    sys_downloads = res.stdout.strip()
-        except Exception: 
-            pass
-            
-        if not sys_downloads:
-            # Windows/macOS/Linux Fallback
-            possible_dl = os.path.join(os.path.expanduser("~"), "Downloads")
-            if os.path.isdir(possible_dl):
-                sys_downloads = possible_dl
-
-        # Logic for User Input
-        if user_input:
-            # Check if Absolute
-            is_absolute = os.path.isabs(user_input) or (os.name == 'nt' and len(user_input) > 1 and user_input[1] == ':')
-            if is_absolute:
-                candidates.append(user_input)
-            elif sys_downloads:
-                # Relative to system downloads
-                candidates.append(os.path.join(sys_downloads, user_input))
-            else:
-                # If no system downloads, just use the relative path as-is (current dir)
-                candidates.append(user_input)
-        
-        if sys_downloads and sys_downloads not in candidates:
-            candidates.append(sys_downloads)
-
-        # 3. Project Fallback (Archive)
-        project_root = os.path.dirname(os.path.abspath(__file__))
-        exports_dir = os.path.join(project_root, "exports")
-        
-        # If user EXPLICITLY requested archive, force copy there first
-        if req.archive_server:
-            try:
-                os.makedirs(exports_dir, exist_ok=True)
-                archive_path = os.path.join(exports_dir, filename)
-                shutil.copy2(tmp_path, archive_path)
-                print(f"✅ Archived to project exports: {archive_path}")
-            except Exception as e:
-                print(f"⚠️  Archive failed: {e}")
-
-        # Now try to save the 'User Copy' (Single Best Location)
-        candidates.append(exports_dir) 
-
-        saved_user_copy = False
-        for dest in candidates:
-            if not dest: continue
-            
-            # Optimization: Skip if matches archive
-            if dest == exports_dir and req.archive_server:
-                saved_user_copy = True
-                break
-
-            try:
-                # Ensure path exists (recursively create if relative)
-                os.makedirs(dest, exist_ok=True)
-                
-                if os.path.isdir(dest):
-                    final_path = os.path.join(dest, filename)
-                    shutil.copy2(tmp_path, final_path)
-                    saved_user_copy = True
-                    print(f"📥 Saved local copy to: {final_path}")
-                    break # Stop after first success
-            except Exception:
-                continue
-        
-        if not saved_user_copy:
-             print("⚠️  Could not save a server-side copy to any location.")
-
-        return FileResponse(
-            path=tmp_path,
-            filename=filename,
-            media_type='application/epub+zip',
-            headers={"X-Dala-Server-Saved": "1" if saved_user_copy else "0"},
+        await _update_job(
+            job_id,
+            status="running",
+            current_url=req.sources[0].url if req.sources else None,
+            total_sources=len(req.sources),
         )
 
+        async def progress_cb(processed: int, total: int, current_url: Optional[str]) -> None:
+            await _update_job(
+                job_id,
+                processed_sources=processed,
+                total_sources=total,
+                current_url=current_url,
+            )
+
+        try:
+            result = await run_conversion_job(
+                req,
+                is_cancelled=_is_cancelled_factory(record),
+                progress_callback=progress_cb
+            )
+            await _update_job(
+                job_id,
+                status="completed",
+                processed_sources=result.processed_sources,
+                total_sources=result.total_sources,
+                current_url=None,
+                output_path=result.tmp_path,
+                output_filename=result.filename,
+                server_saved=result.saved_user_copy,
+                error=None,
+            )
+        except asyncio.CancelledError:
+            await _update_job(job_id, status="cancelled", current_url=None, error="Job cancelled.")
+        except Exception as e:
+            log.exception(f"Job {job_id} failed: {e}")
+            await _update_job(job_id, status="failed", current_url=None, error=str(e))
+
+
+@app.post("/jobs", response_model=JobSubmitResponse)
+async def create_job(req: ConversionRequest):
+    job = await _create_job(total_sources=len(req.sources))
+    task = asyncio.create_task(_run_job_task(job.job_id, req))
+    await _set_job_task(job.job_id, task)
+    return JobSubmitResponse(job_id=job.job_id, status=job.status)
+
+
+@app.get("/jobs/{job_id}")
+async def get_job_status(job_id: str):
+    job = await _get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return job.to_public()
+
+
+@app.post("/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    job = await _get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if job.status in {"completed", "failed", "cancelled"}:
+        return job.to_public()
+
+    job.cancel_requested = True
+    job.cancel_event.set()
+    if job.status == "queued":
+        await _update_job(job_id, status="cancelled", error="Job cancelled.")
+    elif job.task and not job.task.done():
+        job.task.cancel()
+    await _update_job(job_id, cancel_requested=True)
+    return job.to_public()
+
+
+@app.get("/jobs/{job_id}/download")
+async def download_job_result(job_id: str):
+    job = await _get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if job.status != "completed":
+        raise HTTPException(status_code=409, detail=f"Job is {job.status}.")
+    if not job.output_path or not os.path.exists(job.output_path):
+        raise HTTPException(status_code=404, detail="Output file not available.")
+
+    return FileResponse(
+        path=job.output_path,
+        filename=job.output_filename or "download.epub",
+        media_type='application/epub+zip',
+        headers={"X-Dala-Server-Saved": "1" if job.server_saved else "0"},
+    )
+
+
+@app.post("/convert")
+async def convert(req: ConversionRequest):
+    try:
+        result = await run_conversion_job(req)
+        return FileResponse(
+            path=result.tmp_path,
+            filename=result.filename,
+            media_type='application/epub+zip',
+            headers={"X-Dala-Server-Saved": "1" if result.saved_user_copy else "0"},
+        )
+    except asyncio.CancelledError:
+        raise HTTPException(status_code=499, detail="Conversion cancelled.")
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         import traceback
         traceback.print_exc()
