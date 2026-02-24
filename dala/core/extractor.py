@@ -1,6 +1,7 @@
 import asyncio
 import trafilatura
 from bs4 import BeautifulSoup, Comment
+from datetime import datetime, timezone
 from urllib.parse import urlparse, quote
 from typing import Optional
 from yarl import URL
@@ -9,6 +10,26 @@ from . .models import log, ARCHIVE_ORG_API_BASE, SiteProfile
 from .session import fetch_with_retry
 
 class ArticleExtractor:
+    @staticmethod
+    def _normalize_wayback_snapshot_url(snapshot_url: str) -> str:
+        if not snapshot_url:
+            return snapshot_url
+        if snapshot_url.startswith("http:"):
+            return snapshot_url.replace("http:", "https:", 1)
+        if snapshot_url.startswith("//"):
+            return f"https:{snapshot_url}"
+        return snapshot_url
+
+    @staticmethod
+    def _extract_wayback_snapshot_from_available(data: dict) -> Optional[str]:
+        try:
+            closest = data.get("archived_snapshots", {}).get("closest", {})
+            if closest.get("available") and closest.get("url"):
+                return ArticleExtractor._normalize_wayback_snapshot_url(closest["url"])
+        except Exception:
+            return None
+        return None
+
     @staticmethod
     def build_meta_block(url: str, data: dict, context: Optional[str] = None, summary_html: Optional[str] = None) -> str:
         """Shared article metadata block with source, author, date, site, archive info."""
@@ -170,19 +191,53 @@ class ArticleExtractor:
 
     @staticmethod
     async def get_wayback_url(session, target_url):
-        api_url = f"{ARCHIVE_ORG_API_BASE}?url={quote(target_url)}"
+        encoded_target = quote(target_url, safe='')
+        current_yyyymm = datetime.now(timezone.utc).strftime("%Y%m")
+        available_queries = [
+            f"{ARCHIVE_ORG_API_BASE}?url={encoded_target}",
+            f"{ARCHIVE_ORG_API_BASE}?timestamp={current_yyyymm}&url={encoded_target}",
+        ]
+
+        for api_url in available_queries:
+            try:
+                log.info(f"Checking Wayback Machine: {api_url}")
+                data, _ = await fetch_with_retry(session, api_url, 'json', max_retries=2, backoff=0.75)
+                log.debug(f"Wayback API response: {data}")
+                snap = ArticleExtractor._extract_wayback_snapshot_from_available(data or {})
+                if snap:
+                    log.info(f"Found archive snapshot: {snap}")
+                    return snap
+            except Exception as e:
+                log.warning(f"Wayback availability lookup failed for {api_url}: {e}")
+
+        # `wayback/available` can intermittently miss snapshots. CDX is a stronger fallback.
+        cdx_url = (
+            "https://web.archive.org/cdx/search/cdx"
+            f"?url={encoded_target}"
+            "&output=json"
+            "&fl=timestamp,original,statuscode,mimetype"
+            "&filter=statuscode:200"
+            "&filter=mimetype:text/html"
+            "&limit=1"
+            "&sort=reverse"
+        )
         try:
-            log.info(f"Checking Wayback Machine: {api_url}")
-            data, _ = await fetch_with_retry(session, api_url, 'json')
-            log.debug(f"Wayback API response: {data}")
-            if data and data.get('archived_snapshots', {}).get('closest', {}).get('available'):
-                snap = data['archived_snapshots']['closest']['url']
-                if snap.startswith('http:'): snap = snap.replace('http:', 'https:', 1)
-                log.info(f"Found archive snapshot: {snap}")
-                return snap
+            log.info(f"Wayback availability empty; checking CDX index: {cdx_url}")
+            cdx_data, _ = await fetch_with_retry(session, cdx_url, 'json', max_retries=2, backoff=0.75)
+            if isinstance(cdx_data, list) and len(cdx_data) > 1:
+                row = cdx_data[1]
+                if isinstance(row, list) and len(row) >= 2 and row[0] and row[1]:
+                    timestamp = row[0]
+                    original = row[1]
+                    snap = ArticleExtractor._normalize_wayback_snapshot_url(
+                        f"https://web.archive.org/web/{timestamp}/{original}"
+                    )
+                    log.info(f"Found archive snapshot via CDX: {snap}")
+                    return snap
         except Exception as e:
-            log.error(f"Wayback check failed: {e}")
-        log.warning("No archive snapshot found.")
+            log.warning(f"Wayback CDX lookup failed: {e}")
+
+        log.warning("No archive snapshot found after availability and CDX checks.")
         return None
 
     @staticmethod
