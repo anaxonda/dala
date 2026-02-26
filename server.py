@@ -71,6 +71,7 @@ class ConversionRequest(BaseModel):
     sources: List[SourceItem] # Renamed from urls
     bundle_title: Optional[str] = None
     bundle_author: Optional[str] = None
+    request_token: Optional[str] = None
     no_comments: bool = False
     no_images: bool = False
     no_article: bool = False
@@ -148,6 +149,7 @@ class JobRecord:
 JOBS: Dict[str, JobRecord] = {}
 JOBS_LOCK = asyncio.Lock()
 JOB_RUN_SEMAPHORE = asyncio.Semaphore(int(os.getenv("DALA_JOB_CONCURRENCY", "1")))
+LAST_CONVERSION_STATE: Optional[Dict[str, Any]] = None
 
 
 def _utc_now() -> str:
@@ -162,6 +164,15 @@ def _timing_log(run_id: str, event: str, **fields: Any) -> None:
     }
     payload.update(fields)
     print(f"TIMING {json.dumps(payload, separators=(',', ':'), ensure_ascii=True)}")
+
+
+def _set_last_conversion_state(**fields: Any) -> None:
+    global LAST_CONVERSION_STATE
+    state = {
+        "updated_at": _utc_now(),
+    }
+    state.update(fields)
+    LAST_CONVERSION_STATE = state
 
 
 async def _create_job(total_sources: int) -> JobRecord:
@@ -473,6 +484,19 @@ async def run_conversion_job(
             server_saved=1 if saved_user_copy else 0,
             slowest_sources=slowest_sources,
         )
+        _set_last_conversion_state(
+            status="completed",
+            run_id=run_id,
+            request_token=req.request_token,
+            mode="jobs" if job_id else "convert",
+            finished_at=_utc_now(),
+            duration_ms=int((time.perf_counter() - run_started_at) * 1000),
+            total_sources=total_sources,
+            processed_sources=processed_count,
+            failed_sources=failed_sources,
+            output_filename=filename,
+            server_saved=bool(saved_user_copy),
+        )
 
         return ConversionResult(
             tmp_path=tmp_path,
@@ -482,6 +506,15 @@ async def run_conversion_job(
             processed_sources=processed_count,
         )
     except asyncio.CancelledError:
+        _set_last_conversion_state(
+            status="cancelled",
+            run_id=run_id,
+            request_token=req.request_token,
+            mode="jobs" if job_id else "convert",
+            finished_at=_utc_now(),
+            duration_ms=int((time.perf_counter() - run_started_at) * 1000),
+            total_sources=total_sources,
+        )
         _timing_log(
             run_id,
             "job_cancelled",
@@ -489,6 +522,17 @@ async def run_conversion_job(
         )
         raise
     except Exception as exc:
+        _set_last_conversion_state(
+            status="failed",
+            run_id=run_id,
+            request_token=req.request_token,
+            mode="jobs" if job_id else "convert",
+            finished_at=_utc_now(),
+            duration_ms=int((time.perf_counter() - run_started_at) * 1000),
+            total_sources=total_sources,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
         _timing_log(
             run_id,
             "job_error",
@@ -598,6 +642,14 @@ async def extract_links(req: ScanRequest):
         "externals": externals,
         "next_page_num": next_page_num
     }
+
+
+@app.get("/helper/last-conversion")
+async def last_conversion_state():
+    if not LAST_CONVERSION_STATE:
+        raise HTTPException(status_code=404, detail="No conversion state available.")
+    return LAST_CONVERSION_STATE
+
 
 @app.get("/ping")
 async def ping(): return {"status": "ok"}

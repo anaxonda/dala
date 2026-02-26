@@ -562,6 +562,59 @@ async function openEpubInTab(blob, filename) {
     }
 }
 
+function createRequestToken() {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+    return `req-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+async function recoverServerSavedSuccess(payload, isBundle) {
+    if (!payload || !payload.request_token) return false;
+    try {
+        const timeoutSignal = (typeof AbortSignal !== "undefined" && AbortSignal.timeout)
+            ? AbortSignal.timeout(2000)
+            : undefined;
+        const response = await fetch("http://127.0.0.1:8000/helper/last-conversion", {
+            signal: timeoutSignal
+        });
+        if (!response.ok) return false;
+
+        const state = await response.json();
+        if (!state || state.status !== "completed") return false;
+        if (state.request_token !== payload.request_token) return false;
+        if (!state.server_saved) return false;
+
+        const expectedSources = Array.isArray(payload.sources) ? payload.sources.length : 0;
+        if (expectedSources && state.total_sources && state.total_sources !== expectedSources) return false;
+
+        const finishedMs = Date.parse(state.finished_at || "");
+        if (!Number.isFinite(finishedMs)) return false;
+        if ((Date.now() - finishedMs) > 5 * 60 * 1000) return false;
+
+        browser.browserAction.setBadgeText({ text: "OK" });
+        browser.browserAction.setBadgeBackgroundColor({ color: "green" });
+        browser.notifications.create({
+            type: "basic",
+            iconUrl: "icon.png",
+            title: "Saved on Server",
+            message: "Server completed and saved the EPUB locally."
+        });
+
+        if (isBundle) {
+            await browser.storage.local.set({ urlQueue: [] });
+            updateBadge();
+        } else {
+            setTimeout(updateBadge, 3000);
+        }
+
+        return true;
+    } catch (e) {
+        console.warn("Server-save recovery check failed", e);
+        return false;
+    }
+}
+
 async function processDownloadWithAssets(payload, isBundle) {
     console.log("🔧 Background: Processing download with asset enrichment");
     if (payload && payload.sources) {
@@ -610,6 +663,9 @@ async function processDownloadCore(payload, isBundle) {
     }
 
     try {
+        if (!payload.request_token) {
+            payload.request_token = createRequestToken();
+        }
         console.log("Preparing JSON payload...");
         const bodyStr = JSON.stringify(payload);
         console.log(`Payload size: ${bodyStr.length} chars. Sending request to server...`);
@@ -757,6 +813,11 @@ async function processDownloadCore(payload, isBundle) {
             browser.browserAction.setBadgeText({ text: "" });
             browser.browserAction.setBadgeBackgroundColor({ color: "#e85a4f" });
         } else {
+            const recovered = await recoverServerSavedSuccess(payload, isBundle);
+            if (recovered) {
+                currentController = null;
+                return;
+            }
             console.error("Download Failed:", error);
             browser.browserAction.setBadgeText({ text: "ERR" });
             browser.browserAction.setBadgeBackgroundColor({ color: "red" });
