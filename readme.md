@@ -1,7 +1,7 @@
 # dala: Web-to-EPUB Downloader (E-Ink Optimized)
 
 **dala** is a tool to convert  web content—articles, threaded discussions, forums, transcripts, and paywalled articles—into clean, e-ink optimized EPUBs. Koreader recommended.
-Its for when you have 30 tabs that you're going to read "soon". Make an ebook out of them instead. I was using the [Singlefile](https://github.com/gildas-lormeau/SingleFile) extension to download page html and reading that on Koreader; this works and is simpler, but much more limited to the pages and content that works.
+Its for when you have 30 tabs that you're going to read "soon". Make an ebook out of them instead. I was using the [Singlefile](https://github.com/gildas-lormeau/SingleFile) extension to download page html and reading that on Koreader; this works and is simpler, but much more limited to the pages and content that works. Yes, its mostly vibecoded, good vibes though.
 
 Supports sources including but not limited to:
 *   **Hacker News & Reddit:** Recursively fetches nested comments and adds a clickable "navigation cluster" to every post, making it possible to read deep threads on an e-reader.
