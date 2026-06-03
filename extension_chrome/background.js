@@ -652,7 +652,13 @@ async function processDownloadCore(payload, isBundle) {
         const isAndroid = /Android/i.test((navigator && navigator.userAgent) || "");
         let downloaded = false;
 
-        if (canDownload) {
+        if (serverSaved) {
+            console.log("Server already saved the EPUB locally; skipping browser download to avoid duplicates.");
+            if (isBlobUrl && downloadUrl) {
+                setTimeout(() => URL.revokeObjectURL(downloadUrl), 30000);
+            }
+            downloaded = true;
+        } else if (canDownload) {
             try {
                 console.log(`Attempting download 1: URL length=${downloadUrl.length}, Filename=${targetPath}`);
                 await browser.downloads.download({
