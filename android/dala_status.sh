@@ -1,126 +1,84 @@
 #!/data/data/com.termux/files/usr/bin/bash
+set -u
 
-# Configuration
-PID_FILE=~/.cache/epub-server.pid
-LOG_FILE=~/.logs/epub-server.log
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+LOG_FILE="$HOME/.logs/dala-server.log"
+PID_FILE="$HOME/.cache/dala/server.pid"
 
-# Colors for better readability
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Function to display status
+server_running() {
+    [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+}
+
 show_status() {
     clear
-
     echo -e "${BLUE}======================================"
-    echo -e "      EPUB Server Status"
+    echo -e "        Dala Server Status"
     echo -e "======================================${NC}"
-    echo ""
     echo "Time: $(date '+%Y-%m-%d %H:%M:%S')"
     echo ""
 
-    if [ ! -f "$PID_FILE" ]; then
-        echo -e "${RED}Status: NOT RUNNING${NC} (no PID file)"
+    if server_running; then
+        server_pid="$(cat "$PID_FILE")"
+        uptime="$(ps -p "$server_pid" -o etime= 2>/dev/null | xargs)"
+        echo -e "${GREEN}Status: RUNNING${NC}"
+        echo "PID: $server_pid"
+        echo "Uptime: ${uptime:-unknown}"
+        echo "URL: http://127.0.0.1:${DALA_PORT:-8000}/"
         echo ""
-
-        # Check if any python server process is running anyway
-        if pgrep -f "python.*server.py" > /dev/null; then
-            echo -e "${YELLOW}⚠ Warning: Found orphaned server process${NC}"
-            echo "Consider running stop script to clean up"
-        fi
+        ps -p "$server_pid" -o pid,ppid,%cpu,%mem,cmd 2>/dev/null || true
     else
-        SERVER_PID=$(cat "$PID_FILE")
-
-        if kill -0 "$SERVER_PID" 2>/dev/null; then
-            UPTIME=$(ps -p "$SERVER_PID" -o etime= | xargs)
-            echo -e "${GREEN}Status: RUNNING ✓${NC}"
-            echo "PID: $SERVER_PID"
-            echo "Uptime: $UPTIME"
-            echo ""
-            echo "Process Info:"
-            echo "--------------------------------------"
-            ps -p "$SERVER_PID" -o pid,ppid,%cpu,%mem,cmd | tail -n +2
-            echo ""
-
-            # Check if log file exists and show size
-            if [ -f "$LOG_FILE" ]; then
-                LOG_SIZE=$(du -h "$LOG_FILE" | cut -f1)
-                LOG_LINES=$(wc -l < "$LOG_FILE")
-                echo "Log: $LOG_FILE ($LOG_SIZE, $LOG_LINES lines)"
-                echo ""
-                echo "Recent Logs (last 10 lines):"
-                echo "--------------------------------------"
-                tail -n 10 "$LOG_FILE" | sed 's/^/  /'
-            fi
-        else
-            echo -e "${RED}Status: NOT RUNNING${NC} (stale PID file)"
-            echo "PID file exists but process $SERVER_PID is not running"
-            echo ""
-            echo -e "${YELLOW}Recommendation: Run stop script to clean up${NC}"
+        echo -e "${RED}Status: NOT RUNNING${NC}"
+        if pgrep -f "dala.server|dala-server" >/dev/null 2>&1; then
+            echo -e "${YELLOW}Warning: found a Dala server process without the PID file.${NC}"
         fi
     fi
 
     echo ""
-    echo -e "${BLUE}======================================"
-    echo -e "Options:"
-    echo -e "  ${GREEN}[Enter]${NC} - Close"
-    echo -e "  ${GREEN}[l]${NC} - View full logs (less)"
-    echo -e "  ${GREEN}[t]${NC} - Tail logs (follow)"
-    echo -e "  ${GREEN}[r]${NC} - Refresh status"
-    echo -e "  ${GREEN}[c]${NC} - Clear screen"
-    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-        echo -e "  ${YELLOW}[s]${NC} - Stop server"
+    if [ -f "$LOG_FILE" ]; then
+        log_size="$(du -h "$LOG_FILE" | cut -f1)"
+        log_lines="$(wc -l < "$LOG_FILE")"
+        echo "Log: $LOG_FILE ($log_size, $log_lines lines)"
+        echo "Recent logs:"
+        tail -n 10 "$LOG_FILE" | sed 's/^/  /'
     else
-        echo -e "  ${GREEN}[S]${NC} - Start server"
+        echo "Log: $LOG_FILE (not created yet)"
     fi
-    echo -e "  ${GREEN}[h]${NC} - Show help"
-    echo -e "  ${YELLOW}[D]${NC} - Restart with DEBUG logging"
-    echo -e "======================================${NC}"
-    echo ""
-}
 
-# Function to show help
-show_help() {
-    clear
+    echo ""
     echo -e "${BLUE}======================================"
-    echo -e "      Help & Information"
+    echo -e "  ${GREEN}[Enter/q]${NC} Close"
+    echo -e "  ${GREEN}[r]${NC} Refresh"
+    echo -e "  ${GREEN}[l]${NC} View full log"
+    echo -e "  ${GREEN}[t]${NC} Tail log"
+    if server_running; then
+        echo -e "  ${YELLOW}[s]${NC} Stop server"
+    else
+        echo -e "  ${GREEN}[S]${NC} Start server"
+    fi
+    echo -e "  ${YELLOW}[D]${NC} Restart with DEBUG logging"
     echo -e "======================================${NC}"
-    echo ""
-    echo "Status Script - Manages EPUB server"
-    echo ""
-    echo "File Locations:"
-    echo "  PID:  $PID_FILE"
-    echo "  Log:  $LOG_FILE"
-    echo ""
-    echo "Related Scripts:"
-    echo "  Start:  ~/dala/android/dala_start.sh"
-    echo "  Stop:   ~/dala/android/dala_stop.sh"
-    echo "  Status: ~/dala/android/dala_status.sh"
-    echo ""
-    echo "Navigation:"
-    echo "  - Use single key commands"
-    echo "  - Press 'r' to refresh status"
-    echo "  - Press 'l' to view full logs"
-    echo "  - Press 't' to tail logs in real-time"
-    echo "  - Press 'D' to restart with DEBUG logging"
-    echo ""
-    read -n 1 -p "Press any key to return..."
 }
 
-# Main loop
 while true; do
     show_status
-
-    read -n 1 -s choice
+    read -r -n 1 -s choice
     echo ""
-
     case "$choice" in
+        ""|q|Q)
+            clear
+            exit 0
+            ;;
+        r|R)
+            ;;
         l|L)
             if [ -f "$LOG_FILE" ]; then
-                less +G "$LOG_FILE"  # +G starts at end of file
+                less +G "$LOG_FILE"
             else
                 echo "Log file not found"
                 sleep 2
@@ -128,7 +86,7 @@ while true; do
             ;;
         t|T)
             if [ -f "$LOG_FILE" ]; then
-                echo "Following logs (Ctrl+C to stop)..."
+                echo "Following logs. Press Ctrl+C to stop."
                 sleep 1
                 tail -f "$LOG_FILE"
             else
@@ -136,61 +94,23 @@ while true; do
                 sleep 2
             fi
             ;;
-        r|R)
-            # Just loop again to refresh
-            ;;
-        c|C)
-            clear
-            ;;
         s|S)
-            if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-                # Server is running, stop it
-                echo "Stopping server..."
-                if [ -f ~/dala/android/dala_stop.sh ]; then
-                    ~/dala/android/dala_stop.sh
-                else
-                    echo "Stop script not found at ~/dala/android/dala_stop.sh"
-                fi
-                sleep 2
+            if server_running; then
+                "$SCRIPT_DIR/dala_stop.sh"
             else
-                # Server not running, start it
-                echo "Starting server..."
-                if [ -f ~/dala/android/dala_start.sh ]; then
-                    ~/dala/android/dala_start.sh
-                else
-                    echo "Start script not found at ~/dala/android/dala_start.sh"
-                fi
-                sleep 2
-            fi
-            ;;
-        h|H)
-            show_help
-            ;;
-        d|D)
-            echo "Restarting server with DEBUG logging..."
-            # Stop server if running
-            if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-                if [ -f ~/dala/android/dala_stop.sh ]; then
-                    ~/dala/android/dala_stop.sh
-                    sleep 2
-                fi
-            fi
-            # Start with DEBUG log level
-            if [ -f ~/dala/android/dala_start.sh ]; then
-                export LOGLEVEL=DEBUG
-                ~/dala/android/dala_start.sh
-                unset LOGLEVEL
-            else
-                echo "Start script not found at ~/dala/android/dala_start.sh"
+                "$SCRIPT_DIR/dala_start.sh"
             fi
             sleep 2
             ;;
-        ""|q|Q)
-            clear
-            exit 0
+        d|D)
+            if server_running; then
+                "$SCRIPT_DIR/dala_stop.sh"
+                sleep 1
+            fi
+            LOGLEVEL=DEBUG "$SCRIPT_DIR/dala_start.sh"
+            sleep 2
             ;;
         *)
-            # Invalid option, just refresh
             ;;
     esac
 done

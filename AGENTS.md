@@ -85,6 +85,7 @@
 - After publishing, test the public install path when practical:
   - `uv tool install --force dala`
   - `uv tool install --force "dala[browser]"`
+  - Termux/Android: run `scripts/install-dala.sh`; do not assume `uv tool install` or `uv pip` works because `uv` may fail to inspect Android Python.
   - `dala-server --open`
   - `dala-setup-browser --check-only`
 

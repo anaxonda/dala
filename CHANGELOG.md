@@ -1,5 +1,16 @@
 # Changelog
 
+## v2.4.2
+
+### Android / Termux install
+- Added a Termux-specific path to the shell installer that avoids `uv tool install`/`uv pip`, uses Termux Python with `pip --user`, preinstalls native `python-lxml` and `python-pillow`, and applies constraints for the compatible server stack.
+- Re-running the Termux installer now skips package and pip work when Dala is already installed; use `--upgrade` for updates.
+- Updated Termux:Widget start/stop/status scripts to manage the installed `dala-server` command instead of an old source checkout, and included the Android helpers in the installer release bundle.
+
+### Site profile config
+- Packaged site profiles now load from JSON so the base install does not require PyYAML.
+- Custom `sites.yaml` remains supported when `dala[config]` is installed; custom `sites.json` is supported without extra dependencies.
+
 ## v2.3.6
 - **Package:** Include missing Firefox extension XPI (v2.3.5) in the release.
 

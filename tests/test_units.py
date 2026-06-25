@@ -1,3 +1,4 @@
+import builtins
 import pytest
 from bs4 import BeautifulSoup
 import dala.cli as main
@@ -32,6 +33,46 @@ def test_profile_manager_loads_packaged_defaults(monkeypatch):
     assert profile is not None
     assert profile.name == "The New York Times"
     assert profile.content_selector == "article#story"
+
+
+def test_profile_manager_loads_json_config(tmp_path):
+    config = tmp_path / "sites.json"
+    config.write_text(
+        """
+[
+  {
+    "name": "Example",
+    "domains": ["example\\\\.com"],
+    "content_selector": "main"
+  }
+]
+""".strip()
+    )
+    manager = ProfileManager()
+    manager.load_config(str(config))
+
+    profile = manager.get_profile("https://example.com/article")
+
+    assert profile is not None
+    assert profile.name == "Example"
+    assert profile.content_selector == "main"
+
+
+def test_profile_manager_skips_yaml_without_pyyaml(tmp_path, monkeypatch):
+    config = tmp_path / "sites.yaml"
+    config.write_text('- name: "Example"\n  domains:\n    - "example.com"\n')
+    real_import = builtins.__import__
+
+    def block_yaml_import(name, *args, **kwargs):
+        if name == "yaml":
+            raise ImportError("blocked for test")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", block_yaml_import)
+    manager = ProfileManager()
+    manager.load_config(str(config))
+
+    assert manager.profiles == []
 
 
 def test_driver_dispatch_explicit_forum():

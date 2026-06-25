@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dala"
-version = "2.4.1"
+version = "2.4.2"
 description = "Web to ebook downloader"
 readme = "readme.md"
 requires-python = ">=3.9"
@@ -38,9 +38,8 @@ dependencies = [
     "pygments>=2.14.0",
     "tqdm>=4.65.0",
     "Pillow>=9.0.0",
-    "fastapi>=0.100.0",
+    "fastapi>=0.99.0",
     "uvicorn>=0.22.0",
-    "pyyaml>=6.0.3",
     "youtube-transcript-api>=0.6.0",
     "python-dotenv>=1.0.0",
     "youtube-comment-downloader>=0.1.0",
@@ -51,6 +50,9 @@ dependencies = [
 [project.optional-dependencies]
 browser = [
     "playwright>=1.40.0",
+]
+config = [
+    "pyyaml>=6.0.3",
 ]
 
 [project.urls]

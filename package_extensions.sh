@@ -49,6 +49,7 @@ echo "Packaging installer bundle..."
     installers \
     scripts \
     launchers \
+    android \
     readme.md \
     LICENSE \
     -x "*/__pycache__/*" \

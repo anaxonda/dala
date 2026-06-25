@@ -760,7 +760,7 @@ wheels = [
 
 [[package]]
 name = "dala"
-version = "2.4.1"
+version = "2.4.2"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp", extra = ["speedups"] },
@@ -774,7 +774,6 @@ dependencies = [
     { name = "pygments" },
     { name = "pypdf" },
     { name = "python-dotenv" },
-    { name = "pyyaml" },
     { name = "requests" },
     { name = "tqdm" },
     { name = "trafilatura" },
@@ -787,6 +786,9 @@ dependencies = [
 [package.optional-dependencies]
 browser = [
     { name = "playwright" },
+]
+config = [
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -805,14 +807,14 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.11.0" },
     { name = "deep-translator", specifier = ">=1.11.4" },
     { name = "ebooklib", specifier = ">=0.18" },
-    { name = "fastapi", specifier = ">=0.100.0" },
+    { name = "fastapi", specifier = ">=0.99.0" },
     { name = "lxml", extras = ["html-clean"], specifier = ">=4.9.0" },
     { name = "pillow", specifier = ">=9.0.0" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.40.0" },
     { name = "pygments", specifier = ">=2.14.0" },
     { name = "pypdf", specifier = ">=5.9.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "pyyaml", specifier = ">=6.0.3" },
+    { name = "pyyaml", marker = "extra == 'config'", specifier = ">=6.0.3" },
     { name = "requests", specifier = ">=2.30.0" },
     { name = "tqdm", specifier = ">=4.65.0" },
     { name = "trafilatura", specifier = ">=1.6.0" },

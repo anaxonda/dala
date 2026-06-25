@@ -426,6 +426,7 @@ The GitHub release asset `dala-installers-vVERSION.zip` contains:
 - `installers/`: double-click or terminal installers for desktop users
 - `scripts/`: lower-level install/update scripts
 - `launchers/`: templates that start the installed `dala-server`
+- `android/`: Termux notes and Termux:Widget start/stop/status shortcuts
 
 The installers install or update the Python server from PyPI, install `uv` only if it is missing, optionally add headless browser support, and do not install the browser extension.
 
@@ -587,33 +588,56 @@ systemctl --user enable --now epub_server
 
 ### Android / Termux
 
-Termux does not use the desktop installer bundle. Install from PyPI with Termux `uv`:
+Termux does not use the desktop installer bundle. Use the shell installer; it detects Android/Termux and uses Termux Python plus `pip --user` instead of `uv tool install`:
 
 ```bash
 pkg update
-pkg install tur-repo
-pkg install uv
-uv tool install dala
+pkg install python python-pip curl
+curl -fsSLo install-dala.sh https://raw.githubusercontent.com/anaxonda/dala/main/scripts/install-dala.sh
+sh install-dala.sh
 dala-server --no-open
 ```
 
 Open `http://127.0.0.1:8000/` manually, or point Firefox for Android plus the Dala extension at the local Termux server.
 
-If `uv tool install` cache/linking gives trouble on Android, use a source checkout and virtualenv:
+Optional Termux:Widget shortcuts are in `android/`; copy them into `~/.shortcuts/dala/` after installing Dala if you want home-screen start/stop/status buttons.
+
+Why not `uv tool install` on Termux? Termux can package `uv`, but current `uv` releases can fail while inspecting Android Python with `Unknown operating system: android`. `uv pip` has the same limitation on affected devices. The installer avoids that path.
+
+The installer also installs Termux `python-lxml` and `python-pillow` packages and uses a small constraints file for the server stack. Without that, PyPI may try to build heavy native dependencies such as `lxml`, `Pillow`, or `pydantic-core` from source on Android.
+
+Re-running the installer is fast when Dala is already installed. To update Dala, run:
+
+```bash
+sh install-dala.sh --upgrade
+```
+
+If the installer reports broken `pip`, repair Termux Python packages and rerun it:
+
+```bash
+pkg update
+pkg install python python-pip
+pkg reinstall python-pip
+sh install-dala.sh
+```
+
+If you want a source checkout on Android, install with `pip --user` from the checkout:
 
 ```bash
 pkg install git python
 git clone https://github.com/anaxonda/dala.git
 cd dala
-python -m venv .venv
-source .venv/bin/activate
-UV_LINK_MODE=copy UV_CACHE_DIR=$HOME/.cache/uv uv pip install -e .
-uv run dala-server --no-open
+pip install --user -e .
+python -m dala.server --no-open
 ```
 
 ## sites.yaml Customization
 
-You can define custom extraction rules for specific websites in `sites.yaml` at the project root.
+You can define custom extraction rules for specific websites in `sites.yaml` at the project root. YAML config support needs PyYAML; install `dala[config]` if you use custom YAML profiles. Packaged defaults do not need PyYAML, and JSON config files can be loaded without extra dependencies.
+
+```bash
+uv tool install --force "dala[config]"
+```
 
 ```yaml
 - name: "The New York Times"
@@ -668,14 +692,16 @@ uv run dala --browser --headed "https://example.com/article"
 
 If an interactive bot challenge appears, solve it in your normal browser and run the extension from the readable tab.
 
-### Android / Termux cannot find uv
+### Android / Termux install fails
 
 ```bash
-pkg install tur-repo
-pkg install uv
+pkg update
+pkg install python python-pip curl
+pkg reinstall python-pip
+sh install-dala.sh
 ```
 
-If `uv run` still fails, use the manual virtualenv setup from [Android / Termux](#android--termux).
+Avoid `uv tool install` and `uv pip` on Termux if they fail with `Unknown operating system: android`; use the installer path from [Android / Termux](#android--termux).
 
 ### Translation fails
 
@@ -718,6 +744,8 @@ dala-chrome-vEXTENSION_VERSION.zip
 dala-firefox-vEXTENSION_VERSION-signed.xpi
 dala-installers-vPYTHON_PACKAGE_VERSION.zip
 ```
+
+If only the Python package/installers changed, extension assets may keep the previous extension version. State that explicitly in the release notes.
 
 Build the unsigned extension packages and installer bundle with:
 

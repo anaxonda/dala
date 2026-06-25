@@ -1,79 +1,63 @@
 #!/data/data/com.termux/files/usr/bin/bash
+set -u
 
-# Configuration
-LOG_FILE=~/.logs/epub-server.log
-PID_FILE=~/.cache/epub-server.pid
+LOG_DIR="$HOME/.logs"
+CACHE_DIR="$HOME/.cache/dala"
+LOG_FILE="$LOG_DIR/dala-server.log"
+PID_FILE="$CACHE_DIR/server.pid"
 
-# Function to log with timestamp
 log() {
+    mkdir -p "$LOG_DIR"
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
 }
 
-# Check if PID file exists
-if [ ! -f "$PID_FILE" ]; then
-    log "WARNING: PID file not found, attempting to find server process"
-    echo "PID file not found. Searching for running server..."
-
-    # Try to find and kill by process name
-    if pkill -f "python.*server.py"; then
-        log "Server process killed by name"
-        echo "Server stopped"
-    else
-        log "No server process found"
-        echo "No server process found"
+release_wake_lock() {
+    if command -v termux-wake-unlock >/dev/null 2>&1; then
+        termux-wake-unlock
     fi
+}
 
-    termux-wake-unlock
+if [ ! -f "$PID_FILE" ]; then
+    log "PID file not found; searching for Dala server process"
+    echo "PID file not found. Searching for Dala server..."
+    if pkill -f "dala.server" || pkill -f "dala-server"; then
+        log "Stopped Dala server by process match"
+        echo "Dala server stopped"
+    else
+        log "No Dala server process found"
+        echo "No Dala server process found"
+    fi
+    release_wake_lock
     exit 0
 fi
 
-# Read PID
-SERVER_PID=$(cat "$PID_FILE")
-
-# Check if process is running
-if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    log "WARNING: Server process (PID: $SERVER_PID) not running"
-    echo "Server process not found"
-    rm "$PID_FILE"
-    termux-wake-unlock
+server_pid="$(cat "$PID_FILE")"
+if ! kill -0 "$server_pid" 2>/dev/null; then
+    log "Stale PID file for $server_pid"
+    echo "Dala server process not found"
+    rm -f "$PID_FILE"
+    release_wake_lock
     exit 0
 fi
 
-log "Stopping server (PID: $SERVER_PID)"
-echo "Stopping server (PID: $SERVER_PID)..."
+log "Stopping Dala server (PID: $server_pid)"
+echo "Stopping Dala server (PID: $server_pid)..."
+kill "$server_pid" 2>/dev/null || true
 
-# Try graceful shutdown first (SIGTERM)
-if kill "$SERVER_PID" 2>/dev/null; then
-    # Wait up to 5 seconds for graceful shutdown
-    for i in {1..5}; do
-        if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-            log "Server stopped gracefully"
-            echo "Server stopped successfully"
-            rm "$PID_FILE"
-            termux-wake-unlock
-            exit 0
-        fi
-        sleep 1
-    done
-
-    # Force kill if still running
-    log "Server did not stop gracefully, forcing shutdown"
-    echo "Forcing shutdown..."
-    kill -9 "$SERVER_PID" 2>/dev/null
+for _ in 1 2 3 4 5; do
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+        log "Dala server stopped"
+        echo "Dala server stopped"
+        rm -f "$PID_FILE"
+        release_wake_lock
+        exit 0
+    fi
     sleep 1
-fi
+done
 
-# Verify shutdown
-if kill -0 "$SERVER_PID" 2>/dev/null; then
-    log "ERROR: Failed to stop server (PID: $SERVER_PID)"
-    echo "ERROR: Failed to stop server"
-    exit 1
-else
-    log "Server stopped (forced)"
-    echo "Server stopped (forced)"
-    rm "$PID_FILE"
-fi
-
-# Release wake lock
-termux-wake-unlock
-log "Wake lock released"
+log "Dala server did not stop gracefully; forcing shutdown"
+kill -9 "$server_pid" 2>/dev/null || true
+sleep 1
+rm -f "$PID_FILE"
+release_wake_lock
+echo "Dala server stopped"

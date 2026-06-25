@@ -31,7 +31,7 @@ This file tracks current work. Older items that are now implemented have been mo
 
 - WordPress article and comment extraction.
 - Translation output with LLM/Google providers, underneath/side-by-side/popup-footnote displays, caption/list support, scopes, caching, and glossary term preservation.
-- Configurable site profiles via `sites.yaml`.
+- Configurable site profiles via packaged `sites.json`, local JSON configs, and optional `sites.yaml` when `dala[config]` is installed.
 - Opt-in Playwright Chromium browser capture for CLI use on JavaScript-heavy pages and authenticated sessions.
 - Browser test harness with local fixtures and skippable Playwright integration coverage.
 - Bundle image filename remapping/deduplication to avoid collisions across many source articles.
