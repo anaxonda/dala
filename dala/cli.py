@@ -5,7 +5,7 @@ import asyncio
 import aiohttp
 import socket
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 from inspect import isawaitable
 from typing import Any, Callable, Dict, List, Optional
@@ -27,6 +27,8 @@ from dala.core.browser import BrowserChallengeError, BrowserFetchError, BrowserF
 from dala.core.image_budget import ImageBudgetExceeded, assert_image_budget, prepare_books_for_bundle
 from dala.core.discovery import DiscoveryError, discover_posts_for_sources
 from dala.core.translation import TranslationCache, TranslationProcessor, TranslationError
+
+BROWSER_FALLBACK_LOCK = asyncio.Lock()
 
 async def process_urls(
     sources: List[Source],
@@ -59,6 +61,14 @@ async def process_urls(
         if isawaitable(maybe):
             await maybe
 
+    def mark_book_saved_at(book: BookData, saved_at: str) -> None:
+        book.extra_metadata["saved_at"] = saved_at
+        has_article = any(chapter.is_article for chapter in book.chapters)
+        for chapter in book.chapters:
+            if chapter.is_article or not has_article:
+                chapter.saved_at = chapter.saved_at or saved_at
+                return
+
     async def safe_process(source):
         nonlocal completed
         started_at = time.perf_counter()
@@ -80,7 +90,15 @@ async def process_urls(
 
             try:
                 context = ConversionContext(session=local_session, options=options, profile=profile)
-                book = await driver.prepare_book_data(context, source)
+                if (
+                    getattr(options, "browser_fallback", False)
+                    and getattr(options, "browser_profile_dir", None)
+                    and not source.html
+                ):
+                    async with BROWSER_FALLBACK_LOCK:
+                        book = await driver.prepare_book_data(context, source)
+                else:
+                    book = await driver.prepare_book_data(context, source)
                 if book is None and source.is_forum:
                     from dala.drivers.forum import ForumDriver
                     from dala.drivers.generic import GenericDriver
@@ -95,11 +113,14 @@ async def process_urls(
                             assets=source.assets,
                             is_forum=False,
                             published_date=source.published_date,
+                            saved_at=source.saved_at,
                         )
                         book = await GenericDriver().prepare_book_data(context, generic_source)
                 success = book is not None
                 if book is not None and source.published_date:
                     book.extra_metadata["published_date"] = source.published_date
+                if book is not None and source.saved_at:
+                    mark_book_saved_at(book, source.saved_at)
                 return book
             except BrowserChallengeError:
                 raise
@@ -286,9 +307,12 @@ async def acquire_browser_sources(sources: List[Source], options: BrowserFetchOp
         captured.append(Source(
             url=result.url or source.url,
             html=result.html,
+            page_htmls=source.page_htmls,
             cookies=cookies or None,
             assets=assets or None,
             is_forum=source.is_forum,
+            published_date=source.published_date,
+            saved_at=source.saved_at,
         ))
     return captured
 
@@ -410,13 +434,15 @@ async def async_main():
     cookie_entries = load_cookie_file(args.cookie_file) if args.cookie_file else []
 
     sources = []
+    saved_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for u in urls:
         sources.append(Source(
             url=u,
             html=None,
             cookies=cookies_for_source_url(cookie_entries, u),
             assets=None,
-            is_forum=args.forum
+            is_forum=args.forum,
+            saved_at=saved_at,
         ))
 
     if args.browser:
@@ -453,6 +479,9 @@ async def async_main():
         if options.date_range_active:
             try:
                 sources = await discover_posts_for_sources(session, sources, options)
+                for source in sources:
+                    if not source.saved_at:
+                        source.saved_at = saved_at
                 discovery_title = discovery_bundle_title(sources, options)
             except DiscoveryError as e:
                 log.error(str(e))

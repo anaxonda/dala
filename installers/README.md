@@ -2,7 +2,7 @@
 
 These files install or update the Dala Python server from PyPI. They install `uv` only if it is missing, ask whether to add optional headless browser/PDF support, and do not install the browser extension.
 
-These wrappers are for Windows, macOS, and desktop Linux. On Android/Termux, use `scripts/install-dala.sh`; it uses Termux Python plus `pip --user` instead of `uv tool install`. The release bundle also includes `android/` Termux:Widget shortcuts for starting, stopping, and checking the installed server.
+These wrappers are for Windows, macOS, and desktop Linux. On Android/Termux, use `scripts/install-dala.sh`; it uses Termux Python plus `pip --user` instead of `uv tool install`. The release bundle also includes `android/install_widgets.sh`, which installs Termux:Widget shortcuts for starting, stopping, and checking the installed server.
 
 After installation, start Dala with the Desktop launcher if one was created, or run:
 

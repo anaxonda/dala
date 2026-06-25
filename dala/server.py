@@ -122,6 +122,7 @@ class SourceItem(BaseModel):
     asset_debug: Optional[dict] = None
     is_forum: Optional[bool] = False
     published_date: Optional[str] = None
+    saved_at: Optional[str] = None
 
 class ConversionRequest(BaseModel):
     sources: List[SourceItem] # Renamed from urls
@@ -585,6 +586,7 @@ def _build_options_and_sources(req: ConversionRequest) -> Tuple[ConversionOption
     )
 
     core_sources = []
+    request_saved_at = _utc_now()
     for s in req.sources:
         core_sources.append(Source(
             url=s.url,
@@ -594,6 +596,7 @@ def _build_options_and_sources(req: ConversionRequest) -> Tuple[ConversionOption
             assets=s.assets,
             is_forum=bool(s.is_forum),
             published_date=s.published_date,
+            saved_at=s.saved_at or request_saved_at,
         ))
     return options, core_sources
 
@@ -720,7 +723,11 @@ async def run_conversion_job(
         stage_started_at = time.perf_counter()
         async with get_session() as session:
             if options.date_range_active:
+                discovery_saved_at = core_sources[0].saved_at if core_sources else _utc_now()
                 core_sources = await discover_posts_for_sources(session, core_sources, options)
+                for source in core_sources:
+                    if not source.saved_at:
+                        source.saved_at = discovery_saved_at
                 discovery_title = core_main.discovery_bundle_title(core_sources, options)
                 total_sources = len(core_sources)
                 await _emit_progress(progress_callback, 0, total_sources, core_sources[0].url if core_sources else None)
@@ -1430,20 +1437,23 @@ async def _run_job_task(job_id: str, req: ConversionRequest) -> None:
             await _update_job(job_id, status="cancelled", error="Job cancelled before start.")
             return
 
+        is_date_discovery = bool(req.start_date or req.end_date)
         await _update_job(
             job_id,
-            status="running",
+            status="discovering" if is_date_discovery else "running",
             current_url=req.sources[0].url if req.sources else None,
             total_sources=len(req.sources),
         )
 
         async def progress_cb(processed: int, total: int, current_url: Optional[str]) -> None:
-            await _update_job(
-                job_id,
-                processed_sources=processed,
-                total_sources=total,
-                current_url=current_url,
-            )
+            fields = {
+                "processed_sources": processed,
+                "total_sources": total,
+                "current_url": current_url,
+            }
+            if is_date_discovery and (total != len(req.sources) or processed > 0):
+                fields["status"] = "running"
+            await _update_job(job_id, **fields)
 
         try:
             result = await run_conversion_job(

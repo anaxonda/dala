@@ -7,11 +7,12 @@ from dala.core.extractor import ArticleExtractor
 from dala.core.image_processor import BaseImageProcessor, ForumImageProcessor, ImageProcessor
 from dala.core.browser import BrowserFetchError, BrowserFetchOptions, BrowserFetchResult
 from dala.core.profiles import ProfileManager
+from dala.core.writer import apply_saved_metadata_to_book, format_saved_metadata
 from dala.drivers.forum import ForumDriver
 from dala.drivers.generic import GenericDriver
 from dala.drivers.hn import HackerNewsDriver
 from dala.drivers.substack import SubstackDriver
-from dala.models import BookData, Chapter, ConversionOptions, Source
+from dala.models import BookData, Chapter, ConversionOptions, ImageAsset, Source, normalize_url_for_matching
 
 
 def test_legacy_web_to_epub_shim_exports_public_symbols():
@@ -118,6 +119,53 @@ def test_srcset_parser_preserves_commas_inside_urls():
     assert parsed[1][1].startswith("https://i.cbc.ca/ais/3130066c-")
 
 
+def test_netlify_image_proxy_normalizes_to_embedded_url():
+    article_image = (
+        "https://worksinprogress.co/.netlify/images?"
+        "url=https%3A%2F%2Fassets.worksinprogress.co%2Fwp-content%2Fuploads%2F2026%2F06%2FArt-04_Land-reclamation.png"
+        "&w=1251&h=1855&fit=cover"
+    )
+    magazine_cover = (
+        "https://worksinprogress.co/.netlify/images?"
+        "url=https%3A%2F%2Fassets.worksinprogress.co%2Fwp-content%2Fuploads%2F2026%2F05%2Fcover_issue_24_900w.webp"
+        "&w=500&h=587&fit=contain"
+    )
+
+    assert normalize_url_for_matching(article_image) == (
+        "assets.worksinprogress.co/wp-content/uploads/2026/06/art-04_land-reclamation.png"
+    )
+    assert normalize_url_for_matching(article_image) != normalize_url_for_matching(magazine_cover)
+    assert ImageProcessor._extract_origin_from_proxy(article_image) == (
+        "https://assets.worksinprogress.co/wp-content/uploads/2026/06/Art-04_Land-reclamation.png"
+    )
+
+
+def test_existing_asset_lookup_does_not_collapse_netlify_proxy_images():
+    cover_proxy = (
+        "https://worksinprogress.co/.netlify/images?"
+        "url=https%3A%2F%2Fassets.worksinprogress.co%2Fwp-content%2Fuploads%2F2026%2F05%2Fcover_issue_24_900w.webp"
+        "&w=500&h=587&fit=contain"
+    )
+    article_proxy = (
+        "https://worksinprogress.co/.netlify/images?"
+        "url=https%3A%2F%2Fassets.worksinprogress.co%2Fwp-content%2Fuploads%2F2026%2F06%2FArt-04_Land-reclamation.png"
+        "&w=1251&h=1855&fit=cover"
+    )
+    assets = [
+        ImageAsset(
+            uid="cover",
+            filename="images/images.webp",
+            media_type="image/webp",
+            content=b"cover",
+            original_url=cover_proxy,
+            alt_urls=[ImageProcessor._extract_origin_from_proxy(cover_proxy)],
+        )
+    ]
+
+    assert ImageProcessor._find_existing_asset(assets, cover_proxy) is assets[0]
+    assert ImageProcessor._find_existing_asset(assets, article_proxy) is None
+
+
 def test_interactive_timelapse_sequence_collapses_to_latest_frame():
     soup = BeautifulSoup(
         """
@@ -164,6 +212,32 @@ def test_build_meta_block_uses_compact_source_label():
     assert ">VeLove Family</a>" in meta
     assert "href=\"https://velovefamily.wordpress.com/2025/08/15/coye-la-foret-paris-coye-la-foret\"" in meta
     assert "<strong>Date:</strong> 2025-08-15" in meta
+
+
+def test_saved_metadata_is_added_to_article_meta_block():
+    book = BookData(
+        title="Example",
+        author="A",
+        uid="urn:example",
+        language="en",
+        description="",
+        source_url="https://example.com/article",
+        extra_metadata={"saved_at": "2026-06-25T12:34:56+00:00"},
+        chapters=[
+            Chapter(
+                title="Article",
+                filename="article.xhtml",
+                content_html='<div class="post-meta"><p><strong>Source:</strong> Example</p></div><p>Body</p>',
+                uid="article",
+                is_article=True,
+            )
+        ],
+    )
+
+    updated = apply_saved_metadata_to_book(book)
+
+    assert '<p class="dala-saved-meta"><strong>Saved:</strong> 2026-06-25 12:34 UTC</p>' in updated.chapters[0].content_html
+    assert format_saved_metadata("2026-06-25T12:34:56+00:00") == "2026-06-25 12:34 UTC"
 
 def test_cookies_for_source_url_matches_any_source():
     entries = [

@@ -6,6 +6,7 @@ import logging
 import mimetypes
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any, Tuple
+from urllib.parse import parse_qs, unquote, urlparse
 from bs4 import BeautifulSoup
 
 # --- Constants ---
@@ -117,6 +118,7 @@ class Source:
     assets: Optional[List[Dict[str, Any]]] = None
     is_forum: bool = False
     published_date: Optional[str] = None
+    saved_at: Optional[str] = None
 
 @dataclass
 class SiteProfile:
@@ -153,6 +155,7 @@ class Chapter:
     is_article: bool = False
     is_comments: bool = False
     toc_title: Optional[str] = None
+    saved_at: Optional[str] = None
 
 @dataclass
 class BookData:
@@ -173,6 +176,18 @@ def normalize_url_for_matching(url: str) -> str:
     """Create a canonical form for URL matching."""
     if not url or not isinstance(url, str):
         return ""
+    try:
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        for key in ("url", "src", "original", "image", "img"):
+            values = qs.get(key)
+            if not values:
+                continue
+            embedded = unquote(values[0] or "")
+            if embedded.startswith(("http://", "https://")):
+                return normalize_url_for_matching(embedded)
+    except Exception:
+        pass
     cleaned = url.replace("https://", "").replace("http://", "")
     if cleaned.startswith("www."):
         cleaned = cleaned[4:]

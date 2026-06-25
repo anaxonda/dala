@@ -971,24 +971,57 @@ async function importAllTabs() {
 }
 
 // --- QUEUE MANAGEMENT ---
+function queueSavedAtNow() {
+    return new Date().toISOString();
+}
+
+function normalizeQueueEntry(entry, fallbackSavedAt = null) {
+    if (typeof entry === "string") {
+        const url = entry.trim();
+        return isValidUrl(url) ? { url, saved_at: fallbackSavedAt || queueSavedAtNow() } : null;
+    }
+    if (entry && typeof entry === "object") {
+        const url = (entry.url || "").trim();
+        if (!isValidUrl(url)) return null;
+        return { url, saved_at: entry.saved_at || fallbackSavedAt || queueSavedAtNow() };
+    }
+    return null;
+}
+
+function normalizeQueueItems(rawQueue, fallbackSavedAt = null) {
+    const seen = new Set();
+    const items = [];
+    for (const raw of Array.isArray(rawQueue) ? rawQueue : []) {
+        const item = normalizeQueueEntry(raw, fallbackSavedAt);
+        if (item && !seen.has(item.url)) {
+            seen.add(item.url);
+            items.push(item);
+        }
+    }
+    return items;
+}
+
 async function refreshQueue() {
     const res = await browser.storage.local.get("urlQueue");
-    const queue = res.urlQueue || [];
+    const queue = normalizeQueueItems(res.urlQueue || []);
+    if (JSON.stringify(queue) !== JSON.stringify(res.urlQueue || [])) {
+        await browser.storage.local.set({ urlQueue: queue });
+    }
     const editor = document.getElementById('queue-editor');
     if(document.getElementById('queue-count')) {
         document.getElementById('queue-count').textContent = `(${queue.length})`;
     }
     if (editor) {
-        editor.value = queue.join("\n");
+        editor.value = queue.map(item => item.url).join("\n");
     }
-    updateBadgeCount(queue.length);
+    await updateBadgeCount(queue.length);
 }
 
 async function addToQueue(url) {
     const res = await browser.storage.local.get("urlQueue");
-    const queue = res.urlQueue || [];
-    if (!queue.includes(url)) {
-        queue.push(url);
+    const queue = normalizeQueueItems(res.urlQueue || []);
+    if (!queue.some(item => item.url === url)) {
+        queue.push({ url, saved_at: queueSavedAtNow() });
         await browser.storage.local.set({ urlQueue: queue });
         refreshQueue();
     }
@@ -1004,11 +1037,14 @@ async function saveQueueFromEditor() {
     if (!editor) return;
     const lines = editor.value.split('\n').map(l => l.trim()).filter(l => l);
     const uniq = Array.from(new Set(lines.filter(isValidUrl)));
-    await browser.storage.local.set({ urlQueue: uniq });
+    const res = await browser.storage.local.get("urlQueue");
+    const existing = new Map(normalizeQueueItems(res.urlQueue || []).map(item => [item.url, item]));
+    const queue = uniq.map(url => existing.get(url) || { url, saved_at: queueSavedAtNow() });
+    await browser.storage.local.set({ urlQueue: queue });
     if(document.getElementById('queue-count')) {
-        document.getElementById('queue-count').textContent = `(${uniq.length})`;
+        document.getElementById('queue-count').textContent = `(${queue.length})`;
     }
-    updateBadgeCount(uniq.length);
+    await updateBadgeCount(queue.length);
 }
 
 async function retryFailedSources() {
@@ -1023,13 +1059,19 @@ async function retryFailedSources() {
         showStatus("No failed sources saved");
         return;
     }
-    await browser.storage.local.set({ urlQueue: urls });
+    await browser.storage.local.set({ urlQueue: urls.map(url => ({ url, saved_at: queueSavedAtNow() })) });
     refreshQueue();
     switchTab("queue");
     showStatus(`Queued ${urls.length} failed source${urls.length === 1 ? "" : "s"}`);
 }
 
-function updateBadgeCount(count) {
+async function updateBadgeCount(count) {
+    const res = await browser.storage.local.get("downloadActive");
+    if (res.downloadActive) {
+        browser.browserAction.setBadgeText({ text: "..." });
+        browser.browserAction.setBadgeBackgroundColor({ color: "#FFA500" });
+        return;
+    }
     browser.browserAction.setBadgeText({ text: count > 0 ? count.toString() : "" });
     browser.browserAction.setBadgeBackgroundColor({ color: "#e85a4f" });
 }
@@ -1156,7 +1198,8 @@ async function safeDownloadBundle() {
         await saveOptions();
 
         const res = await browser.storage.local.get("urlQueue");
-        const queue = res.urlQueue || [];
+        const queue = normalizeQueueItems(res.urlQueue || []);
+        await browser.storage.local.set({ urlQueue: queue });
 
         if (queue.length === 0) {
             showStatus("Queue is empty!");

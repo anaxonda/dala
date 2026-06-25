@@ -15,6 +15,72 @@ from .browser import DEFAULT_BROWSER_PROFILE_DIR, BrowserChallengeError, Browser
 from .session import fetch_with_retry
 
 class ArticleExtractor:
+    VISIBLE_AUTHOR_SELECTORS = [
+        ".article-header__head-label a.author-link",
+        "a.author-link",
+        "[class*='byline' i] a[href]",
+        "[class*='author' i] a[href]",
+        "a[rel='author']",
+        ".byline",
+        ".post-author",
+        ".entry-author",
+    ]
+
+    @staticmethod
+    def _clean_author_name(value: Optional[str]) -> Optional[str]:
+        if not value:
+            return None
+        cleaned = re.sub(r"\s+", " ", str(value)).strip(" \t\r\n|,")
+        cleaned = re.sub(r"^(?:words\s+by|by|author)\s+", "", cleaned, flags=re.IGNORECASE).strip()
+        if not cleaned:
+            return None
+        lowered = cleaned.casefold()
+        if lowered in {"authors", "author", "about", "archive", "subscribe"}:
+            return None
+        if len(cleaned) > 120:
+            return None
+        return cleaned
+
+    @staticmethod
+    def _is_low_quality_author(value: Optional[str]) -> bool:
+        cleaned = ArticleExtractor._clean_author_name(value)
+        if not cleaned:
+            return True
+        lowered = cleaned.casefold()
+        if lowered in {"admin", "administrator", "wordpress", "unknown", "staff", "editor"}:
+            return True
+        return "admin" in lowered or lowered.endswith("-admin")
+
+    @staticmethod
+    def _visible_author_from_soup(soup: BeautifulSoup) -> Optional[str]:
+        authors = []
+        seen = set()
+        for selector in ArticleExtractor.VISIBLE_AUTHOR_SELECTORS:
+            for tag in soup.select(selector):
+                href = str(tag.get("href") or "")
+                if selector == "a.author-link" and "/our-authors/" not in href and "/author/" not in href:
+                    continue
+                name = ArticleExtractor._clean_author_name(tag.get_text(" ", strip=True))
+                if not name:
+                    continue
+                key = name.casefold()
+                if key in seen:
+                    continue
+                seen.add(key)
+                authors.append(name)
+            if authors:
+                break
+        if not authors:
+            return None
+        return " & ".join(authors)
+
+    @staticmethod
+    def _best_author(metadata_author: Optional[str], soup: BeautifulSoup) -> Optional[str]:
+        visible_author = ArticleExtractor._visible_author_from_soup(soup)
+        if visible_author and ArticleExtractor._is_low_quality_author(metadata_author):
+            return visible_author
+        return metadata_author or visible_author
+
     @staticmethod
     def _store_browser_cookies(session, url: str, cookies: dict) -> None:
         if not cookies:
@@ -171,6 +237,7 @@ class ArticleExtractor:
         try:
             metadata = trafilatura.extract_metadata(html_content)
             soup = BeautifulSoup(html_content, 'lxml')
+            author = ArticleExtractor._best_author(metadata.author if metadata else None, soup)
             
             # Use profile-specific remove selectors if provided
             if profile and profile.remove_selectors:
@@ -210,7 +277,7 @@ class ArticleExtractor:
                         'error': 'Paywall detected', 
                         'is_paywall': True,
                         'title': metadata.title if metadata else None,
-                        'author': metadata.author if metadata else None,
+                        'author': author,
                         'date': metadata.date if metadata else None,
                         'sitename': metadata.sitename if metadata else None
                     }
@@ -239,7 +306,7 @@ class ArticleExtractor:
             return {
                 'success': True,
                 'title': metadata.title if metadata else None,
-                'author': metadata.author if metadata else None,
+                'author': author,
                 'date': metadata.date if metadata else None,
                 'sitename': metadata.sitename if metadata else None,
                 'html': extracted_html,

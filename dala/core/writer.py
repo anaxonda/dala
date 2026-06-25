@@ -5,6 +5,7 @@ import os
 import re
 import tempfile
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -473,6 +474,71 @@ def _cleanup_output_html(soup: BeautifulSoup, chapter_title: Optional[str] = Non
             tag.decompose()
 
 
+def format_saved_metadata(value: Optional[str]) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    try:
+        normalized = raw.replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.astimezone(timezone.utc)
+        return parsed.strftime("%Y-%m-%d %H:%M UTC")
+    except ValueError:
+        return raw
+
+
+def _inject_saved_metadata(content_html: str, saved_at: str) -> str:
+    label = format_saved_metadata(saved_at)
+    if not label:
+        return content_html
+    soup = BeautifulSoup(content_html or "", "html.parser")
+    if soup.select_one(".dala-saved-meta"):
+        return str(soup)
+
+    meta = soup.select_one(".post-meta")
+    if meta is None:
+        meta = soup.new_tag("div")
+        meta["class"] = "post-meta"
+        body = soup.body or soup
+        first_tag = next((child for child in body.contents if getattr(child, "name", None)), None)
+        if first_tag:
+            first_tag.insert_before(meta)
+        else:
+            body.append(meta)
+
+    row = soup.new_tag("p")
+    row["class"] = "dala-saved-meta"
+    strong = soup.new_tag("strong")
+    strong.string = "Saved:"
+    row.append(strong)
+    row.append(f" {label}")
+    meta.append(row)
+    return str(soup)
+
+
+def apply_saved_metadata_to_book(book_data: BookData) -> BookData:
+    book_saved_at = (book_data.extra_metadata or {}).get("saved_at")
+    has_article = any(chapter.is_article for chapter in book_data.chapters)
+    fallback_used = False
+    chapters = []
+    for chapter in book_data.chapters:
+        saved_at = getattr(chapter, "saved_at", None)
+        if not saved_at and book_saved_at and not fallback_used and (chapter.is_article or not has_article):
+            saved_at = book_saved_at
+            fallback_used = True
+        if saved_at:
+            chapters.append(replace(
+                chapter,
+                content_html=_inject_saved_metadata(chapter.content_html, saved_at),
+                saved_at=saved_at,
+            ))
+        else:
+            chapters.append(chapter)
+    return replace(book_data, chapters=chapters)
+
+
 def prepare_book_for_output(book_data: BookData, options: Optional[ConversionOptions] = None) -> BookData:
     cleaned_chapters = []
     no_images = getattr(options, "no_images", False)
@@ -483,7 +549,13 @@ def prepare_book_for_output(book_data: BookData, options: Optional[ConversionOpt
         _cleanup_output_html(soup, chapter.title)
         cleaned_chapters.append(replace(chapter, content_html=str(soup)))
 
-    return replace(book_data, chapters=cleaned_chapters, images=[] if no_images else book_data.images)
+    cleaned_book = replace(book_data, chapters=cleaned_chapters, images=[] if no_images else book_data.images)
+    return apply_saved_metadata_to_book(cleaned_book)
+
+
+def metadata_value(book_data: BookData, key: str) -> Optional[str]:
+    value = (book_data.extra_metadata or {}).get(key)
+    return str(value) if value else None
 
 
 def shared_reading_css() -> str:
@@ -547,6 +619,9 @@ class EpubWriter:
         book.set_title(book_data.title)
         book.set_language(book_data.language)
         book.add_author(book_data.author)
+        saved_at = metadata_value(book_data, "saved_at")
+        if saved_at:
+            book.add_metadata(None, "meta", "", {"name": "dala:saved_at", "content": saved_at})
 
         pygments_style = HtmlFormatter(style='default').get_style_defs('.codehilite')
         base_css = epub_reading_css() + """
@@ -670,10 +745,31 @@ class PdfWriter:
     @classmethod
     def _asset_file_uris(cls, book_data: BookData, asset_dir: Path, options: Optional[ConversionOptions] = None, pdf_assets: bool = False) -> dict:
         assets = {}
+        ambiguous_keys = set()
+
+        def add_asset_ref(key: Optional[str], ref: str) -> None:
+            if not key:
+                return
+            candidates = [str(key)]
+            normalized = cls._normalize_asset_key(str(key))
+            if normalized and normalized not in candidates:
+                candidates.append(normalized)
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                existing = assets.get(candidate)
+                if existing and existing != ref:
+                    ambiguous_keys.add(candidate)
+                    continue
+                if candidate not in ambiguous_keys:
+                    assets[candidate] = ref
+
         seen_names = set()
         original_bytes = 0
         written_bytes = 0
         converted = 0
+        basename_refs = {}
+        ambiguous_basenames = set()
         for idx, asset in enumerate(book_data.images, start=1):
             filename = cls._normalize_asset_key(asset.filename)
             base_name = sanitize_filename(filename.rsplit("/", 1)[-1] or f"image_{idx}") or f"image_{idx}"
@@ -704,8 +800,23 @@ class PdfWriter:
             original_bytes += len(asset.content)
             written_bytes += len(content)
             file_uri = out_path.as_uri()
-            assets[filename] = file_uri
-            assets[filename.rsplit("/", 1)[-1]] = file_uri
+            add_asset_ref(filename, file_uri)
+            add_asset_ref(getattr(asset, "original_url", None), file_uri)
+            for alt_url in getattr(asset, "alt_urls", None) or []:
+                add_asset_ref(alt_url, file_uri)
+
+            basename = filename.rsplit("/", 1)[-1]
+            existing_basename_ref = basename_refs.get(basename)
+            if existing_basename_ref and existing_basename_ref != file_uri:
+                ambiguous_basenames.add(basename)
+            elif basename not in ambiguous_basenames:
+                basename_refs[basename] = file_uri
+
+        for key in ambiguous_keys:
+            assets.pop(key, None)
+        for basename, file_uri in basename_refs.items():
+            if basename not in ambiguous_basenames:
+                assets[basename] = file_uri
         if pdf_assets and book_data.images:
             log.info(
                 "PDF image render assets: count=%d converted=%d source_bytes=%d temp_bytes=%d",
@@ -745,6 +856,24 @@ class PdfWriter:
         return anchor or f"chapter-{idx}"
 
     @classmethod
+    def _chapter_anchors(cls, book_data: BookData) -> list[str]:
+        bases = [cls._chapter_anchor(idx, chapter) for idx, chapter in enumerate(book_data.chapters, start=1)]
+        counts = {}
+        for base in bases:
+            counts[base] = counts.get(base, 0) + 1
+
+        seen = {}
+        anchors = []
+        for idx, base in enumerate(bases, start=1):
+            if counts[base] == 1:
+                anchors.append(base)
+                continue
+            occurrence = seen.get(base, 0) + 1
+            seen[base] = occurrence
+            anchors.append(f"{base}-{idx}")
+        return anchors
+
+    @classmethod
     def _chapter_subentries(cls, chapter) -> list[tuple[str, str]]:
         soup = BeautifulSoup(chapter.content_html or "", "html.parser")
         entries = []
@@ -767,9 +896,9 @@ class PdfWriter:
         )
         if book_data.title and not first_chapter_same_title:
             entries.append(TocEntry(book_data.title, None, 0))
-        chapter_fallback_start = 2 if include_contents else 0
-        for idx, chapter in enumerate(book_data.chapters, start=1):
-            chapter_anchor = cls._chapter_anchor(idx, chapter)
+        chapter_fallback_start = 1 if include_contents else 0
+        chapter_anchors = cls._chapter_anchors(book_data)
+        for idx, (chapter, chapter_anchor) in enumerate(zip(book_data.chapters, chapter_anchors), start=1):
             fallback_page = max(0, chapter_fallback_start + idx - 1)
             children = tuple(
                 TocEntry(title, anchor, fallback_page)
@@ -827,9 +956,8 @@ class PdfWriter:
 
         asset_refs = asset_refs or {}
         chapters = []
-        show_document_header = len(book_data.chapters) > 1
-        for idx, chapter in enumerate(book_data.chapters, start=1):
-            anchor = cls._chapter_anchor(idx, chapter)
+        chapter_anchors = cls._chapter_anchors(book_data)
+        for idx, (chapter, anchor) in enumerate(zip(book_data.chapters, chapter_anchors), start=1):
             chapters.append(
                 f"""
                 <div class="chapter" id="{anchor}">
@@ -839,14 +967,6 @@ class PdfWriter:
                 """
             )
         toc = cls._toc_html(book_data)
-        header = ""
-        if show_document_header:
-            header = f"""
-<header>
-    <h1 class="title">{html.escape(book_data.title or "Untitled")}</h1>
-    <div class="meta">{html.escape(book_data.author or "")}</div>
-</header>
-"""
 
         return f"""<!doctype html>
 <html>
@@ -861,11 +981,12 @@ body {{ margin: 0; background: white; }}
 h1, h2, h3, h4, [data-keep-with-next="true"] {{ break-after: avoid; }}
 h1.title {{ font-size: 1.8em; margin: 0 0 0.25em; }}
 .meta {{ color: #555; font-size: 0.9em; margin-bottom: 1.5em; }}
-.pdf-toc {{ break-before: page; break-after: page; }}
+.pdf-toc {{ break-after: page; }}
 .pdf-toc h1 {{ margin-top: 0; }}
 .pdf-toc ol {{ padding-left: 1.4em; }}
 .pdf-toc li {{ margin: 0 0 0.45em; }}
 .pdf-toc a {{ color: #111; text-decoration: none; }}
+.dala-saved-meta {{ display: none; }}
 .chapter {{ break-before: page; }}
 .chapter:first-of-type {{ break-before: auto; }}
 img, .img-block, figure {{ break-inside: avoid; max-width: 100%; }}
@@ -876,7 +997,6 @@ a {{ color: #1b4f8f; }}
 </style>
 </head>
 <body>
-{header}
 {toc}
 {''.join(chapters)}
 </body>

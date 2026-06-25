@@ -1108,6 +1108,9 @@ class ImageProcessor(BaseImageProcessor):
             if profile and profile.image_proxy_pattern and profile.image_proxy_pattern in (parsed.path or ""):
                 return qs.get("src") or qs.get("url") or qs.get("original")
 
+            if parsed.path.startswith("/.netlify/images"):
+                return qs.get("url") or qs.get("src") or qs.get("original")
+
             if "imrs.php" in (parsed.path or "") or "resizer" in (parsed.path or parsed.netloc) or "proxy" in (parsed.path or parsed.netloc):
                 return qs.get("src") or qs.get("url") or qs.get("original")
             if parsed.netloc and qs.keys() & {"w", "q", "fit", "h", "fm"}:

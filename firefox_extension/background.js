@@ -1,3 +1,42 @@
+function savedAtNow() {
+    return new Date().toISOString();
+}
+
+function queueEntryUrl(entry) {
+    if (typeof entry === "string") return entry;
+    if (entry && typeof entry === "object") return entry.url || "";
+    return "";
+}
+
+function normalizeQueueEntry(entry, fallbackSavedAt = null) {
+    const url = queueEntryUrl(entry).trim();
+    if (!url || !url.startsWith("http")) return null;
+    const saved_at = entry && typeof entry === "object" && entry.saved_at ? entry.saved_at : fallbackSavedAt || savedAtNow();
+    return { url, saved_at };
+}
+
+function normalizeQueueItems(rawQueue, fallbackSavedAt = null) {
+    const seen = new Set();
+    const items = [];
+    for (const raw of Array.isArray(rawQueue) ? rawQueue : []) {
+        const item = normalizeQueueEntry(raw, fallbackSavedAt);
+        if (item && !seen.has(item.url)) {
+            seen.add(item.url);
+            items.push(item);
+        }
+    }
+    return items;
+}
+
+function setDownloadBadge(text = "...") {
+    browser.browserAction.setBadgeText({ text });
+    browser.browserAction.setBadgeBackgroundColor({ color: "#FFA500" });
+}
+
+async function setDownloadActive(active) {
+    await browser.storage.local.set({ downloadActive: !!active });
+}
+
 // Initialize
 browser.runtime.onInstalled.addListener(() => {
     browser.storage.local.get([
@@ -104,7 +143,7 @@ if (browser.commands && browser.commands.onCommand) {
 
         if (command === "download-page") {
             lastShortcutTabId = tab.id;
-            showNativeToast(tab.id, "Starting EPUB download…");
+            showNativeToast(tab.id, "Starting download…");
             // Native command doesn't have HTML, so we grab it if possible or fallback
             let html = null;
             try {
@@ -392,11 +431,12 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
         max_pages: savedOpts.max_pages ? parseInt(savedOpts.max_pages, 10) || null : null
     };
 
+    const sourceItems = normalizeQueueItems(urls || []);
     const sources = [];
     const page_spec = parsePageSpecInput(options.pages);
     const max_pages = options.max_pages;
     const forceForum = options.forum;
-    const shouldFetchAssets = forceForum || urls.some(url => isLikelyForumUrl(url));
+    const shouldFetchAssets = forceForum || sourceItems.some(item => isLikelyForumUrl(item.url));
     if (forceForum && !options.include_cookies) {
         console.log("Forum mode enabled: using browser cookies automatically.");
     }
@@ -410,7 +450,9 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
     }
 
     // 2. Iterate requested URLs
-    for (const url of urls) {
+    for (const item of sourceItems) {
+        const url = item.url;
+        const saved_at = item.saved_at || savedAtNow();
         console.log(`Processing payload for: ${url}`);
         let html = null;
         // Find a tab that matches this URL and is fully loaded
@@ -466,7 +508,7 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
                 }
             }
         }
-        sources.push({ url: url, html: html, cookies: cookies, assets: assets, asset_debug: { entry: "popup", asset_count: assets.length, ...(lastArticleAssetDebug || {}) }, is_forum: is_forum });
+        sources.push({ url: url, html: html, cookies: cookies, assets: assets, asset_debug: { entry: "popup", asset_count: assets.length, ...(lastArticleAssetDebug || {}) }, is_forum: is_forum, saved_at: saved_at });
     }
     
     return {
@@ -748,7 +790,7 @@ async function downloadFromShortcut(url, html, tabId = null) {
     );
 
     const payload = {
-        sources: [{ url, html: html || null, cookies: cookies, assets: assets, asset_debug: { entry: "shortcut", asset_count: assets.length, ...(lastArticleAssetDebug || {}) }, is_forum }],
+        sources: [{ url, html: html || null, cookies: cookies, assets: assets, asset_debug: { entry: "shortcut", asset_count: assets.length, ...(lastArticleAssetDebug || {}) }, is_forum, saved_at: savedAtNow() }],
         bundle_title: null,
         no_comments: !!opts.no_comments,
         no_article: !!opts.no_article,
@@ -784,9 +826,9 @@ async function downloadFromShortcut(url, html, tabId = null) {
 
 async function addToQueue(url) {
     const res = await browser.storage.local.get("urlQueue");
-    const queue = res.urlQueue || [];
-    if (!queue.includes(url)) {
-        queue.push(url);
+    const queue = normalizeQueueItems(res.urlQueue || []);
+    if (!queue.some(item => item.url === url)) {
+        queue.push({ url, saved_at: savedAtNow() });
         await browser.storage.local.set({ urlQueue: queue });
         updateBadge();
     }
@@ -833,7 +875,7 @@ async function downloadSingleFromContext(url, tabId = null) {
     );
 
     const payload = {
-        sources: [{ url, html: null, cookies: cookies, assets: assets, asset_debug: { entry: "context", asset_count: assets.length, ...(lastArticleAssetDebug || {}) }, is_forum }],
+        sources: [{ url, html: null, cookies: cookies, assets: assets, asset_debug: { entry: "context", asset_count: assets.length, ...(lastArticleAssetDebug || {}) }, is_forum, saved_at: savedAtNow() }],
         bundle_title: null,
         no_comments: !!opts.no_comments,
         no_article: !!opts.no_article,
@@ -867,8 +909,12 @@ async function downloadSingleFromContext(url, tabId = null) {
     await processDownloadWithAssets(payload, false);
 }
 
-function updateBadge() {
-    browser.storage.local.get("urlQueue").then((res) => {
+async function updateBadge() {
+    browser.storage.local.get(["urlQueue", "downloadActive"]).then((res) => {
+        if (res.downloadActive) {
+            setDownloadBadge();
+            return;
+        }
         const count = res.urlQueue ? res.urlQueue.length : 0;
         browser.browserAction.setBadgeText({ text: count > 0 ? count.toString() : "" });
         browser.browserAction.setBadgeBackgroundColor({ color: "#e85a4f" });
@@ -1050,6 +1096,11 @@ async function runServerJob(payload, signal) {
         }
         const job = await fetchJson(`${serverUrl}/jobs/${currentJobId}`, { signal });
         await rememberFailedSourcesFromJob(job);
+        if (job.status === "discovering") {
+            browser.browserAction.setBadgeText({ text: "LOAD" });
+            await abortableDelay(1000, signal);
+            continue;
+        }
         if (job.total_sources) {
             browser.browserAction.setBadgeText({ text: `${job.processed_sources || 0}/${job.total_sources}` });
         }
@@ -1149,8 +1200,8 @@ async function processDownloadCore(payload, isBundle) {
     const controller = new AbortController();
     currentRunToken = runToken;
     currentController = controller;
-    browser.browserAction.setBadgeText({ text: "..." });
-    browser.browserAction.setBadgeBackgroundColor({ color: "#FFA500" }); // Orange
+    await setDownloadActive(true);
+    setDownloadBadge();
 
     // Ensure termux copy dir is included if configured
     try {
@@ -1294,11 +1345,12 @@ async function processDownloadCore(payload, isBundle) {
             // ignore toast failures
         }
 
+        await setDownloadActive(false);
         if (isBundle) {
             if (failedSourceDetails.length) {
                 const failedUrls = new Set(failedSourceDetails.map(item => item && item.url).filter(Boolean));
                 const queued = (await browser.storage.local.get("urlQueue")).urlQueue || [];
-                await browser.storage.local.set({ urlQueue: queued.filter(url => failedUrls.has(url)) });
+                await browser.storage.local.set({ urlQueue: normalizeQueueItems(queued).filter(item => failedUrls.has(item.url)) });
             } else {
                 await browser.storage.local.set({ urlQueue: [] });
             }
@@ -1313,6 +1365,7 @@ async function processDownloadCore(payload, isBundle) {
         }
 
     } catch (error) {
+        await setDownloadActive(false);
         if (error.name === 'AbortError') {
             browser.browserAction.setBadgeText({ text: "" });
             browser.browserAction.setBadgeBackgroundColor({ color: "#e85a4f" });
@@ -1361,6 +1414,7 @@ async function cancelDownload() {
         }
         currentController = null;
         currentRunToken = null;
+        await setDownloadActive(false);
         browser.notifications.create({
             type: "basic",
             iconUrl: "icon.png",

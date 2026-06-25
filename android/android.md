@@ -16,6 +16,17 @@ Open `http://127.0.0.1:8000/` from the Android browser, or point the Dala browse
 
 The scripts in this directory are for Termux:Widget. They manage the installed `dala-server` command, not a source checkout.
 
+From the extracted Dala release bundle:
+
+```bash
+pkg install termux-api
+sh android/install_widgets.sh
+```
+
+The installer copies the shortcuts to `~/.shortcuts/dala/` and marks them executable.
+
+Manual setup is equivalent to:
+
 ```bash
 pkg install termux-api
 mkdir -p ~/.shortcuts/dala

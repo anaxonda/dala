@@ -78,7 +78,7 @@
         url: window.location.href,
         html
       }).then(() => {
-        showToast("Starting EPUB download…");
+        showToast("Starting download…");
       }).catch((e) => {
         showToast("Download shortcut failed", "#d9534f");
         console.error("Shortcut download failed", e);

@@ -231,6 +231,69 @@ def test_article_extractor_preserves_commented_article_images():
     assert "Map showing 2000" in extracted["html"]
 
 
+def test_article_extractor_prefers_visible_byline_over_admin_metadata():
+    html = """
+    <html>
+      <head>
+        <title>Why the West stopped making land</title>
+        <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "Article",
+          "author": {"name": "wip-admin"},
+          "headline": "Why the West stopped making land"
+        }
+        </script>
+      </head>
+      <body>
+        <article>
+          <div class="article-header__head-label">
+            <span>Words by</span>
+            <div class="label-name-underline__name">
+              <a class="author-link" href="https://worksinprogress.co/our-authors/zigmund-forrest/">Zigmund Forrest</a>
+              <span>&amp;</span>
+              <a class="author-link" href="https://worksinprogress.co/our-authors/maxwell-tabarrok/">Maxwell Tabarrok</a>
+            </div>
+          </div>
+          <p>Enough article text for extraction. Enough article text for extraction. Enough article text for extraction.
+          Enough article text for extraction. Enough article text for extraction. Enough article text for extraction.
+          Enough article text for extraction. Enough article text for extraction. Enough article text for extraction.</p>
+        </article>
+      </body>
+    </html>
+    """
+
+    extracted = ArticleExtractor.extract_from_html(html, "https://worksinprogress.co/issue/example/")
+
+    assert extracted["success"] is True
+    assert extracted["author"] == "Zigmund Forrest & Maxwell Tabarrok"
+
+
+def test_article_extractor_keeps_good_metadata_author_over_generic_author_links():
+    html = """
+    <html>
+      <head>
+        <title>Story</title>
+        <script type="application/ld+json">
+        {"@context": "https://schema.org", "@type": "Article", "author": {"name": "Reporter Name"}}
+        </script>
+      </head>
+      <body>
+        <article>
+          <a class="author-link" href="/author/archive/">Archive</a>
+          <p>Enough article text for extraction. Enough article text for extraction. Enough article text for extraction.
+          Enough article text for extraction. Enough article text for extraction. Enough article text for extraction.</p>
+        </article>
+      </body>
+    </html>
+    """
+
+    extracted = ArticleExtractor.extract_from_html(html, "https://example.com/story")
+
+    assert extracted["success"] is True
+    assert extracted["author"] == "Reporter Name"
+
+
 def test_article_extractor_converts_injected_svg_graphic_to_image():
     soup = BeautifulSoup(
         """

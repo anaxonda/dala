@@ -1,4 +1,5 @@
 import pytest
+import asyncio
 import time
 from fastapi.testclient import TestClient
 from unittest.mock import patch, AsyncMock
@@ -129,6 +130,22 @@ def test_build_options_normalizes_legacy_image_preset():
 
     assert options.image_preset == "compact"
     assert sources[0].url == "https://example.com/article"
+    assert sources[0].saved_at
+
+
+def test_build_options_preserves_source_saved_at():
+    req = server.ConversionRequest(
+        sources=[
+            server.SourceItem(
+                url="https://example.com/article",
+                saved_at="2026-06-25T12:34:56+00:00",
+            )
+        ],
+    )
+
+    _, sources = server._build_options_and_sources(req)
+
+    assert sources[0].saved_at == "2026-06-25T12:34:56+00:00"
 
 
 @pytest.mark.asyncio
@@ -151,6 +168,84 @@ async def test_cleanup_finished_jobs_removes_old_output(tmp_path):
     assert not output.exists()
     async with server.JOBS_LOCK:
         assert "old-job" not in server.JOBS
+
+
+@pytest.mark.asyncio
+async def test_date_range_job_reports_discovery_then_expanded_progress(monkeypatch):
+    discovery_started = asyncio.Event()
+    discovery_release = asyncio.Event()
+    processing_started = asyncio.Event()
+    processing_release = asyncio.Event()
+
+    async def fake_discover(session, sources, options):
+        discovery_started.set()
+        await discovery_release.wait()
+        return [
+            Source(url="https://example.com/2026/06/01/a", published_date="2026-06-01"),
+            Source(url="https://example.com/2026/06/02/b", published_date="2026-06-02"),
+        ]
+
+    async def fake_process(sources, options, session, progress_callback=None, source_timing_callback=None):
+        if progress_callback:
+            await progress_callback(1, len(sources), sources[0].url)
+        processing_started.set()
+        await processing_release.wait()
+        return [
+            BookData(
+                title="A",
+                author="Test",
+                uid="urn:a",
+                language="en",
+                description="",
+                source_url=sources[0].url,
+                chapters=[Chapter(title="A", filename="a.xhtml", content_html="<p>A</p>", uid="a")],
+            ),
+            BookData(
+                title="B",
+                author="Test",
+                uid="urn:b",
+                language="en",
+                description="",
+                source_url=sources[1].url,
+                chapters=[Chapter(title="B", filename="b.xhtml", content_html="<p>B</p>", uid="b")],
+            ),
+        ]
+
+    async def fake_write(book_data, output_path, options=None, custom_css=None):
+        with open(output_path, "wb") as f:
+            f.write(b"epub")
+
+    monkeypatch.setattr(server, "discover_posts_for_sources", fake_discover)
+    monkeypatch.setattr(server.core_main, "process_urls", fake_process)
+    monkeypatch.setattr(server, "write_output_book", fake_write)
+
+    req = server.ConversionRequest(
+        sources=[server.SourceItem(url="https://example.com/archive")],
+        start_date="2026-06-01",
+        end_date="2026-06-25",
+    )
+    job = await server._create_job(total_sources=1)
+    task = asyncio.create_task(server._run_job_task(job.job_id, req))
+
+    await asyncio.wait_for(discovery_started.wait(), timeout=1)
+    record = await server._get_job(job.job_id)
+    assert record.status == "discovering"
+    assert record.total_sources == 1
+    assert record.processed_sources == 0
+
+    discovery_release.set()
+    await asyncio.wait_for(processing_started.wait(), timeout=1)
+    record = await server._get_job(job.job_id)
+    assert record.status == "running"
+    assert record.total_sources == 2
+    assert record.processed_sources == 1
+
+    processing_release.set()
+    await asyncio.wait_for(task, timeout=1)
+    record = await server._get_job(job.job_id)
+    assert record.status == "completed"
+    assert record.total_sources == 2
+    assert record.processed_sources == 2
 
 
 def test_single_title_override_ignores_generic_youtube_title():

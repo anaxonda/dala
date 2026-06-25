@@ -123,6 +123,56 @@ def test_pdf_asset_refs_can_write_pdf_friendly_jpeg(tmp_path):
     assert (tmp_path / "photo.jpg").read_bytes().startswith(b"\xff\xd8")
 
 
+def test_pdf_asset_refs_do_not_reuse_ambiguous_basenames(tmp_path):
+    book = BookData(
+        title="PDF Test",
+        author="Author",
+        uid="urn:test",
+        language="en",
+        description="",
+        source_url="https://example.com",
+        chapters=[
+            Chapter(
+                title="Chapter",
+                filename="chapter.xhtml",
+                content_html=(
+                    '<p><img src="https://cdn.example.com/a/photo.jpg"></p>'
+                    '<p><img src="https://cdn.example.com/b/photo.jpg"></p>'
+                    '<p><img src="photo.jpg"></p>'
+                ),
+                uid="chapter",
+            )
+        ],
+        images=[
+            ImageAsset(
+                uid="img-a",
+                filename="images/a/photo.jpg",
+                media_type="image/jpeg",
+                content=b"first",
+                original_url="https://cdn.example.com/a/photo.jpg",
+            ),
+            ImageAsset(
+                uid="img-b",
+                filename="images/b/photo.jpg",
+                media_type="image/jpeg",
+                content=b"second",
+                original_url="https://cdn.example.com/b/photo.jpg",
+            ),
+        ],
+    )
+
+    asset_refs = PdfWriter._asset_file_uris(book, tmp_path)
+    html = PdfWriter.build_html(book, ConversionOptions(output_format="pdf"), asset_refs=asset_refs)
+    soup = BeautifulSoup(html, "html.parser")
+    srcs = [img["src"] for img in soup.find_all("img")]
+
+    assert srcs[0].startswith("file://")
+    assert srcs[1].startswith("file://")
+    assert srcs[0] != srcs[1]
+    assert srcs[2] == "photo.jpg"
+    assert "photo.jpg" not in asset_refs
+
+
 def test_pdf_html_adds_toc_for_multiple_chapters():
     book = make_book(
         title="Bundle",
@@ -138,6 +188,27 @@ def test_pdf_html_adds_toc_for_multiple_chapters():
     assert '<div class="pdf-toc">' in html
     assert 'href="#first"' in html
     assert 'href="#second"' in html
+    assert "<header>" not in html
+    assert ".dala-saved-meta { display: none; }" in html
+
+
+def test_pdf_html_uses_unique_anchors_for_duplicate_chapter_uids():
+    book = make_book(
+        title="Bundle",
+        uid="urn:bundle",
+        chapters=[
+            make_chapter(title="First", filename="first.xhtml", content_html="<p>One</p>", uid="chap_index"),
+            make_chapter(title="Second", filename="second.xhtml", content_html="<p>Two</p>", uid="chap_index"),
+        ],
+    )
+
+    html = PdfWriter.build_html(book, ConversionOptions(output_format="pdf"))
+
+    assert 'href="#chap-index-1"' in html
+    assert 'href="#chap-index-2"' in html
+    assert 'id="chap-index-1"' in html
+    assert 'id="chap-index-2"' in html
+    assert html.count('id="chap-index"') == 0
 
 
 def test_pdf_html_uses_chapter_toc_title_without_changing_heading():
@@ -228,7 +299,7 @@ def test_pdf_single_chapter_dedupes_document_and_chapter_titles():
     assert "<p>Body</p>" in html
 
 
-def test_pdf_bundle_keeps_document_header_and_removes_internal_chapter_h1():
+def test_pdf_bundle_omits_document_header_and_removes_internal_chapter_h1():
     book = BookData(
         title="Bundle",
         author="Author",
@@ -244,7 +315,8 @@ def test_pdf_bundle_keeps_document_header_and_removes_internal_chapter_h1():
 
     html = PdfWriter.build_html(book, ConversionOptions(output_format="pdf"))
 
-    assert '<h1 class="title">Bundle</h1>' in html
+    assert '<h1 class="title">Bundle</h1>' not in html
+    assert "<header>" not in html
     assert html.count("<h1>First</h1>") == 1
     assert html.count("<h1>Second</h1>") == 1
     assert "<p>One</p>" in html
@@ -331,7 +403,7 @@ def test_pdf_native_outline_postprocess_adds_clean_bookmarks(tmp_path):
     reader = PdfReader(str(output_path))
     outlines = reader.outline
     assert [item.title for item in outlines] == ["Bundle", "First", "Second"]
-    assert [reader.get_page_number(item.page) for item in outlines] == [0, 2, 3]
+    assert [reader.get_page_number(item.page) for item in outlines] == [0, 1, 2]
 
 
 def test_pdf_native_outline_omits_redundant_single_document_title():
@@ -365,8 +437,8 @@ def test_pdf_native_outline_omits_redundant_document_title_with_comments():
     )
 
     assert PdfWriter._chapter_outline_entries(book, include_contents=True) == [
-        ("Article", "article", 2),
-        ("Comments", "comments", 3),
+        ("Article", "article", 1),
+        ("Comments", "comments", 2),
     ]
 
 

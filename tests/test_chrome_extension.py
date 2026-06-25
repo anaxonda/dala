@@ -53,7 +53,7 @@ def test_forum_mode_forces_cookie_backed_extension_enrichment():
 
     for source in (chrome_bg, firefox_bg):
         assert "const include_cookies = options.include_cookies || is_forum;" in source
-        assert "const shouldFetchAssets = forceForum || urls.some(url => isLikelyForumUrl(url));" in source
+        assert "const shouldFetchAssets = forceForum || sourceItems.some(item => isLikelyForumUrl(item.url));" in source
         assert "function includeCookiesForSavedOptions(opts)" in source
         assert "return isLocalServerUrl(saved.server_url);" in source
         assert "const include_cookies = includeCookiesForSavedOptions(opts) || is_forum;" in source
@@ -296,7 +296,8 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 await page.wait_for_timeout(500)
 
                 queue = await page.evaluate("browser.storage.local.get('urlQueue')")
-                assert queue["urlQueue"] == ["https://example.com/a", "https://example.com/b"]
+                assert [item["url"] for item in queue["urlQueue"]] == ["https://example.com/a", "https://example.com/b"]
+                assert all(item["saved_at"] for item in queue["urlQueue"])
                 assert await page.locator("#queue-count").inner_text() == "(2)"
             finally:
                 await context.close()

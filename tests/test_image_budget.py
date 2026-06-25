@@ -3,6 +3,7 @@ import pytest
 import dala.cli as main
 from dala.core.image_budget import ImageBudgetExceeded, assert_image_budget, prepare_books_for_bundle
 from dala.core.image_processor import ImageProcessor
+from dala.core.writer import prepare_book_for_output
 from dala.models import BookData, Chapter, ConversionOptions, ImageAsset, normalize_image_preset
 
 
@@ -80,6 +81,18 @@ def test_create_bundle_prefixes_toc_entries_with_published_date():
 
     assert bundle.toc_structure[0].title == "2025-08-15 - Article One"
     assert bundle.chapters[0].toc_title == "2025-08-15 - Article One"
+
+
+def test_create_bundle_preserves_per_article_saved_metadata():
+    book = _book("one", b"first")
+    book.chapters[0].content_html = '<div class="post-meta"><p><strong>Source:</strong> Example</p></div><p>Body</p>'
+    book.extra_metadata["saved_at"] = "2026-06-25T12:34:56+00:00"
+    book.chapters[0].saved_at = "2026-06-25T12:34:56+00:00"
+
+    bundle = main.create_bundle([book], "Bundle", "Author")
+    prepared = prepare_book_for_output(bundle)
+
+    assert "Saved:</strong> 2026-06-25 12:34 UTC" in prepared.chapters[0].content_html
 
 
 def test_bundle_filename_title_adds_today_or_date_range(monkeypatch):
