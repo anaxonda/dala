@@ -1240,8 +1240,8 @@ async function processDownloadCore(payload, isBundle) {
         const cleanSub = isAbsolute ? "" : saveFolder.replace(/[/\\\\]+/g, '/').replace(/^\/+|\/+$/g, '');
         const targetPath = cleanSub ? `${cleanSub}/${filename}` : filename;
 
-        const canDownload = browser.downloads && typeof browser.downloads.download === "function";
         const isAndroid = /Android/i.test((navigator && navigator.userAgent) || "");
+        const canDownload = !isAndroid && browser.downloads && typeof browser.downloads.download === "function";
         let downloaded = false;
 
         if (serverSaved) {
@@ -1285,7 +1285,7 @@ async function processDownloadCore(payload, isBundle) {
                 }
             }
         } else {
-            console.warn("downloads API unavailable; will open blob in new tab");
+            console.warn("downloads API unavailable.");
         }
 
         if (!downloaded) {
@@ -1293,13 +1293,16 @@ async function processDownloadCore(payload, isBundle) {
                 console.warn("Treating as success because server saved output locally.");
                 try { URL.revokeObjectURL(url); } catch (_) {}
                 downloaded = true;
+            } else if (isAndroid) {
+                try { URL.revokeObjectURL(url); } catch (_) {}
+                throw new Error(
+                    "Android browser download is unavailable and the server did not save the output. " +
+                    "Run Termux storage setup and keep the Dala server local, or configure a server save folder."
+                );
             } else {
                 try { URL.revokeObjectURL(url); } catch (_) {}
                 await openOutputInTab(blob, filename);
             }
-        } else if (isAndroid) {
-            // Some Android builds acknowledge downloads but fail silently; also open tab as backup
-            await openOutputInTab(blob, filename);
         }
 
         browser.browserAction.setBadgeText({ text: "OK" });

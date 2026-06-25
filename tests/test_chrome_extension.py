@@ -108,6 +108,23 @@ def test_popup_exposes_simplified_image_and_pdf_translation_controls():
         assert 'display.value = "underneath";' in source
 
 
+def test_android_extension_avoids_blob_tab_download_fallbacks():
+    root = Path(__file__).resolve().parents[1]
+
+    for bg_path in (root / "extension_chrome" / "background.js", root / "firefox_extension" / "background.js"):
+        source = bg_path.read_text()
+        assert 'const canDownload = !isAndroid && browser.downloads && typeof browser.downloads.download === "function";' in source
+        assert "Some Android builds acknowledge downloads but fail silently" not in source
+        assert "await openOutputInTab(blob, filename);\n        } else if (isAndroid)" not in source
+        assert "Android browser download is unavailable and the server did not save the output." in source
+
+    for popup_path in (root / "extension_chrome" / "popup.js", root / "firefox_extension" / "popup.js"):
+        source = popup_path.read_text()
+        assert 'const url = browser.runtime.getURL("options.html");' in source
+        assert "await browser.tabs.create({ url });" in source
+        assert "Opening options tab failed; trying runtime options page" in source
+
+
 def _skip_if_playwright_unavailable(exc: Exception):
     message = str(exc)
     if "playwright" in message.lower() or "executable doesn't exist" in message.lower():

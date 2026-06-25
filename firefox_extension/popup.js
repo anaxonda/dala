@@ -499,12 +499,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         };
         const optsBtn = document.getElementById('btn-options');
         if (optsBtn) {
-            optsBtn.onclick = () => {
-                if (browser.runtime.openOptionsPage) {
-                    browser.runtime.openOptionsPage();
-                } else {
-                    const url = browser.runtime.getURL("options.html");
-                    browser.tabs.create({ url });
+            optsBtn.onclick = async () => {
+                const url = browser.runtime.getURL("options.html");
+                try {
+                    await browser.tabs.create({ url });
+                    window.close();
+                } catch (e) {
+                    console.warn("Opening options tab failed; trying runtime options page", e);
+                    if (browser.runtime.openOptionsPage) {
+                        await browser.runtime.openOptionsPage();
+                    } else {
+                        throw e;
+                    }
                 }
             };
         }

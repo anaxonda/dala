@@ -4,13 +4,16 @@ Use the main shell installer from Termux. It detects Android, avoids `uv tool in
 
 ```bash
 pkg update
-pkg install python python-pip curl
+pkg install python python-pip curl termux-api
+termux-setup-storage
 curl -fsSLo install-dala.sh https://raw.githubusercontent.com/anaxonda/dala/main/scripts/install-dala.sh
 sh install-dala.sh
 dala-server --no-open
 ```
 
 Open `http://127.0.0.1:8000/` from the Android browser, or point the Dala browser extension at that local server.
+
+Run `termux-setup-storage` before using the browser extension. The extension relies on the local Termux server saving completed files into Android-accessible Downloads; browser blob downloads on Android can create random-looking filenames or extra extension tabs.
 
 ## Termux Widget Shortcuts
 
@@ -30,9 +33,12 @@ Manual setup is equivalent to:
 ```bash
 pkg install termux-api
 mkdir -p ~/.shortcuts/dala
-cp android/dala_start.sh ~/.shortcuts/dala/start.sh
-cp android/dala_stop.sh ~/.shortcuts/dala/stop.sh
-cp android/dala_status.sh ~/.shortcuts/dala/status.sh
+cp android/dala_start.sh ~/.shortcuts/dala/dala_start.sh
+cp android/dala_stop.sh ~/.shortcuts/dala/dala_stop.sh
+cp android/dala_status.sh ~/.shortcuts/dala/dala_status.sh
+printf '#!/data/data/com.termux/files/usr/bin/bash\n"$(dirname "$0")/dala_start.sh"\n' > ~/.shortcuts/dala/start.sh
+printf '#!/data/data/com.termux/files/usr/bin/bash\n"$(dirname "$0")/dala_stop.sh"\n' > ~/.shortcuts/dala/stop.sh
+printf '#!/data/data/com.termux/files/usr/bin/bash\n"$(dirname "$0")/dala_status.sh"\n' > ~/.shortcuts/dala/status.sh
 chmod +x ~/.shortcuts/dala/*.sh
 ```
 
