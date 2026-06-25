@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Dala Server
+Comment=Start the local Dala conversion backend
+Exec=dala-server --open
+Terminal=true
+Type=Application
+Categories=Utility;

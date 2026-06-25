@@ -1,6 +1,7 @@
 import os
 import yaml
 import re
+from importlib import resources
 from typing import List, Optional
 from ..models import log, SiteProfile
 
@@ -14,9 +15,19 @@ class ProfileManager:
     @classmethod
     def get_instance(cls):
         if not cls._instance:
-            paths = ["sites.yaml", os.path.expanduser("~/.config/dala/sites.yaml")]
-            cls._instance = cls(paths)
+            cls._instance = cls()
+            cls._instance.load_packaged_defaults()
+            for path in ["sites.yaml", os.path.expanduser("~/.config/dala/sites.yaml")]:
+                cls._instance.load_config(path)
         return cls._instance
+
+    def load_packaged_defaults(self):
+        try:
+            default_config = resources.files("dala.data").joinpath("sites.yaml")
+            with resources.as_file(default_config) as path:
+                self.load_config(str(path))
+        except Exception as e:
+            log.warning(f"Failed to load packaged site profiles: {e}")
     def load_config(self, path: str):
         if not os.path.exists(path): return
         try:
@@ -37,7 +48,7 @@ class ProfileManager:
         except Exception as e:
             log.warning(f"Failed to load config {path}: {e}")
     def get_profile(self, url: str) -> Optional[SiteProfile]:
-        for p in self.profiles:
+        for p in reversed(self.profiles):
             for pattern in p.domain_patterns:
                 try:
                     if re.search(pattern, url): return p

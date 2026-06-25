@@ -6,36 +6,45 @@ It is built for the "57 tabs I'll read later" problem: make an book out of it.
 
 > Everything mostly usable, i'm sure something doesn't work.
 
-<img src="firefox_extension/icon.png" alt="dala icon" width="72" />
+<img src="https://raw.githubusercontent.com/anaxonda/dala/master/firefox_extension/icon.png" alt="dala icon" width="72" />
 
 ## Screenshots
 
 | Extension popup | Table of contents |
 | --- | --- |
-| <img src="screenshot/Screenshot_20260118_155731.png" width="100%" alt="Dala extension popup with output, image, summary, date range, forum, and translation options" /> | <img src="screenshot/Screenshot_20260118_155753.png" width="100%" alt="KOReader table of contents for a bundled EPUB" /> |
+| <img src="https://raw.githubusercontent.com/anaxonda/dala/master/screenshot/Screenshot_20260118_155731.png" width="100%" alt="Dala extension popup with output, image, summary, date range, forum, and translation options" /> | <img src="https://raw.githubusercontent.com/anaxonda/dala/master/screenshot/Screenshot_20260118_155753.png" width="100%" alt="KOReader table of contents for a bundled EPUB" /> |
 
 | Table of contents navigation | Article output |
 | --- | --- |
-| <img src="screenshot/Screenshot_20260118_162833.png" width="100%" alt="KOReader table of contents with nested comment entries" /> | <img src="screenshot/Screenshot_20260118_163015.png" width="100%" alt="Article output with source metadata and readable typography" /> |
+| <img src="https://raw.githubusercontent.com/anaxonda/dala/master/screenshot/Screenshot_20260118_162833.png" width="100%" alt="KOReader table of contents with nested comment entries" /> | <img src="https://raw.githubusercontent.com/anaxonda/dala/master/screenshot/Screenshot_20260118_163015.png" width="100%" alt="Article output with source metadata and readable typography" /> |
 
 <p align="center">
-  <img src="screenshot/Screenshot_20260118_155810.png" width="45%" alt="Threaded comments with e-reader navigation controls" />
+  <img src="https://raw.githubusercontent.com/anaxonda/dala/master/screenshot/Screenshot_20260118_155810.png" width="45%" alt="Threaded comments with e-reader navigation controls" />
   <br />
   <em>Threaded comments with e-reader navigation controls.</em>
 </p>
 
 <p align="center">
-  <img src="screenshot/translation-underneath.png" width="70%" alt="Underneath translation layout showing translated text below each original paragraph" />
+  <img src="https://raw.githubusercontent.com/anaxonda/dala/master/screenshot/translation-underneath.png" width="70%" alt="Underneath translation layout showing translated text below each original paragraph" />
   <br />
   <em>"Underneath" translation layout for bilingual reading.</em>
 </p>
 
 ## Quick Start
 
+Install the command-line tools:
+
+```bash
+uv tool install dala
+dala-server --open
+```
+
+For development from a source checkout:
+
 ```bash
 git clone https://github.com/anaxonda/dala.git
 cd dala
-uv run dala-server
+uv run dala-server --open
 ```
 
 Install the browser extension:
@@ -45,7 +54,7 @@ Install the browser extension:
 
 Then open a page, click the **dala** icon, and click **Download Page**.
 
-For PDF output, CLI/server rendering of JavaScript-heavy pages, or server-side browser fallback, see [PDF and Server-Side Browser Rendering](#pdf-and-server-side-browser-rendering).
+For PDF output, JavaScript-heavy pages without extension capture, or headless browser fallback, see [Headless Browser Support](#headless-browser-support).
 
 ## What Do I Install?
 
@@ -56,13 +65,13 @@ For PDF output, CLI/server rendering of JavaScript-heavy pages, or server-side b
 | Save forum images or attachments behind login | Extension with **Use Site Cookies** | Usually none |
 | Bundle browser links | Extension queue | None |
 | Bundle URLs from a file | CLI | None |
-| Render JavaScript-heavy pages without extension capture | CLI/server browser rendering | Server-side browser setup |
-| Generate PDF | Extension or CLI | Same server-side browser setup |
+| Render JavaScript-heavy pages without extension capture | CLI/headless browser rendering | Headless browser support |
+| Generate PDF | Extension or CLI | Headless browser support |
 | Download a YouTube transcript | CLI or extension | None |
 | AI summaries or LLM translation | CLI or extension | API key |
 | Google Translate translation | CLI or extension | No API key |
 
-Server-side browser setup uses Dala's optional Python browser-control support plus either an existing Chrome/Edge/Brave/Chromium install or Playwright's managed Chromium; details are below.
+Headless browser support lets the Dala server control Chrome/Chromium in the background. It is needed for PDF output and some JavaScript-heavy pages, and is separate from the normal Dala browser extension.
 
 ## Source Support
 
@@ -81,31 +90,64 @@ Server-side browser setup uses Dala's optional Python browser-control support pl
 | Feature | Supported |
 | --- | --- |
 | EPUB | E-reader-oriented typography, metadata, table of contents, image optimization |
-| PDF | Document and e-reader presets through server-side browser rendering |
+| PDF | Document and e-reader presets through headless browser rendering |
 | Bundles | Multiple pages combined into one anthology-style file |
 | Images | Compact, Balanced, or Full presets; optional grayscale conversion |
 | Translation | LLM or Google Translate; underneath, side-by-side inspired by [Bitextual](https://github.com/wydengyre/bitextual), EPUB footnote, or replace modes |
 | Summaries | Optional LLM-generated summaries for long articles, discussions, forums, and transcripts |
 
-## PDF and Server-Side Browser Rendering
+## Headless Browser Support
 
-*Basic EPUB downloads do not need server-side browser rendering. This section is about Dala's optional Python support for controlling a browser on the server, not the browser extension.*
+*Basic EPUB downloads do not need headless browser support. This section is about Dala's optional Python support for controlling Chrome/Chromium in the background, not the browser extension.*
 
-Install the optional dependency group only if you want PDF output, CLI/server rendering of JavaScript-heavy pages, or server-side browser fallback:
+Install Dala with headless browser support only if you want PDF output, JavaScript-heavy page rendering without extension capture, or headless browser fallback:
+
+```bash
+uv tool install --force "dala[browser]"
+dala-setup-browser
+dala-server --open
+```
+
+For development from a source checkout:
 
 ```bash
 uv sync --extra browser
-uv run dala-server
+uv run dala-setup-browser
+uv run dala-server --open
 ```
 
-Dala can then use an existing Chromium-compatible browser such as Chrome, Edge, Brave, or Chromium. If none is installed or detected, install Playwright's managed Chromium:
-
-```bash
-uv run playwright install chromium
-```
+`dala-setup-browser` first tries to use an existing Chromium-compatible browser such as Chrome, Edge, Brave, or Chromium. If none is detected, it installs Playwright's managed Chromium.
 
 <details>
-<summary>CLI examples for server-side browser rendering</summary>
+<summary>Installer scripts and launchers</summary>
+
+The `installers/` directory has double-click installers that install or update Dala, ask whether to add optional headless browser support, and create a desktop launcher:
+
+```text
+installers/Install or Update Dala.bat       # Windows double-click wrapper
+installers/Install or Update Dala.ps1       # Windows PowerShell installer
+installers/Install or Update Dala.command   # macOS double-click installer
+installers/Install or Update Dala.sh        # Linux terminal installer
+```
+
+The `scripts/` directory has conservative lower-level installers that reuse an existing `uv` install, install `uv` only if missing, and make headless browser support opt-in:
+
+```bash
+# macOS/Linux
+./scripts/install-dala.sh
+./scripts/install-dala.sh --headless-browser
+
+# Windows PowerShell
+.\scripts\install-dala.ps1
+.\scripts\install-dala.ps1 -HeadlessBrowser
+```
+
+The `launchers/` directory has double-click templates that start `dala-server --open` after Dala is installed.
+
+</details>
+
+<details>
+<summary>CLI examples for headless browser rendering</summary>
 
 ```bash
 # Render with an auto-detected browser
@@ -159,28 +201,20 @@ Dala can process pages that are already readable in your browser, including page
 
 The simplest workflow is normal browser capture: open the article until it is readable in your everyday browser, then click the Dala extension. If you use a browser extension to make pages readable, install it in the same browser where you run Dala.
 
-Server-side browser fallback is an advanced local fallback for automation and testing. The server uses a dedicated Dala browser profile at `~/.local/share/dala/browser-profile` by default; it does not automatically use your normal browser profile.
+Headless browser fallback is an advanced local fallback for automation and testing. The server uses a dedicated Dala browser profile at `~/.local/share/dala/browser-profile` by default; it does not automatically use your normal browser profile.
 
 <details>
-<summary>Advanced: server-side BPC helper for local testing</summary>
+<summary>Advanced: headless browser extensions for local testing</summary>
 
-If an unpacked Bypass Paywalls Clean Chrome extension exists at `config/bpc/chrome-unpacked/bypass-paywalls-chrome-clean-master`, the server can use it for browser fallback. You can override paths with:
+Headless browser fallback can load an unpacked Chromium-compatible extension when you explicitly provide its path. This is useful for local automation tests where the rendered browser needs the same helper extension behavior you use interactively. Configure it with:
 
 ```bash
-export DALA_BPC_EXTENSION_PATH=/path/to/unpacked/bypass-paywalls-chrome-clean
+export DALA_BROWSER_EXTENSION_PATH=/path/to/unpacked-extension
 export DALA_BROWSER_EXECUTABLE=/usr/bin/google-chrome
 export DALA_BROWSER_PROFILE_DIR=/path/to/custom/dala-chromium-profile
 ```
 
-To refresh the local BPC helper used for testing:
-
-```bash
-git clone --depth 1 https://gitflic.ru/project/magnolia1234/bpc_uploads.git config/bpc/latest
-mkdir -p config/bpc/chrome-unpacked
-unzip -oq config/bpc/latest/bypass-paywalls-chrome-clean-master.zip -d config/bpc/chrome-unpacked
-```
-
-`config/bpc/` is ignored by git.
+Only load extensions you trust, and only when running a local server you control.
 
 </details>
 
@@ -206,12 +240,12 @@ The extension has a compact popup for common choices and an Options page for ser
 | **Translation** | Translates article text with LLM or Google Translate. | Bilingual reading or translated-only output. |
 | **Video Thumbnails** | Embeds periodic YouTube thumbnails. | Visual context for transcripts. |
 | **Use Site Cookies** | Sends browser cookies to the backend. Defaults on only for local server URLs. | Forums, protected images, authenticated pages. |
-| **Server Browser Fallback** | Lets the server retry failed extraction in a Chromium-compatible browser. | JavaScript-heavy, blocked, or difficult pages. |
+| **Headless Browser Fallback** | Lets the server retry failed extraction in a background Chromium-compatible browser. | JavaScript-heavy, blocked, or difficult pages. |
 | **Force Forum Driver** | Uses forum multi-page scraping. | XenForo/vBulletin-style threads. |
 | **Forum Pages** | Downloads specific pages such as `1,3-5`. | Partial forum thread downloads. |
 | **Max Pages** | Limits sequential forum crawling. | Avoid unexpectedly large downloads. |
 
-The Options page also includes diagnostics for server version, Playwright/browser/profile/BPC status, PDF availability, retained jobs, cleanup retention, and the last conversion status/error. If PDF is unavailable, the extension disables PDF output and falls back to EPUB.
+The Options page also includes diagnostics for server version, Playwright/headless browser/profile status, PDF availability, retained jobs, cleanup retention, and the last conversion status/error. If PDF is unavailable, the extension disables PDF output and falls back to EPUB.
 
 </details>
 
@@ -352,10 +386,10 @@ OPENAI_API_KEY=your-openai-api-key
 LLM_PROVIDER=auto
 LLM_MODEL=gemini-3.1-flash-lite
 
-# Browser fallback
+# Headless browser fallback
 DALA_BROWSER_EXECUTABLE=/path/to/chrome-or-chromium
 DALA_BROWSER_PROFILE_DIR=/path/to/dala-browser-profile
-DALA_BPC_EXTENSION_PATH=/path/to/unpacked-extension
+DALA_BROWSER_EXTENSION_PATH=/path/to/unpacked-extension
 
 # Translation speed tuning
 DALA_GOOGLE_TRANSLATE_CHUNK_SIZE=5
@@ -388,9 +422,8 @@ Dala is primarily tested on Linux and Android/Termux. macOS and Windows should w
 
 ### Prerequisites
 
-- Python 3.9+
 - `uv`
-- Git
+- Git, unless installing from a published package/wheel
 
 Install `uv`:
 
@@ -412,9 +445,8 @@ pkg install uv
 ### macOS
 
 ```bash
-git clone https://github.com/anaxonda/dala.git
-cd dala
-uv run dala-server
+uv tool install dala
+dala-server --open
 ```
 
 macOS may prompt you to install Command Line Tools if Git is not installed.
@@ -464,9 +496,8 @@ launchctl load ~/Library/LaunchAgents/com.dala.server.plist
 Open PowerShell:
 
 ```powershell
-git clone https://github.com/anaxonda/dala.git
-cd dala
-uv run dala-server
+uv tool install dala
+dala-server --open
 ```
 
 If you see an execution policy error, run:
@@ -478,12 +509,11 @@ Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
 <details>
 <summary>Start Dala automatically from the Startup Folder</summary>
 
-Create `start_dala.bat` in the project folder:
+Use `launchers/Start Dala Server.bat`, or create `start_dala.bat`:
 
 ```bat
 @echo off
-cd /d "%~dp0"
-uv run dala-server
+dala-server --open
 ```
 
 Press `Win + R`, enter `shell:startup`, and add a shortcut to `start_dala.bat`.
@@ -492,7 +522,7 @@ Press `Win + R`, enter `shell:startup`, and add a shortcut to `start_dala.bat`.
 
 ### Linux
 
-Use the Quick Start. For PDF or server-side browser rendering, use the setup above; Dala can auto-detect `chromium`, `google-chrome`, `microsoft-edge`, or `brave-browser` from `PATH`.
+Use the Quick Start. For PDF or headless browser rendering, use the setup above; Dala can auto-detect `chromium`, `google-chrome`, `microsoft-edge`, or `brave-browser` from `PATH`. A `.desktop` launcher template is available at `launchers/dala-server.desktop`.
 
 <details>
 <summary>Start Dala automatically with systemd</summary>
@@ -501,7 +531,7 @@ Create `~/.config/systemd/user/epub_server.service`:
 
 ```ini
 [Unit]
-Description=Web to EPUB Python Server
+Description=Web to ebook Python Server
 After=network.target
 
 [Service]
@@ -585,15 +615,16 @@ Then open `http://127.0.0.1:8000/ping`.
 
 ### PDF option is disabled
 
-Install server-side browser rendering support:
+Install headless browser support:
 
 ```bash
-uv sync --extra browser
+uv tool install --force "dala[browser]"
+dala-setup-browser
 ```
 
-Restart the server and check `http://127.0.0.1:8000/ping`. If no Chrome, Edge, Brave, or Chromium executable is detected, run `uv run playwright install chromium`.
+For a source checkout, use `uv sync --extra browser` and `uv run dala-setup-browser`. Restart the server and check `http://127.0.0.1:8000/`.
 
-### Browser fallback fails
+### Headless browser fallback fails
 
 Use headed mode to debug login, bot challenges, or extension loading:
 
@@ -639,6 +670,29 @@ Browser download, CLI output, or server archive
 - `server.py`: FastAPI backend used by the extensions and async job flow.
 - `firefox_extension/` and `extension_chrome/`: browser clients for page capture, queueing, options, and downloads.
 
+## Release Checklist
+
+Dala releases now have two distribution channels:
+
+- **PyPI:** publish the Python package so users can run `uv tool install dala`.
+- **GitHub Releases:** attach browser extensions and the easy installer bundle.
+
+Expected GitHub release assets:
+
+```text
+dala-chrome-vEXTENSION_VERSION.zip
+dala-firefox-vEXTENSION_VERSION-signed.xpi
+dala-installers-vPYTHON_PACKAGE_VERSION.zip
+```
+
+Build the unsigned extension packages and installer bundle with:
+
+```bash
+./package_extensions.sh
+```
+
+Then replace the unsigned Firefox XPI with the AMO-signed XPI before publishing the GitHub release. The installer bundle should be attached to the release page so nontechnical users can download the double-click installers without cloning the repository.
+
 ## Roadmap
 
 ### Planned
@@ -663,7 +717,7 @@ Browser download, CLI output, or server archive
 - Only enable cookie sharing for a backend you control and trust.
 - Do not expose the Dala server directly to the public internet.
 - API keys in the extension or `.env` are secrets. Do not commit `.env`.
-- Dala is intended to process pages you are allowed to access. Use authenticated capture and browser fallback responsibly.
+- Dala is intended to process pages you are allowed to access. Use authenticated capture and headless browser fallback responsibly.
 
 ## License
 

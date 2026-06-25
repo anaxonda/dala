@@ -19,7 +19,7 @@
 - `uv run pytest`: Run the automated test suite.
 - `git status --short`: Check the dirty tree before editing and before handing work back.
 - **Chrome Extension Dev:** Load `extension_chrome/` unpacked in `chrome://extensions`.
-- **Packaging:** Run `./package_extensions.sh` to generate installable ZIPs/XPIs in `dist/`.
+- **Packaging:** Run `./package_extensions.sh` to generate browser extension packages and the installer bundle in `dist/`.
 
 ## Chrome Extension (Manifest V3) Specifics
 - **Service Worker:** Runs in `background.js`. No access to DOM/`DOMParser`.
@@ -36,7 +36,7 @@
 - **Browser Fallback Policy:** Server browser fallback auto-detects Chrome, Edge, Brave, Chromium, or Playwright's managed Chromium, and uses the dedicated Dala profile at `~/.local/share/dala/browser-profile` by default. Do not auto-use the user's real browser profile. Interactive bot challenges should default to archive fallback; the extension can optionally open the original URL in the user's browser. The screenshot-based warm browser remains an explicit `browser_challenge_action: "warm"` path only. BPC-style extensions can be installed in the user's normal headed browser for extension capture; server-side BPC under `config/bpc/` is an advanced local fallback/testing path.
 - **Server Trust Boundary:** CORS is open for extension use. Keep the server bound to `127.0.0.1` unless intentionally exposing it, and document remote/LAN server assumptions when changing extension server URL behavior.
 - **Driver Heuristics:** Generic, forum, and image extraction include site-specific heuristics and fallbacks. When touching them, add focused regression tests with representative HTML.
-- **Generated Artifacts:** EPUB/PDF outputs, extension packages, `web-ext-artifacts/`, `exports/`, pycache, screenshots, logs, local systemd exports, and `config/bpc/` are generated/local artifacts and should remain uncommitted.
+- **Generated Artifacts:** EPUB/PDF outputs, extension packages, installer bundles, `web-ext-artifacts/`, `exports/`, pycache, screenshots, logs, local systemd exports, and `config/bpc/` are generated/local artifacts and should remain uncommitted unless explicitly requested for release staging.
 - **PDF Image Assets:** EPUB assets may be optimized WebP, but PDF rendering should feed Chromium temporary JPEG assets derived from the selected image preset/color mode to avoid oversized embedded RGB image streams.
 
 ## Coding Style & Naming Conventions
@@ -61,7 +61,32 @@
 - Link related issues if tracking; call out breaking changes (API fields, flag renames) explicitly.
 - Keep diffs scoped: one concern per PR. If adding deps, justify them in the description and ensure `uv` metadata stays in sync.
 - Practice tight git hygiene: review `git status --short` before and after changes, separate source/doc edits from generated rebuild outputs, and call out intentionally dirty or ignored local artifacts in handoff notes.
-- When extension source changes, rebuild both browser packages with `./package_extensions.sh` and verify `dist/` contains the expected Chrome ZIP and Firefox XPI.
+- Commit source/docs/config changes before tagging or publishing. Do not commit `dist/`, `.env`, `.pypirc`, generated ebooks/PDFs, screenshots, logs, or downloaded third-party extension artifacts.
+- Use normal push flow only after reviewing the final diff: `git status --short`, `git diff --check`, commit with an imperative subject, then `git push origin <branch>`. Push tags explicitly with `git push origin <tag>` or `git push origin --tags`.
+- When extension source changes, rebuild both browser packages with `./package_extensions.sh` and verify `dist/` contains the expected Chrome ZIP and Firefox XPI. Firefox release assets should use the AMO-signed XPI, not the unsigned local build.
+
+## Release & Publishing Guidelines
+- Treat Python package and browser extension versions as separate but user-visible. For normal public releases, keep `pyproject.toml`/`uv.lock` and both extension manifests aligned. If the extension version is intentionally unchanged, make that explicit in release notes and asset names.
+- For Python package releases:
+  - Update the package version in `pyproject.toml` and refresh `uv.lock`.
+  - Run `uv run pytest` and `git diff --check`.
+  - Build with `uv build --out-dir /tmp/dala-build.<version>` and validate with `uv run --with twine twine check /tmp/dala-build.<version>/*`.
+  - For packaging changes, smoke-test the wheel locally with `uv tool install --force /tmp/dala-build.<version>/dala-<version>-py3-none-any.whl`, then verify `dala --help`, `dala-server --help`, and any touched entry points.
+  - Publish to TestPyPI before PyPI when metadata, entry points, package data, or installer docs change. Then publish the same checked artifacts to PyPI.
+- For extension releases:
+  - Update both `firefox_extension/manifest.json` and `extension_chrome/manifest.json` when the extension is part of the release.
+  - Run `./package_extensions.sh`; confirm the Chrome ZIP, Firefox XPI, and `dala-installers-v<package-version>.zip` exist in `dist/`.
+  - Sign the Firefox package with `web-ext`/AMO credentials from the local environment. Never commit credentials. Attach the signed XPI to GitHub releases.
+- For GitHub releases:
+  - Tag only after tests, packaging checks, and release notes are ready.
+  - Attach `dala-chrome-v<extension-version>.zip`, the AMO-signed `dala-firefox-v<extension-version>.xpi`, and `dala-installers-v<package-version>.zip`.
+  - Prefer PyPI as the canonical source for Python wheels/sdists; attach Python artifacts only if there is a specific release reason.
+  - Release notes should list user-facing changes, packaging/install changes, known limitations, and whether extension assets were rebuilt or unchanged.
+- After publishing, test the public install path when practical:
+  - `uv tool install --force dala`
+  - `uv tool install --force "dala[browser]"`
+  - `dala-server --open`
+  - `dala-setup-browser --check-only`
 
 ## Security & Configuration Tips
 - Do not hardcode cookies/API keys; the extension should rely on the user’s logged-in session only.

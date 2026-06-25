@@ -1,6 +1,6 @@
 import pytest
 
-import main
+import dala.cli as main
 from dala.core.image_budget import ImageBudgetExceeded, assert_image_budget, prepare_books_for_bundle
 from dala.core.image_processor import ImageProcessor
 from dala.models import BookData, Chapter, ConversionOptions, ImageAsset, normalize_image_preset

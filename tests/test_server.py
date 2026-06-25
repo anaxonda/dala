@@ -2,8 +2,8 @@ import pytest
 import time
 from fastapi.testclient import TestClient
 from unittest.mock import patch, AsyncMock
-import server # Import to make sure app is loaded
-from server import app
+import dala.server as server # Import to make sure app is loaded
+from dala.server import app
 from dala.models import BookData, Chapter, Source
 from dala.core.browser import BrowserChallengeError
 
@@ -46,6 +46,65 @@ def test_browser_config_status_reports_pdf_available_with_playwright_and_chromiu
     assert status["browser_fallback_available"] is True
     assert status["pdf_available"] is True
     assert status["browser_executable"] == "/usr/bin/google-chrome"
+
+
+def test_browser_config_status_allows_playwright_managed_chromium(monkeypatch):
+    monkeypatch.setattr(server, "is_playwright_available", lambda: True)
+    monkeypatch.setattr(server, "resolve_browser_executable", lambda configured=None: None)
+    monkeypatch.setattr(server, "browser_executable_exists", lambda executable: False)
+
+    status = server._browser_config_status()
+
+    assert status["browser_executable_found"] is False
+    assert status["browser_fallback_available"] is True
+    assert status["pdf_available"] is True
+
+
+def test_status_page_renders_server_and_browser_status(monkeypatch):
+    monkeypatch.setattr(server, "is_playwright_available", lambda: True)
+    monkeypatch.setattr(server, "resolve_browser_executable", lambda configured=None: "/usr/bin/chromium")
+    monkeypatch.setattr(server, "browser_executable_exists", lambda executable: True)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Dala Server" in response.text
+    assert "http://testserver" in response.text
+    assert "/usr/bin/chromium" in response.text
+    assert "dala-setup-browser" in response.text
+
+
+def test_parse_server_args_defaults(monkeypatch):
+    monkeypatch.delenv("DALA_SERVER_HOST", raising=False)
+    monkeypatch.delenv("DALA_SERVER_PORT", raising=False)
+
+    args = server.parse_server_args([])
+
+    assert args.host == "127.0.0.1"
+    assert args.port == 8000
+    assert args.open is False
+
+
+def test_parse_server_args_reads_env(monkeypatch):
+    monkeypatch.setenv("DALA_SERVER_HOST", "0.0.0.0")
+    monkeypatch.setenv("DALA_SERVER_PORT", "8765")
+
+    args = server.parse_server_args([])
+
+    assert args.host == "0.0.0.0"
+    assert args.port == 8765
+
+
+def test_server_start_opens_localhost_for_wildcard_host(monkeypatch):
+    opened = []
+    launched = {}
+    monkeypatch.setattr(server.webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(server.uvicorn, "run", lambda app, host, port: launched.update({"host": host, "port": port}))
+
+    server.start(["--host", "0.0.0.0", "--port", "8765", "--open"])
+
+    assert opened == ["http://127.0.0.1:8765/"]
+    assert launched == {"host": "0.0.0.0", "port": 8765}
 
 
 def test_build_options_normalizes_legacy_image_preset():
@@ -174,8 +233,8 @@ def test_extract_links_falls_back_to_generic_article_images():
     assert "https://www.science.org/assets/logo.svg" not in urls
 
 
-@patch("main.process_urls", new_callable=AsyncMock)
-@patch("server.write_output_book", new_callable=AsyncMock)
+@patch("dala.cli.process_urls", new_callable=AsyncMock)
+@patch("dala.server.write_output_book", new_callable=AsyncMock)
 def test_convert_endpoint(mock_write, mock_process):
     # Mock the core processing to return a dummy book
     dummy_book = BookData(
@@ -270,7 +329,7 @@ def test_convert_endpoint(mock_write, mock_process):
     assert "filename" in response.headers["content-disposition"]
 
 
-@patch("server.TranslationProcessor.test_provider", new_callable=AsyncMock)
+@patch("dala.server.TranslationProcessor.test_provider", new_callable=AsyncMock)
 def test_translation_test_helper(mock_test_provider):
     mock_test_provider.return_value = "Hola mundo."
 
@@ -321,8 +380,8 @@ def test_translation_cache_clear_helper(monkeypatch, tmp_path):
     assert not cache_path.exists()
 
 
-@patch("main.process_urls", new_callable=AsyncMock)
-@patch("server.write_output_book", new_callable=AsyncMock)
+@patch("dala.cli.process_urls", new_callable=AsyncMock)
+@patch("dala.server.write_output_book", new_callable=AsyncMock)
 def test_convert_keeps_extracted_youtube_title_when_popup_title_is_generic(mock_write, mock_process):
     dummy_book = BookData(
         title="Actual Video Title",
@@ -345,8 +404,8 @@ def test_convert_keeps_extracted_youtube_title_when_popup_title_is_generic(mock_
     assert "YouTube.epub" not in response.headers["content-disposition"]
 
 
-@patch("main.process_urls", new_callable=AsyncMock)
-@patch("server.write_output_book", new_callable=AsyncMock)
+@patch("dala.cli.process_urls", new_callable=AsyncMock)
+@patch("dala.server.write_output_book", new_callable=AsyncMock)
 def test_jobs_endpoint_lifecycle(mock_write, mock_process):
     dummy_book = BookData(
         title="Job Book",
@@ -392,8 +451,8 @@ def test_jobs_endpoint_lifecycle(mock_write, mock_process):
     assert downloaded.headers["content-type"] == "application/epub+zip"
 
 
-@patch("server.BROWSER_WARM_MANAGER.start_session", new_callable=AsyncMock)
-@patch("main.process_urls", new_callable=AsyncMock)
+@patch("dala.server.BROWSER_WARM_MANAGER.start_session", new_callable=AsyncMock)
+@patch("dala.cli.process_urls", new_callable=AsyncMock)
 def test_jobs_endpoint_pauses_for_browser_verification(mock_process, mock_warm):
     mock_process.side_effect = BrowserChallengeError("https://www.wsj.com/article", "verification required")
     mock_warm.return_value = server.WarmSession(
@@ -429,7 +488,7 @@ def test_jobs_endpoint_pauses_for_browser_verification(mock_process, mock_warm):
     assert body["verification_source_url"] == "https://www.wsj.com/article"
 
 
-@patch("main.process_urls", new_callable=AsyncMock)
+@patch("dala.cli.process_urls", new_callable=AsyncMock)
 def test_jobs_endpoint_opens_challenge_in_user_browser(mock_process):
     mock_process.side_effect = BrowserChallengeError("https://www.nytimes.com/article", "geo.captcha-delivery.com")
 
@@ -455,8 +514,8 @@ def test_jobs_endpoint_opens_challenge_in_user_browser(mock_process):
     assert body["verification_marker"] == "geo.captcha-delivery.com"
 
 
-@patch("main.process_urls", new_callable=AsyncMock)
-@patch("server.write_output_book", new_callable=AsyncMock)
+@patch("dala.cli.process_urls", new_callable=AsyncMock)
+@patch("dala.server.write_output_book", new_callable=AsyncMock)
 def test_convert_endpoint_pdf_output(mock_write, mock_process):
     dummy_book = BookData(
         title="PDF Book",
@@ -486,9 +545,9 @@ def test_convert_endpoint_pdf_output(mock_write, mock_process):
     assert options.pdf_page_size == "kobo_clara"
 
 
-@patch("server.discover_posts_for_sources", new_callable=AsyncMock)
-@patch("main.process_urls", new_callable=AsyncMock)
-@patch("server.write_output_book", new_callable=AsyncMock)
+@patch("dala.server.discover_posts_for_sources", new_callable=AsyncMock)
+@patch("dala.cli.process_urls", new_callable=AsyncMock)
+@patch("dala.server.write_output_book", new_callable=AsyncMock)
 def test_convert_endpoint_date_range_discovers_sources(mock_write, mock_process, mock_discover):
     dummy_book = BookData(
         title="Discovered Book",

@@ -4,19 +4,19 @@ import tempfile
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, AsyncMock
-from server import app
+from dala.server import app
 from dala.models import BookData, Chapter
 
 client = TestClient(app)
 
 @pytest.fixture
 def mock_epub_writer():
-    with patch("server.write_output_book", new_callable=AsyncMock) as mock:
+    with patch("dala.server.write_output_book", new_callable=AsyncMock) as mock:
         yield mock
 
 @pytest.fixture
 def mock_process_urls():
-    with patch("main.process_urls", new_callable=AsyncMock) as mock:
+    with patch("dala.cli.process_urls", new_callable=AsyncMock) as mock:
         dummy_book = BookData(
             title="Test Book",
             author="Test Author",

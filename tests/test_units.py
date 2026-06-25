@@ -1,10 +1,11 @@
 import pytest
 from bs4 import BeautifulSoup
-import main
+import dala.cli as main
 from dala.core.dispatcher import DriverDispatcher
 from dala.core.extractor import ArticleExtractor
 from dala.core.image_processor import BaseImageProcessor, ForumImageProcessor, ImageProcessor
 from dala.core.browser import BrowserFetchError, BrowserFetchOptions, BrowserFetchResult
+from dala.core.profiles import ProfileManager
 from dala.drivers.forum import ForumDriver
 from dala.drivers.generic import GenericDriver
 from dala.drivers.hn import HackerNewsDriver
@@ -19,6 +20,18 @@ def test_legacy_web_to_epub_shim_exports_public_symbols():
     assert web_to_epub.DriverDispatcher is DriverDispatcher
     assert web_to_epub.ForumImageProcessor is ForumImageProcessor
     assert callable(web_to_epub.process_urls)
+
+
+def test_profile_manager_loads_packaged_defaults(monkeypatch):
+    monkeypatch.chdir("/tmp")
+    manager = ProfileManager()
+    manager.load_packaged_defaults()
+
+    profile = manager.get_profile("https://www.nytimes.com/2026/01/01/example.html")
+
+    assert profile is not None
+    assert profile.name == "The New York Times"
+    assert profile.content_selector == "article#story"
 
 
 def test_driver_dispatch_explicit_forum():
