@@ -10,18 +10,24 @@ It is built for the "57 tabs I'll read later" problem: make an book out of it.
 
 ## Screenshots
 
-| Extension popup and queue | KOReader output |
+| Extension popup | Table of contents |
 | --- | --- |
-| <img src="screenshot/Screenshot_20260118_155731.png" width="100%" alt="Dala extension popup" /> | <img src="screenshot/Screenshot_20260118_155753.png" width="100%" alt="EPUB output in KOReader" /> |
+| <img src="screenshot/Screenshot_20260118_155731.png" width="100%" alt="Dala extension popup with output, image, summary, date range, forum, and translation options" /> | <img src="screenshot/Screenshot_20260118_155753.png" width="100%" alt="KOReader table of contents for a bundled EPUB" /> |
 
-| Thread navigation | Bundle workflow |
+| Table of contents navigation | Article output |
 | --- | --- |
-| <img src="screenshot/Screenshot_20260118_162833.png" width="100%" alt="Threaded comment output" /> | <img src="screenshot/Screenshot_20260118_163015.png" width="100%" alt="Bundle queue workflow" /> |
+| <img src="screenshot/Screenshot_20260118_162833.png" width="100%" alt="KOReader table of contents with nested comment entries" /> | <img src="screenshot/Screenshot_20260118_163015.png" width="100%" alt="Article output with source metadata and readable typography" /> |
 
 <p align="center">
-  <img src="screenshot/Screenshot_20260118_155810.png" width="45%" alt="Dala settings screen" />
+  <img src="screenshot/Screenshot_20260118_155810.png" width="45%" alt="Threaded comments with e-reader navigation controls" />
   <br />
-  <em>Extension settings for output, images, translation, and server options.</em>
+  <em>Threaded comments with e-reader navigation controls.</em>
+</p>
+
+<p align="center">
+  <img src="screenshot/translation-underneath.png" width="70%" alt="Underneath translation layout showing translated text below each original paragraph" />
+  <br />
+  <em>Underneath translation layout for bilingual reading.</em>
 </p>
 
 ## Quick Start
@@ -78,7 +84,7 @@ Server-side browser setup uses Dala's optional Python browser-control support pl
 | PDF | Document and e-reader presets through server-side browser rendering |
 | Bundles | Multiple pages combined into one anthology-style file |
 | Images | Compact, Balanced, or Full presets; optional grayscale conversion |
-| Translation | LLM or Google Translate; underneath, side-by-side, EPUB footnote, or replace modes |
+| Translation | LLM or Google Translate; underneath, side-by-side inspired by [Bitextual](https://github.com/wydengyre/bitextual), EPUB footnote, or replace modes |
 | Summaries | Optional LLM-generated summaries for long articles, discussions, forums, and transcripts |
 
 ## Common Workflows
