@@ -27,7 +27,7 @@ It is built for the "57 tabs I'll read later" problem: make an book out of it.
 <p align="center">
   <img src="screenshot/translation-underneath.png" width="70%" alt="Underneath translation layout showing translated text below each original paragraph" />
   <br />
-  <em>Underneath translation layout for bilingual reading.</em>
+  <em>"Underneath" translation layout for bilingual reading.</em>
 </p>
 
 ## Quick Start
@@ -86,55 +86,6 @@ Server-side browser setup uses Dala's optional Python browser-control support pl
 | Images | Compact, Balanced, or Full presets; optional grayscale conversion |
 | Translation | LLM or Google Translate; underneath, side-by-side inspired by [Bitextual](https://github.com/wydengyre/bitextual), EPUB footnote, or replace modes |
 | Summaries | Optional LLM-generated summaries for long articles, discussions, forums, and transcripts |
-
-## Common Workflows
-
-### Save the current browser page
-
-Start the backend, open a readable page in your browser, then use the extension's **Download Page** button. This is the easiest path for pages where your browser already has the right login/session state.
-
-### Bundle many links
-
-Use the extension context menu to add links to the queue, then open the popup and click **Download Bundle**. From the CLI, put one URL per line in a file and use `--bundle`.
-
-### Download YouTube transcripts
-
-```bash
-# Basic transcript cleanup, no API key required
-uv run dala "https://www.youtube.com/watch?v=VIDEO_ID"
-
-# Prefer auto-generated captions and include comments
-uv run dala --yt-auto --yt-max-comments 50 "https://www.youtube.com/watch?v=VIDEO_ID"
-
-# Use an LLM for transcript cleanup
-uv run dala --llm "https://www.youtube.com/watch?v=VIDEO_ID"
-```
-
-### Translate or summarize
-
-```bash
-# Summary
-uv run dala --summary "https://example.com/article"
-
-# Bilingual Spanish translation under each paragraph
-uv run dala --translate es --translation-display underneath "https://example.com/article"
-
-# Translated-only output
-uv run dala --translate es --translation-display replace "https://example.com/article"
-
-# Include comments/forum text in translation
-uv run dala --translate es --translation-scope all-readable "https://example.com/article"
-```
-
-## Security and Privacy Notes
-
-- The extension can send the current page HTML and captured page assets to the Dala backend.
-- When **Use Site Cookies** is enabled, the extension can send site cookies to the backend so it can fetch protected images or attachments.
-- Keep the backend bound to `127.0.0.1` unless you intentionally configure LAN or remote access.
-- Only enable cookie sharing for a backend you control and trust.
-- Do not expose the Dala server directly to the public internet.
-- API keys in the extension or `.env` are secrets. Do not commit `.env`.
-- Dala is intended to process pages you are allowed to access. Use authenticated capture and browser fallback responsibly.
 
 ## PDF and Server-Side Browser Rendering
 
@@ -279,6 +230,27 @@ uv run dala --start-date 2025-08 --end-date 2025-08 "https://example.wordpress.c
 # Save a forum thread with cookies exported from your browser
 uv run dala --forum --cookie-file cookies.txt --max-pages 5 "https://forum.example.com/thread"
 
+# Basic YouTube transcript cleanup, no API key required
+uv run dala "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# Prefer auto-generated captions and include YouTube comments
+uv run dala --yt-auto --yt-max-comments 50 "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# Use an LLM for transcript cleanup
+uv run dala --llm "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# Add an AI summary
+uv run dala --summary "https://example.com/article"
+
+# Add bilingual Spanish translation under each paragraph
+uv run dala --translate es --translation-display underneath "https://example.com/article"
+
+# Keep only translated text
+uv run dala --translate es --translation-display replace "https://example.com/article"
+
+# Include comments/forum text in translation
+uv run dala --translate es --translation-scope all-readable "https://example.com/article"
+
 # Compact grayscale images for a small e-reader EPUB
 uv run dala --image-preset compact --image-color grayscale "https://example.com/article"
 
@@ -412,7 +384,7 @@ CLI and extension outputs use the same title-based naming helpers where possible
 Dala is primarily tested on Linux and Android/Termux. macOS and Windows should work with the commands below; report platform-specific issues if you hit them.
 
 <details>
-<summary>macOS, Windows, Linux, Android, and pip setup</summary>
+<summary>macOS, Windows, Linux, and Android setup</summary>
 
 ### Prerequisites
 
@@ -447,73 +419,8 @@ uv run dala-server
 
 macOS may prompt you to install Command Line Tools if Git is not installed.
 
-### Windows
-
-Open PowerShell:
-
-```powershell
-git clone https://github.com/anaxonda/dala.git
-cd dala
-uv run dala-server
-```
-
-If you see an execution policy error, run:
-
-```powershell
-Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
-
-### Linux
-
-Use the Quick Start. For PDF or server-side browser rendering, use the setup above; Dala can auto-detect `chromium`, `google-chrome`, `microsoft-edge`, or `brave-browser` from `PATH`.
-
-### Android / Termux
-
-You can run the backend on your phone:
-
-```bash
-pkg update
-pkg install git python tur-repo
-pkg install uv
-git clone https://github.com/anaxonda/dala.git
-cd dala
-```
-
-If `uv` cache/linking gives trouble on Android, create the environment manually:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-UV_LINK_MODE=copy UV_CACHE_DIR=$HOME/.cache/uv uv pip install -e .
-uv run dala-server
-```
-
-Firefox for Android can use the extension against the local Termux server.
-
-### Alternative: pip
-
-```bash
-# macOS / Linux
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-
-# Windows
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e .
-```
-
-</details>
-
-## Run in Background
-
-Use this if you want the local Dala backend to start automatically instead of running `uv run dala-server` manually.
-
 <details>
-<summary>launchd, Windows Startup Folder, and systemd examples</summary>
-
-### macOS launchd
+<summary>Start Dala automatically with launchd</summary>
 
 Create `~/Library/LaunchAgents/com.dala.server.plist`:
 
@@ -550,7 +457,26 @@ Load it:
 launchctl load ~/Library/LaunchAgents/com.dala.server.plist
 ```
 
-### Windows Startup Folder
+</details>
+
+### Windows
+
+Open PowerShell:
+
+```powershell
+git clone https://github.com/anaxonda/dala.git
+cd dala
+uv run dala-server
+```
+
+If you see an execution policy error, run:
+
+```powershell
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+<details>
+<summary>Start Dala automatically from the Startup Folder</summary>
 
 Create `start_dala.bat` in the project folder:
 
@@ -562,7 +488,14 @@ uv run dala-server
 
 Press `Win + R`, enter `shell:startup`, and add a shortcut to `start_dala.bat`.
 
-### Linux systemd
+</details>
+
+### Linux
+
+Use the Quick Start. For PDF or server-side browser rendering, use the setup above; Dala can auto-detect `chromium`, `google-chrome`, `microsoft-edge`, or `brave-browser` from `PATH`.
+
+<details>
+<summary>Start Dala automatically with systemd</summary>
 
 Create `~/.config/systemd/user/epub_server.service`:
 
@@ -586,6 +519,31 @@ Enable it:
 ```bash
 systemctl --user enable --now epub_server
 ```
+
+</details>
+
+### Android / Termux
+
+You can run the backend on your phone:
+
+```bash
+pkg update
+pkg install git python tur-repo
+pkg install uv
+git clone https://github.com/anaxonda/dala.git
+cd dala
+```
+
+If `uv` cache/linking gives trouble on Android, create the environment manually:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+UV_LINK_MODE=copy UV_CACHE_DIR=$HOME/.cache/uv uv pip install -e .
+uv run dala-server
+```
+
+Firefox for Android can use the extension against the local Termux server.
 
 </details>
 
@@ -696,6 +654,16 @@ Browser download, CLI output, or server archive
 - RSS feed ingestion.
 - More date-range archive patterns.
 - HN/Reddit index filtering by points, dates, or comment counts.
+
+## Security and Privacy Notes
+
+- The extension can send the current page HTML and captured page assets to the Dala backend.
+- When **Use Site Cookies** is enabled, the extension can send site cookies to the backend so it can fetch protected images or attachments.
+- Keep the backend bound to `127.0.0.1` unless you intentionally configure LAN or remote access.
+- Only enable cookie sharing for a backend you control and trust.
+- Do not expose the Dala server directly to the public internet.
+- API keys in the extension or `.env` are secrets. Do not commit `.env`.
+- Dala is intended to process pages you are allowed to access. Use authenticated capture and browser fallback responsibly.
 
 ## License
 
