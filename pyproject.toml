@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dala"
-version = "2.3.2"
+version = "2.3.8"
 description = "Web to EPUB Downloader with E-Ink Optimizations"
 readme = "readme.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
     "requests>=2.30.0",
     "aiohttp[speedups]>=3.9.0",
@@ -24,6 +24,13 @@ dependencies = [
     "youtube-transcript-api>=0.6.0",
     "python-dotenv>=1.0.0",
     "youtube-comment-downloader>=0.1.0",
+    "pypdf>=5.9.0",
+    "deep-translator>=1.11.4",
+]
+
+[project.optional-dependencies]
+browser = [
+    "playwright>=1.40.0",
 ]
 
 [project.scripts]

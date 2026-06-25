@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Optional
-from . .models import BookData, ConversionContext, Source
+from ..models import BookData, ConversionContext, Source
 
 class BaseDriver(ABC):
     @abstractmethod

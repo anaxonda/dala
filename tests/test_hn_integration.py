@@ -2,7 +2,8 @@ import pytest
 import aiohttp
 from unittest.mock import patch, MagicMock, AsyncMock
 from aioresponses import aioresponses
-from web_to_epub import HackerNewsDriver, Source, ConversionContext, ConversionOptions, BookData, Chapter, HN_API_BASE_URL, DriverDispatcher
+from dala.drivers.hn import HackerNewsDriver
+from dala.models import BookData, Chapter, ConversionContext, ConversionOptions, HN_API_BASE_URL, Source
 
 @pytest.mark.asyncio
 async def test_hn_driver_delegates_to_substack():
@@ -46,7 +47,7 @@ async def test_hn_driver_delegates_to_substack():
         m.get(f"{HN_API_BASE_URL}item/{hn_item_id}.json", payload=hn_data)
         m.get(f"{HN_API_BASE_URL}item/67890.json", payload={"id": 67890, "text": "HN Comment", "by": "user2"})
         
-        with patch("web_to_epub.DriverDispatcher.get_driver") as mock_get_driver:
+        with patch("dala.core.dispatcher.DriverDispatcher.get_driver") as mock_get_driver:
             # Setup the mock to return our sub driver when called with target_url
             def side_effect(source, profile=None):
                 if source.url == target_url:

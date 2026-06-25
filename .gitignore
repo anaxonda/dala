@@ -13,7 +13,20 @@ __pycache__/
 
 # Project specific
 dist/
+dala-chrome-*.zip
 dala-chrome-v*.zip
 dala-firefox-v*.xpi
+extension_chrome/web-ext-artifacts/
+firefox_extension/web-ext-artifacts/
+firefox_extension/.amo-upload-uuid
+exports/
+server.log
+Screenshot_*.png
 *.epub
 release_notes.md
+
+# Local third-party browser helpers
+config/bpc/
+
+# Local service exports
+config/systemd/

@@ -7,9 +7,11 @@
     body { font-family: Arial, sans-serif; margin: 16px; }
     .row { margin-bottom: 12px; }
     label { display: block; font-weight: bold; margin-bottom: 4px; }
-    input[type="text"] { width: 220px; padding: 6px; }
+    input[type="text"], select { width: 240px; padding: 6px; }
     input[type="checkbox"] { margin-right: 6px; }
     .hint { font-size: 12px; color: #555; margin-top: 4px; }
+    .diagnostics { border: 1px solid #ddd; padding: 8px; max-width: 520px; font-size: 12px; line-height: 1.5; background: #fafafa; }
+    .diagnostics div { margin: 2px 0; }
   </style>
 </head>
 <body>
@@ -34,6 +36,11 @@
   <hr />
   <h2>Downloads</h2>
   <div class="row">
+    <label for="opt-server-url">Server URL</label>
+    <input type="text" id="opt-server-url" placeholder="http://127.0.0.1:8000" autocomplete="off">
+    <div class="hint">Local or remote dala server base URL. Examples: http://127.0.0.1:8000 or http://192.168.1.10:8000.</div>
+  </div>
+  <div class="row">
     <label for="opt-save-folder">Save Folder</label>
     <input type="text" id="opt-save-folder" placeholder="e.g. Kindle" autocomplete="off">
     <div class="hint">Relative folder (e.g. 'Books') or absolute path on server. Works across browser and server.</div>
@@ -44,6 +51,46 @@
       Always archive a copy in server 'exports/' folder
     </label>
     <div class="hint">Guarantees a backup is kept even if browser download fails.</div>
+  </div>
+  <hr />
+  <h2>Browser Fallback</h2>
+  <div class="row">
+    <label>
+      <input type="checkbox" id="opt-browser-fallback">
+      Use server browser fallback
+    </label>
+    <div class="hint">Lets the local server open difficult pages in a Chromium-compatible browser when direct fetch fails.</div>
+  </div>
+  <div class="row">
+    <label>
+      <input type="checkbox" id="opt-open-challenge-user-browser">
+      Open challenged pages in my browser
+    </label>
+    <div class="hint">If the server browser hits a bot check, open the article here so you can rerun Dala from the readable tab. Leave off to use archive fallback.</div>
+  </div>
+  <div class="row">
+    <label for="opt-browser-extension-path">Bypass Paywalls extension path</label>
+    <input type="text" id="opt-browser-extension-path" placeholder="server default" autocomplete="off">
+    <div class="hint">Optional unpacked Chromium extension directory on the server. Leave blank for config/bpc/chrome-unpacked/bypass-paywalls-chrome-clean-master.</div>
+  </div>
+  <div class="row">
+    <label for="opt-browser-profile-dir">Browser profile directory</label>
+    <input type="text" id="opt-browser-profile-dir" placeholder="server default" autocomplete="off">
+    <div class="hint">Optional server-side user data directory. Use a warmed profile for sites that challenge fresh headless browsers.</div>
+  </div>
+  <div class="row">
+    <label for="opt-browser-executable">Browser executable path</label>
+    <input type="text" id="opt-browser-executable" placeholder="auto-detect Chrome/Edge/Brave/Chromium" autocomplete="off">
+    <div class="hint">Optional path on the server. Leave blank to auto-detect Chrome, Edge, Brave, or Chromium.</div>
+  </div>
+  <div class="row">
+    <button id="check-browser-fallback" type="button">Check Server Browser</button>
+    <button id="init-browser-profile" type="button">Initialize Dala Profile</button>
+    <div id="browser-fallback-status" class="hint">Not checked.</div>
+  </div>
+  <div class="row">
+    <label>Server Diagnostics</label>
+    <div id="server-diagnostics" class="diagnostics">Not checked.</div>
   </div>
   <hr />
   <h2>YouTube Settings</h2>
@@ -81,9 +128,24 @@
     <div class="hint">Requires valid API key (entered below or in server .env).</div>
   </div>
   <div class="row">
-    <label for="llm-model">LLM Model</label>
-    <input type="text" id="llm-model" placeholder="google/gemini-flash-1.5" autocomplete="off">
-    <div class="hint">Model ID for OpenRouter or Google. Leave blank to use server .env default.</div>
+    <label for="llm-provider">LLM Provider</label>
+    <select id="llm-provider">
+      <option value="auto">Auto</option>
+      <option value="gemini">Gemini</option>
+      <option value="openrouter">OpenRouter</option>
+      <option value="openai">OpenAI</option>
+    </select>
+    <div class="hint">Auto uses the best configured server key. Gemini is fastest for translation when available.</div>
+  </div>
+  <div class="row">
+    <label for="llm-model-preset">LLM Model</label>
+    <select id="llm-model-preset"></select>
+    <div class="hint" id="llm-model-status">Model choices load from the server when available.</div>
+  </div>
+  <div class="row" id="llm-custom-model-row">
+    <label for="llm-model">Custom Model</label>
+    <input type="text" id="llm-model" placeholder="deepseek/deepseek-v4-flash" autocomplete="off">
+    <div class="hint">Use only when the model is not listed above.</div>
   </div>
   <div class="row">
     <label for="llm-api-key">LLM API Key</label>

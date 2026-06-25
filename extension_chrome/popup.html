@@ -27,6 +27,7 @@
             <div class="group-right">
                 <button id="btn-add-selected" class="small-btn" title="Add Selected Tabs">+ Selected</button>
                 <button id="btn-add-all" class="small-btn" title="Add All Tabs">+ All</button>
+                <button id="btn-retry-failed" class="small-btn" title="Requeue sources that failed in the last job">Retry Failed</button>
                 <button id="btn-clear" class="small-btn text-red">Clear</button>
             </div>
         </div>
@@ -52,26 +53,124 @@
         </div>
         <div class="col">
             <label><input type="checkbox" id="opt-noimages"> Text Only</label>
+            <label for="opt-output-format">Output</label>
+            <select id="opt-output-format">
+                <option value="epub">EPUB</option>
+                <option value="pdf">PDF</option>
+            </select>
+            <div id="pdf-options">
+                <label for="opt-pdf-page-size">PDF Page</label>
+                <select id="opt-pdf-page-size">
+                    <option value="letter">Letter</option>
+                    <option value="a4">A4</option>
+                    <option value="kobo_clara">Kobo Clara</option>
+                </select>
+            </div>
+            <div id="image-settings" class="image-settings">
+                <label for="opt-image-preset">Image Size</label>
+                <select id="opt-image-preset">
+                    <option value="compact">Compact</option>
+                    <option value="balanced">Balanced</option>
+                    <option value="full">Full</option>
+                </select>
+                <label><input type="checkbox" id="opt-grayscale"> Grayscale Images</label>
+            </div>
             <label><input type="checkbox" id="opt-archive"> Archive.org</label>
             <label><input type="checkbox" id="opt-summary" title="Requires API Key"> AI Summary</label>
             <label><input type="checkbox" id="opt-thumbnails" title="Add periodic thumbnails (YouTube only)"> Video Thumbnails</label>
         </div>
     </div>
 
-    <div class="pagination-opt">
-        <div class="input-group">
-            <label>Forum Pages (e.g., 1,3-5)</label>
-            <input type="text" id="opt-pages" placeholder="All pages">
-        </div>
-        <div class="input-group">
-            <label>Max Pages</label>
-            <input type="number" id="opt-maxpages" min="1" placeholder="Unlimited">
-        </div>
+    <div class="advanced-opt">
+        <details id="date-options" class="option-section">
+            <summary>Date Range</summary>
+            <div class="option-section-body">
+                <div class="date-grid">
+                    <div class="date-field">
+                        <input type="text" id="opt-start-date" placeholder="YYYY-MM-DD" title="Start date: YYYY, YYYY-MM, or YYYY-MM-DD">
+                        <span id="opt-start-date-btn" class="date-picker-btn" title="Pick start date" role="button" tabindex="0">
+                            <span class="date-picker-icon" aria-hidden="true">&#128197;</span>
+                            <input type="date" id="opt-start-date-picker" class="date-picker-native" title="Pick start date">
+                        </span>
+                    </div>
+                    <div class="date-field">
+                        <input type="text" id="opt-end-date" placeholder="YYYY-MM-DD" title="End date: YYYY, YYYY-MM, or YYYY-MM-DD">
+                        <span id="opt-end-date-btn" class="date-picker-btn" title="Pick end date" role="button" tabindex="0">
+                            <span class="date-picker-icon" aria-hidden="true">&#128197;</span>
+                            <input type="date" id="opt-end-date-picker" class="date-picker-native" title="Pick end date">
+                        </span>
+                    </div>
+                </div>
+                <button type="button" id="opt-clear-dates" class="small-btn">Clear Dates</button>
+            </div>
+        </details>
+        <details id="forum-options" class="option-section">
+            <summary>Forum</summary>
+            <div class="option-section-body">
+                <label class="inline-check"><input type="checkbox" id="opt-forum"> Use forum driver</label>
+                <div class="input-group">
+                    <label>Forum Pages (e.g., 1,3-5)</label>
+                    <input type="text" id="opt-pages" placeholder="All pages">
+                </div>
+                <div class="input-group">
+                    <label>Max Pages</label>
+                    <input type="number" id="opt-maxpages" min="1" placeholder="Unlimited">
+                </div>
+            </div>
+        </details>
+        <details id="translation-options" class="option-section">
+            <summary>Translation</summary>
+            <div class="option-section-body">
+                <label class="inline-check"><input type="checkbox" id="opt-translate"> Translate article text</label>
+                <div class="input-group">
+                    <label>Target Language</label>
+                    <input type="text" id="opt-translation-target" list="translation-language-list" placeholder="Search language or code">
+                </div>
+                <div class="input-group">
+                    <label>Source Language</label>
+                    <input type="text" id="opt-translation-source" list="translation-language-list" placeholder="auto">
+                </div>
+                <datalist id="translation-language-list"></datalist>
+                <div class="input-group">
+                    <label>Provider</label>
+                    <select id="opt-translation-provider">
+                        <option value="llm">LLM</option>
+                        <option value="google">Google Translate</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>Display</label>
+                    <select id="opt-translation-display">
+                        <option value="underneath">Underneath</option>
+                        <option value="side_by_side">Side by side</option>
+                        <option value="popup_footnote">Popup footnote</option>
+                        <option value="replace">Replace text</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>Scope</label>
+                    <select id="opt-translation-scope">
+                        <option value="article-captions">Text + captions</option>
+                        <option value="article">Text only</option>
+                        <option value="all-readable">All readable text</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <label>Glossary</label>
+                    <textarea id="opt-translation-glossary" class="small-textarea" placeholder="Coye=Coye&#10;KOReader=KOReader"></textarea>
+                </div>
+                <label class="inline-check"><input type="checkbox" id="opt-translation-cache" checked> Cache translations</label>
+                <div class="translation-actions">
+                    <button id="btn-test-translation" type="button" class="small-btn">Test</button>
+                    <button id="btn-clear-translation-cache" type="button" class="small-btn">Clear Cache</button>
+                </div>
+            </div>
+        </details>
     </div>
 
     <div class="cookie-opt">
-        <label><input type="checkbox" id="opt-cookies"> Use site cookies (per-domain opt-in)</label>
-        <label><input type="checkbox" id="opt-forum"> Force forum driver (for XenForo/threads)</label>
+        <label><input type="checkbox" id="opt-cookies"> Use site cookies (default for local server)</label>
+        <label><input type="checkbox" id="opt-open-challenge-user-browser"> Open challenged pages in browser</label>
     </div>
 
     <div class="cancel-row">
@@ -80,6 +179,6 @@
     </div>
 
     <div id="status-bar"></div>
-    <script src="chrome-shim.js"></script><script src="popup.js"></script>
+    <script src="chrome-shim.js"></script><script src="shared-forum.js"></script><script src="popup.js"></script>
 </body>
 </html>

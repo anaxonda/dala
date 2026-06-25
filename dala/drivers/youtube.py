@@ -18,14 +18,16 @@ except ImportError as e:
 from typing import List, Dict, Optional
 
 from .base import BaseDriver
-from . .models import (
+from ..models import (
     log, BookData, ConversionContext, Source, Chapter, ImageAsset, IMAGE_DIR_IN_EPUB
 )
-from . .core.image_processor import ImageProcessor
-from . .core.profiles import ProfileManager
-from . .core.session import fetch_with_retry
-from . .utils.llm import LLMHelper
-from . .utils.formatting import _enrich_comment_tree, format_comment_html
+from ..core.extractor import ArticleExtractor
+from ..core.image_processor import ImageProcessor
+from ..core.profiles import ProfileManager
+from ..core.session import fetch_with_retry
+from ..core.translation import comparable_language, normalize_translation_display
+from ..utils.llm import LLMHelper
+from ..utils.formatting import _enrich_comment_tree, format_comment_html
 from pygments.formatters import HtmlFormatter
 
 class YouTubeDriver(BaseDriver):
@@ -72,20 +74,32 @@ class YouTubeDriver(BaseDriver):
         loop = asyncio.get_running_loop()
         transcript_list = []
         is_generated = False
+        transcript_language = None
+        transcript_translation_satisfied = False
         try:
             def _fetch_smart_transcript():
                 # Adjusted for installed library version which requires instantiation
-                transcript_list = YouTubeTranscriptApi().list(video_id)
+                available_transcripts = YouTubeTranscriptApi().list(video_id)
                 
                 # Parse user preferences
-                target_langs = [l.strip() for l in (options.youtube_lang or "en").split(",") if l.strip()]
+                replace_translation = (
+                    getattr(options, "translation_enabled", False)
+                    and getattr(options, "translation_target_lang", None)
+                    and normalize_translation_display(getattr(options, "translation_display", "underneath")) == "replace"
+                )
+                if replace_translation:
+                    target_langs = [options.translation_target_lang]
+                else:
+                    target_langs = [l.strip() for l in (options.youtube_lang or "en").split(",") if l.strip()]
                 if not target_langs: target_langs = ["en"]
                 prefer_auto = options.youtube_prefer_auto
 
                 # Iterate and filter
                 candidates = []
-                for t in transcript_list:
+                for t in available_transcripts:
                     candidates.append(t)
+                if not candidates:
+                    raise NoTranscriptFound(video_id, target_langs, available_transcripts)
                 
                 # Sort candidates by preference
                 def sort_key(t):
@@ -107,20 +121,29 @@ class YouTubeDriver(BaseDriver):
                 
                 is_match = False
                 for lang in target_langs:
-                    if best.language_code.lower().startswith(lang.lower()):
+                    if comparable_language(best.language_code) == comparable_language(lang):
                         is_match = True
                         break
                 
+                used_youtube_translation = False
                 if not is_match:
                     try:
                         log.info(f"Translating transcript from {best.language_code} to {target_langs[0]}")
                         best = best.translate(target_langs[0])
+                        used_youtube_translation = True
                     except Exception as trans_err:
                         log.warning(f"Translation failed: {trans_err}")
 
-                return best.fetch().to_raw_data(), best.is_generated
+                final_language = target_langs[0] if used_youtube_translation else getattr(best, "language_code", None)
+                final_is_match = any(
+                    comparable_language(final_language) == comparable_language(lang)
+                    for lang in target_langs
+                )
+                satisfied = bool(replace_translation and (is_match or used_youtube_translation) and final_is_match)
 
-            transcript_list, is_generated = await loop.run_in_executor(None, _fetch_smart_transcript)
+                return best.fetch().to_raw_data(), best.is_generated, final_language, satisfied
+
+            transcript_list, is_generated, transcript_language, transcript_translation_satisfied = await loop.run_in_executor(None, _fetch_smart_transcript)
 
         except (TranscriptsDisabled, NoTranscriptFound) as e:
 
@@ -142,6 +165,7 @@ class YouTubeDriver(BaseDriver):
 
         # Fetch Periodic Thumbnails
         thumbnail_map = {}
+        max_dim, quality, color_mode, output_pref = ImageProcessor.image_optimize_params(options)
         if options.thumbnails and not options.no_images and total_duration > 60:
             log.info("Fetching periodic thumbnails...")
             for i, ratio in [(1, 0.25), (2, 0.50), (3, 0.75)]:
@@ -149,7 +173,7 @@ class YouTubeDriver(BaseDriver):
                 try:
                     headers, data, err = await ImageProcessor.fetch_image_data(session, t_url)
                     if data:
-                        mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(t_url, headers, data)
+                        mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(t_url, headers, data, max_dimension=max_dim, jpeg_quality=quality, color_mode=color_mode, output_preference=output_pref)
                         if final_data:
                             fname = f"{IMAGE_DIR_IN_EPUB}/yt_thumb_{i}{ext}"
                             uid = f"yt_thumb_{i}"
@@ -199,7 +223,7 @@ class YouTubeDriver(BaseDriver):
         if not options.no_images and thumb_url:
             headers, data, err = await ImageProcessor.fetch_image_data(session, thumb_url)
             if data:
-                mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(thumb_url, headers, data)
+                mime, ext, final_data, val_err = ImageProcessor.optimize_and_get_details(thumb_url, headers, data, max_dimension=max_dim, jpeg_quality=quality, color_mode=color_mode, output_preference=output_pref)
                 if final_data:
                     fname = f"{IMAGE_DIR_IN_EPUB}/cover{ext}"
                     uid = "cover_img"
@@ -214,9 +238,14 @@ class YouTubeDriver(BaseDriver):
             if sum_res:
                 summary_html = f"<div class='ai-summary'><h3>AI Summary</h3>{sum_res}</div><hr/>"
 
-        content_html = f"{summary_html}{cover_image_html}<div class='transcript-body'>{final_text}</div>"
-        final_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head>
-        <body><h1>{title}</h1><div class="post-meta"><p><strong>Source:</strong> <a href="{url}">{url}</a></p><p><strong>Channel:</strong> {author}</p></div>{content_html}</body></html>"""
+        transcript_body_class = "transcript-body"
+        transcript_body_lang = transcript_language or ""
+        if transcript_translation_satisfied:
+            transcript_body_class += " dala-translation-skip"
+        lang_attr = f' lang="{html.escape(transcript_body_lang)}"' if transcript_body_lang else ""
+        content_html = f"{summary_html}{cover_image_html}<div class='{transcript_body_class}'{lang_attr}>{final_text}</div>"
+        meta_html = ArticleExtractor.build_meta_block(url, {"author": author, "sitename": "YouTube"})
+        final_html = ArticleExtractor.build_article_html(title, content_html, meta_html=meta_html)
 
         chapters = [Chapter(title=title, filename="transcript.xhtml", content_html=final_html, uid="transcript", is_article=True)]
         toc_structure = [epub.Link("transcript.xhtml", title, "transcript")]
@@ -289,10 +318,7 @@ class YouTubeDriver(BaseDriver):
                         comment_chunks.append(format_comment_html(comment, fmt))
                         comment_chunks.append("</div>")
                     
-                    full_com_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>YouTube Comments</title><link rel="stylesheet" href="style/default.css"/></head><body>
-                    <h1>YouTube Comments</h1>
-                    {"".join(comment_chunks)}
-                    </body></html>"""
+                    full_com_html = ArticleExtractor.build_article_html("YouTube Comments", "".join(comment_chunks))
                     
                     com_chap = Chapter(title="YouTube Comments", filename="comments.xhtml", content_html=full_com_html, uid="comments", is_comments=True)
                     chapters.append(com_chap)

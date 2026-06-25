@@ -6,15 +6,15 @@ from pygments.formatters import HtmlFormatter
 from typing import List, Dict, Optional
 
 from .base import BaseDriver
-from . .models import (
+from ..models import (
     log, BookData, ConversionContext, Source, Chapter, HN_API_BASE_URL
 )
-from . .core.extractor import ArticleExtractor
-from . .core.image_processor import ImageProcessor
-from . .core.session import fetch_with_retry
-from . .core.profiles import ProfileManager
-from . .utils.llm import LLMHelper
-from . .utils.formatting import _enrich_comment_tree, format_comment_html, fetch_comments_recursive
+from ..core.extractor import ArticleExtractor
+from ..core.image_processor import ImageProcessor
+from ..core.session import fetch_with_retry
+from ..core.profiles import ProfileManager
+from ..utils.llm import LLMHelper
+from ..utils.formatting import _enrich_comment_tree, format_comment_html, fetch_comments_recursive
 
 class HackerNewsDriver(BaseDriver):
     async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
@@ -54,7 +54,7 @@ class HackerNewsDriver(BaseDriver):
                     # Circular import avoidance: we'll need a way to get the dispatcher or drivers here.
                     # For now, let's assume we can import GenericDriver here to check.
                     from .generic import GenericDriver
-                    from . .core.dispatcher import DriverDispatcher
+                    from ..core.dispatcher import DriverDispatcher
                     
                     temp_source = Source(url=article_url, cookies=source.cookies) 
                     temp_profile = ProfileManager.get_instance().get_profile(article_url)
@@ -86,7 +86,15 @@ class HackerNewsDriver(BaseDriver):
                     assets.extend(sub_book.images)
 
             elif article_url and not options.no_article:
-                art_data = await ArticleExtractor.get_article_content(session, article_url, force_archive=options.archive, raw_html=source.html if not article_url else None, profile=context.profile)
+                browser_options = ArticleExtractor.browser_options_from_conversion_options(options)
+                art_data = await ArticleExtractor.get_article_content(
+                    session,
+                    article_url,
+                    force_archive=options.archive,
+                    raw_html=source.html if not article_url else None,
+                    profile=context.profile,
+                    browser_options=browser_options,
+                )
                 if art_data['success']:
                     if art_data['title']: art_title = art_data['title']
                     soup = BeautifulSoup(art_data['html'], 'html.parser')
@@ -99,15 +107,14 @@ class HackerNewsDriver(BaseDriver):
 
                     if not options.no_images:
                         base = art_data.get('archive_url') if art_data.get('was_archived') else article_url
-                        await ImageProcessor.process_images(session, body, base, assets)
+                        await ImageProcessor.process_images(session, body, base, assets, options=options)
                     art_html = body.prettify()
                     context_html = f"<p><strong>HN Source:</strong> <a href=\"{url}\">{title}</a></p>"
                     meta_html = ArticleExtractor.build_meta_block(article_url, art_data, context=context_html, summary_html=summary_html)
                     art_html = f"{meta_html}<hr/>{art_html}"
                 else: art_html = f"<p>Could not fetch article: <a href='{article_url}'>{article_url}</a></p>"
                 
-                final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{art_title}</title><link rel="stylesheet" href="style/default.css"/></head><body>
-                <h1>{art_title}</h1>{art_html}</body></html>"""
+                final_art_html = ArticleExtractor.build_article_html(art_title, art_html)
                 art_chap = Chapter(title=art_title, filename="article.xhtml", content_html=final_art_html, uid="article", is_article=True)
                 chapters.append(art_chap)
 
@@ -118,8 +125,7 @@ class HackerNewsDriver(BaseDriver):
                 
                 sum_div = f"<div class='ai-summary'><h3>AI Summary</h3>{summary_html}</div><hr/>" if summary_html else ""
                 art_html = f"{sum_div}<div>{post_text}</div>"
-                final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{art_title}</title><link rel="stylesheet" href="style/default.css"/></head><body>
-                <h1>{art_title}</h1>{art_html}</body></html>"""
+                final_art_html = ArticleExtractor.build_article_html(art_title, art_html)
                 art_chap = Chapter(title=art_title, filename="article.xhtml", content_html=final_art_html, uid="article", is_article=True)
                 chapters.append(art_chap)
 
@@ -140,10 +146,9 @@ class HackerNewsDriver(BaseDriver):
 
         com_chap = None
         if comments_html:
-             full_com_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Comments</title><link rel="stylesheet" href="style/default.css"/></head><body>
-             <h1>Comments</h1>{comments_html}</body></html>"""
-             com_chap = Chapter(title="HN Comments", filename="hn_comments.xhtml", content_html=full_com_html, uid="hn_comments", is_comments=True)
-             chapters.append(com_chap)
+            full_com_html = ArticleExtractor.build_article_html("Comments", comments_html)
+            com_chap = Chapter(title="HN Comments", filename="hn_comments.xhtml", content_html=full_com_html, uid="hn_comments", is_comments=True)
+            chapters.append(com_chap)
 
         toc_structure = []
         if art_chap:

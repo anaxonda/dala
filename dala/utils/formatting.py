@@ -4,8 +4,8 @@ from pygments import highlight
 from pygments.lexers import guess_lexer
 from typing import List, Dict, Optional
 
-from . .models import log, HN_API_BASE_URL
-from . .core.session import fetch_with_retry
+from ..models import log, HN_API_BASE_URL
+from ..core.session import fetch_with_retry
 
 def _enrich_comment_tree(roots: List[Dict]) -> List[Dict]:
     """Pre-calculate parent/sibling/root IDs for EPUB navigation buttons."""

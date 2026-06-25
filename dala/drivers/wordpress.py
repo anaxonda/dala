@@ -1,25 +1,87 @@
+import re
+
 from bs4 import BeautifulSoup
 from ebooklib import epub
 from pygments.formatters import HtmlFormatter
 from typing import List, Dict, Optional
 
 from .base import BaseDriver
-from . .models import (
+from ..models import (
     log, BookData, ConversionContext, Source, Chapter
 )
-from . .core.extractor import ArticleExtractor
-from . .core.image_processor import ImageProcessor
-from . .utils.llm import LLMHelper
-from . .utils.formatting import _enrich_comment_tree, format_comment_html
+from ..core.extractor import ArticleExtractor
+from ..core.image_processor import ImageProcessor
+from ..utils.llm import LLMHelper
+from ..utils.formatting import _enrich_comment_tree, format_comment_html
 
 class WordPressDriver(BaseDriver):
+    @staticmethod
+    def _normalized_text(value: str) -> str:
+        return re.sub(r"\s+", " ", value or "").strip().casefold()
+
+    @classmethod
+    def _clean_article_body(cls, body_soup, title: str):
+        for selector in [
+            "#nav-above",
+            "#nav-below",
+            ".nav-previous",
+            ".nav-next",
+            ".nav-links",
+            ".navigation",
+            ".post-navigation",
+            ".posts-navigation",
+            ".comment-navigation",
+            ".sharedaddy",
+            ".sd-sharing-enabled",
+            ".jp-relatedposts",
+        ]:
+            for tag in body_soup.select(selector):
+                tag.decompose()
+
+        normalized_title = cls._normalized_text(title)
+        for tag in list(body_soup.select("h1, h2, h3, .entry-title, .post-title")):
+            if cls._normalized_text(tag.get_text(" ", strip=True)) == normalized_title:
+                tag.decompose()
+
+        for tag in list(body_soup.select(".entry-meta, .post-meta, .posted-on, .byline")):
+            tag.decompose()
+
+        for tag in list(body_soup.find_all(["p", "div"], recursive=True)):
+            if tag.find(["img", "figure", "picture", "table", "blockquote"]):
+                continue
+            text = cls._normalized_text(tag.get_text(" ", strip=True))
+            if len(text) <= 160 and (
+                text.startswith("published")
+                or text.startswith("posted")
+                or text.startswith("publié")
+                or text.startswith("publie")
+            ):
+                tag.decompose()
+
+        content = body_soup.select_one(
+            ".entry-content, .post-content, .post-entry, .article-content, [class*='entry-content']"
+        )
+        if content:
+            return content
+
+        article = body_soup.select_one("article, .hentry, .post, [id^='post-']")
+        return article or body_soup
+
     async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
         session = context.session
         options = context.options
         url = source.url
         log.info(f"WordPress Driver processing: {url}")
 
-        data = await ArticleExtractor.get_article_content(session, url, force_archive=options.archive, raw_html=source.html, profile=context.profile)
+        browser_options = ArticleExtractor.browser_options_from_conversion_options(options)
+        data = await ArticleExtractor.get_article_content(
+            session,
+            url,
+            force_archive=options.archive,
+            raw_html=source.html,
+            profile=context.profile,
+            browser_options=browser_options,
+        )
         if not data['success']:
             log.error(f"Failed to fetch content: {url}")
             return None
@@ -31,7 +93,7 @@ class WordPressDriver(BaseDriver):
         assets = []
         if not options.no_images:
             base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
-            await ImageProcessor.process_images(session, body_soup, base, assets)
+            await ImageProcessor.process_images(session, body_soup, base, assets, options=options)
 
         summary_html = None
         if options.summary:
@@ -39,10 +101,10 @@ class WordPressDriver(BaseDriver):
             text_content = body_soup.get_text(separator=" ", strip=True)
             summary_html = await LLMHelper.generate_summary(text_content, options.llm_model, options.llm_api_key)
 
-        chapter_html = body_soup.prettify()
+        article_body = self._clean_article_body(body_soup, title)
+        chapter_html = article_body.prettify()
         meta_html = ArticleExtractor.build_meta_block(url, data, summary_html=summary_html)
-        final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head>
-        <body><h1>{title}</h1>{meta_html}<hr/>{chapter_html}</body></html>"""
+        final_art_html = ArticleExtractor.build_article_html(title, chapter_html, meta_html=meta_html, include_hr=True)
         
         uid = f"urn:wordpress:{abs(hash(url))}"
         art_chap = Chapter(title=title, filename="article.xhtml", content_html=final_art_html, uid="article", is_article=True)
@@ -67,10 +129,9 @@ class WordPressDriver(BaseDriver):
 
         com_chap = None
         if comments_html:
-             full_com_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Comments</title><link rel="stylesheet" href="style/default.css"/></head><body>
-             <h1>Comments</h1>{comments_html}</body></html>"""
-             com_chap = Chapter(title="Comments", filename="comments.xhtml", content_html=full_com_html, uid="comments", is_comments=True)
-             chapters.append(com_chap)
+            full_com_html = ArticleExtractor.build_article_html("Comments", comments_html)
+            com_chap = Chapter(title="Comments", filename="comments.xhtml", content_html=full_com_html, uid="comments", is_comments=True)
+            chapters.append(com_chap)
 
         toc = [epub.Link("article.xhtml", "Article", "article")]
         if com_chap:

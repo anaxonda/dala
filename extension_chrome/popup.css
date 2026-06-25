@@ -28,6 +28,14 @@ body { width: 340px; font-family: system-ui, sans-serif; margin: 0; background: 
 .input-group label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
 input[type="text"] { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
 input[type="number"] { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
+input[type="date"] { width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font-size: 11px; }
+select { padding: 4px 6px; border: 1px solid #bbb; border-radius: 4px; background: #fff; font-size: 11px; }
+.small-textarea { width: 100%; min-height: 48px; resize: vertical; padding: 6px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; font: 11px/1.3 monospace; }
+.hidden { display: none !important; }
+.image-settings { display: flex; flex-direction: column; gap: 5px; }
+.image-settings.disabled { opacity: 0.48; }
+.image-settings.disabled label { cursor: not-allowed; }
+.image-settings.disabled select { cursor: not-allowed; }
 
 /* QUEUE LIST */
 .queue-actions { display: flex; gap: 5px; margin-bottom: 10px; flex-wrap: wrap; }
@@ -64,5 +72,33 @@ input[type="checkbox"] { margin-right: 5px; }
 
 #status-bar { text-align: center; padding: 4px; font-size: 11px; color: #666; height: 15px; background: #eee;}
 .cookie-opt { padding: 8px 15px 4px 15px; font-size: 11px; color: #444; }
-.pagination-opt { padding: 0 15px 6px 15px; }
+.advanced-opt { padding: 8px 15px 4px 15px; display: flex; flex-direction: column; gap: 6px; }
+.option-section { border: 1px solid #ccc; border-radius: 4px; background: #f8f8f8; overflow: visible; }
+.option-section summary { padding: 7px 9px; cursor: pointer; font-size: 12px; font-weight: 600; color: #333; list-style-position: inside; user-select: none; }
+.option-section[open] summary { border-bottom: 1px solid #ddd; background: #eee; }
+.option-section-body { padding: 8px; }
+.option-section-body .input-group:last-child { margin-bottom: 0; }
+.date-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px; }
+.date-field { position: relative; display: flex; gap: 3px; min-width: 0; }
+.date-field input[type="text"] { min-width: 0; padding: 6px; font-size: 11px; }
+.date-picker-btn { position: relative; flex: 0 0 28px; width: 28px; min-height: 28px; border: 1px solid #bbb; border-radius: 4px; background: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; overflow: hidden; }
+.date-picker-icon { font-size: 16px; line-height: 1; pointer-events: none; }
+.date-picker-native { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; }
+.date-popover { position: absolute; z-index: 20; width: 230px; padding: 8px; border: 1px solid #aaa; border-radius: 6px; background: #fff; box-shadow: 0 4px 14px rgba(0,0,0,0.2); box-sizing: border-box; font-size: 11px; }
+.date-popover-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-weight: bold; color: #333; }
+.date-popover-header button { height: 24px; border: 1px solid #ccc; border-radius: 4px; background: #f2f2f2; cursor: pointer; font-size: 10px; }
+.date-popover-month-btn { width: 24px; }
+.date-popover-year-btn { width: 30px; }
+.date-popover-title { flex: 1; text-align: center; }
+.date-popover-weekdays, .date-popover-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+.date-popover-weekdays span { color: #777; font-weight: bold; padding: 3px 0; }
+.date-popover-days span { min-height: 24px; }
+.date-popover-day { min-height: 24px; border: 0; border-radius: 4px; background: transparent; cursor: pointer; font-size: 11px; }
+.date-popover-day:hover { background: #eee; }
+.date-popover-day.today { outline: 2px solid #333; outline-offset: -2px; font-weight: bold; }
+.date-popover-day.selected { background: #e85a4f; color: #fff; }
+.date-popover-today { width: 100%; margin-top: 6px; padding: 5px 6px; border: 1px solid #ccc; border-radius: 4px; background: #f8f8f8; color: #333; cursor: pointer; font-size: 11px; }
+.date-popover-today:hover { background: #eee; }
+.inline-check { font-size: 11px; color: #444; margin-bottom: 8px; }
+.translation-actions { display: flex; gap: 6px; justify-content: flex-end; }
 .cancel-row { padding: 4px 15px 8px 15px; text-align: right; }

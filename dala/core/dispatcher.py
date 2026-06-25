@@ -1,15 +1,15 @@
 from urllib.parse import urlparse
 from typing import Optional
 
-from . .models import Source, SiteProfile
-from . .drivers.base import BaseDriver
-from . .drivers.forum import ForumDriver
-from . .drivers.wordpress import WordPressDriver
-from . .drivers.substack import SubstackDriver
-from . .drivers.hn import HackerNewsDriver
-from . .drivers.reddit import RedditDriver
-from . .drivers.youtube import YouTubeDriver
-from . .drivers.generic import GenericDriver
+from ..models import Source, SiteProfile
+from ..drivers.base import BaseDriver
+from ..drivers.forum import ForumDriver
+from ..drivers.wordpress import WordPressDriver
+from ..drivers.substack import SubstackDriver
+from ..drivers.hn import HackerNewsDriver
+from ..drivers.reddit import RedditDriver
+from ..drivers.youtube import YouTubeDriver
+from ..drivers.generic import GenericDriver
 
 class DriverDispatcher:
     @staticmethod

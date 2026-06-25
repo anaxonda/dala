@@ -7,14 +7,14 @@ from pygments.formatters import HtmlFormatter
 from typing import List, Dict, Optional, Any
 
 from .base import BaseDriver
-from . .models import (
+from ..models import (
     log, BookData, ConversionContext, Source, Chapter
 )
-from . .core.extractor import ArticleExtractor
-from . .core.image_processor import ImageProcessor
-from . .core.session import fetch_with_retry
-from . .utils.llm import LLMHelper
-from . .utils.formatting import _enrich_comment_tree, format_comment_html
+from ..core.extractor import ArticleExtractor
+from ..core.image_processor import ImageProcessor
+from ..core.session import fetch_with_retry
+from ..utils.llm import LLMHelper
+from ..utils.formatting import _enrich_comment_tree, format_comment_html
 
 class RedditDriver(BaseDriver):
     async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
@@ -65,7 +65,7 @@ class RedditDriver(BaseDriver):
                     summary_html = await LLMHelper.generate_summary(soup.get_text(separator=" ", strip=True), options.llm_model, options.llm_api_key)
 
                 if not options.no_images:
-                    await ImageProcessor.process_images(session, soup, source.url, assets)
+                    await ImageProcessor.process_images(session, soup, source.url, assets, options=options)
                 article_html = soup.prettify()
                 if summary_html:
                     article_html = f"<div class='ai-summary'><h3>AI Summary</h3>{summary_html}</div><hr/>{article_html}"
@@ -74,13 +74,20 @@ class RedditDriver(BaseDriver):
                 img_html = f"""<div class="img-block"><img class="epub-image" src="{link_url}" alt="{title}"/></div>"""
                 soup = BeautifulSoup(img_html, 'html.parser')
                 if not options.no_images:
-                    await ImageProcessor.process_images(session, soup, link_url, assets)
+                    await ImageProcessor.process_images(session, soup, link_url, assets, options=options)
                 article_html = soup.prettify()
                 context_html = f"<p><strong>Reddit Link:</strong> <a href=\"{source.url}\">{source.url}</a></p>"
                 meta_html = ArticleExtractor.build_meta_block(link_url, {"author": None, "date": None, "sitename": urlparse(link_url).netloc}, context=context_html)
                 article_html = f"{meta_html}<hr/>{article_html}"
             elif link_url and not link_url.startswith(("https://www.reddit.com", "https://old.reddit.com", "https://redd.it")):
-                art_data = await ArticleExtractor.get_article_content(session, link_url, force_archive=options.archive, profile=context.profile)
+                browser_options = ArticleExtractor.browser_options_from_conversion_options(options)
+                art_data = await ArticleExtractor.get_article_content(
+                    session,
+                    link_url,
+                    force_archive=options.archive,
+                    profile=context.profile,
+                    browser_options=browser_options,
+                )
                 if art_data['success']:
                     chapter_title = art_data.get('title') or chapter_title
                     soup = BeautifulSoup(art_data['html'], 'html.parser')
@@ -92,7 +99,7 @@ class RedditDriver(BaseDriver):
 
                     if not options.no_images:
                         base = art_data.get('archive_url') if art_data.get('was_archived') else link_url
-                        await ImageProcessor.process_images(session, body, base, assets)
+                        await ImageProcessor.process_images(session, body, base, assets, options=options)
                     article_html = body.prettify()
                     context_html = f"<p><strong>Reddit Link:</strong> <a href=\"{source.url}\">{source.url}</a></p>"
                     meta_html = ArticleExtractor.build_meta_block(link_url, art_data, context=context_html, summary_html=summary_html)
@@ -102,8 +109,7 @@ class RedditDriver(BaseDriver):
             else:
                 article_html = f"<p>Original thread: <a href=\"{source.url}\">{source.url}</a></p>"
 
-            final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{chapter_title}</title><link rel="stylesheet" href="style/default.css"/></head>
-            <body><h1>{chapter_title}</h1>{article_html}</body></html>"""
+            final_art_html = ArticleExtractor.build_article_html(chapter_title, article_html)
 
             art_chap = Chapter(title=chapter_title, filename="article.xhtml", content_html=final_art_html, uid=f"reddit_art_{post_id}", is_article=True)
             chapters.append(art_chap)
@@ -133,14 +139,13 @@ class RedditDriver(BaseDriver):
                                 continue
                             img = com_soup.new_tag('img', src=href, alt=a.get_text(strip=True) or "Image")
                             a.replace_with(img)
-                    await ImageProcessor.process_images(session, com_soup, source.url, assets)
+                    await ImageProcessor.process_images(session, com_soup, source.url, assets, options=options)
                     comments_html = com_soup.prettify()
                 except Exception as e:
                     log.debug(f"Reddit comment image embed failed: {e}")
 
             if comments_html:
-                full_com_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Reddit Comments</title><link rel="stylesheet" href="style/default.css"/></head><body>
-                <h1>Reddit Comments</h1>{comments_html}</body></html>"""
+                full_com_html = ArticleExtractor.build_article_html("Reddit Comments", comments_html)
                 com_chap = Chapter(title="Reddit Comments", filename="comments.xhtml", content_html=full_com_html, uid=f"reddit_com_{post_id}", is_comments=True)
                 chapters.append(com_chap)
 

@@ -11,7 +11,7 @@ client = TestClient(app)
 
 @pytest.fixture
 def mock_epub_writer():
-    with patch("server.EpubWriter.write") as mock:
+    with patch("server.write_output_book", new_callable=AsyncMock) as mock:
         yield mock
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def test_convert_with_server_save_dir(mock_process_urls, mock_epub_writer):
             "server_save_dir": tmp_dir
         }
         
-        # We need to ensure shutil.copy2 works, but since we mock EpubWriter.write, 
+        # We need to ensure shutil.copy2 works, but since we mock write_output_book,
         # the tmp_path in server.py will point to an empty file.
         # Let's mock shutil.copy2 to verify it's called with the right path.
         with patch("shutil.copy2") as mock_copy:

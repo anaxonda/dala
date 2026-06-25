@@ -6,7 +6,7 @@ import random
 from contextlib import asynccontextmanager
 from typing import List, Dict, Optional, Any, Tuple
 from aiohttp.resolver import ThreadedResolver
-from . .models import log, REQUEST_TIMEOUT, MAX_RETRIES, RETRY_DELAY
+from ..models import log, REQUEST_TIMEOUT, MAX_RETRIES, RETRY_DELAY
 
 def load_cookie_file(path: str) -> List[Dict[str, str]]:
     """Parse Netscape cookie file format into a list of dict entries."""

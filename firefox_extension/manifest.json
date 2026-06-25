@@ -17,6 +17,7 @@
     "menus",
     "storage",
     "downloads",
+    "notifications",
     "http://127.0.0.1:8000/*",
     "cookies",
     "<all_urls>"
@@ -26,6 +27,7 @@
   ],
   "background": {
     "scripts": [
+      "shared-forum.js",
       "background.js"
     ]
   },

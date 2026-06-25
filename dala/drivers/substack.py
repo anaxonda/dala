@@ -10,14 +10,14 @@ from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Any
 
 from .base import BaseDriver
-from . .models import (
+from ..models import (
     log, BookData, ConversionContext, Source, Chapter
 )
-from . .core.extractor import ArticleExtractor
-from . .core.image_processor import ImageProcessor
-from . .core.session import fetch_with_retry
-from . .utils.llm import LLMHelper
-from . .utils.formatting import _enrich_comment_tree, format_comment_html
+from ..core.extractor import ArticleExtractor
+from ..core.image_processor import ImageProcessor
+from ..core.session import fetch_with_retry
+from ..utils.llm import LLMHelper
+from ..utils.formatting import _enrich_comment_tree, format_comment_html
 
 class SubstackDriver(BaseDriver):
     async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
@@ -26,7 +26,15 @@ class SubstackDriver(BaseDriver):
         url = source.url
         log.info(f"Substack Driver processing: {url}")
 
-        data = await ArticleExtractor.get_article_content(session, url, force_archive=options.archive, raw_html=source.html, profile=context.profile)
+        browser_options = ArticleExtractor.browser_options_from_conversion_options(options)
+        data = await ArticleExtractor.get_article_content(
+            session,
+            url,
+            force_archive=options.archive,
+            raw_html=source.html,
+            profile=context.profile,
+            browser_options=browser_options,
+        )
         if not data['success']:
             log.error(f"Failed to fetch Substack content: {url}")
             return None
@@ -52,7 +60,7 @@ class SubstackDriver(BaseDriver):
         assets = []
         if not options.no_images:
             base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
-            await ImageProcessor.process_images(session, body_soup, base, assets)
+            await ImageProcessor.process_images(session, body_soup, base, assets, options=options)
 
         summary_html = None
         if options.summary:
@@ -65,8 +73,7 @@ class SubstackDriver(BaseDriver):
         meta_html = ArticleExtractor.build_meta_block(url, data, summary_html=summary_html)
 
         chapters = []
-        final_art_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head>
-        <body><h1>{title}</h1>{meta_html}<hr/>{chapter_html}</body></html>"""
+        final_art_html = ArticleExtractor.build_article_html(title, chapter_html, meta_html=meta_html, include_hr=True)
 
         art_chap = Chapter(title=title, filename=f"article_{post_id}.xhtml", content_html=final_art_html, uid=f"art_{post_id}", is_article=True)
         chapters.append(art_chap)
@@ -104,10 +111,9 @@ class SubstackDriver(BaseDriver):
 
         com_chap = None
         if comments_html:
-             full_com_html = f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Substack Comments</title><link rel="stylesheet" href="style/default.css"/></head><body>
-             <h1>Substack Comments</h1>{comments_html}</body></html>"""
-             com_chap = Chapter(title="Substack Comments", filename=f"comments_{post_id}.xhtml", content_html=full_com_html, uid=f"com_{post_id}", is_comments=True)
-             chapters.append(com_chap)
+            full_com_html = ArticleExtractor.build_article_html("Substack Comments", comments_html)
+            com_chap = Chapter(title="Substack Comments", filename=f"comments_{post_id}.xhtml", content_html=full_com_html, uid=f"com_{post_id}", is_comments=True)
+            chapters.append(com_chap)
 
         toc_structure = []
         if art_chap and com_chap:

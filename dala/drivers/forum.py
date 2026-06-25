@@ -10,12 +10,13 @@ from ebooklib import epub
 from typing import List, Dict, Optional, Any, Tuple
 
 from .base import BaseDriver
-from . .models import (
+from ..models import (
     log, BookData, ConversionContext, Source, Chapter, ImageAsset, IMAGE_DIR_IN_EPUB, sanitize_filename
 )
-from . .core.image_processor import ForumImageProcessor
-from . .core.session import fetch_with_retry
-from . .utils.llm import LLMHelper
+from ..core.image_processor import ForumImageProcessor
+from ..core.extractor import ArticleExtractor
+from ..core.session import fetch_with_retry
+from ..utils.llm import LLMHelper
 
 class ForumDriver(BaseDriver):
     async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
@@ -36,6 +37,7 @@ class ForumDriver(BaseDriver):
         page = 1
         seen_pages = set()
         seen_urls = set()
+        browser_pages = self._browser_page_map(source)
 
         # Seed preloaded assets once so they are available for every page
         if source.assets:
@@ -95,7 +97,17 @@ class ForumDriver(BaseDriver):
                 continue
 
             page_url = self._build_page_url(base_url, page)
-            html_content, final_url = await fetch_with_retry(session, page_url, 'text')
+            if page in browser_pages:
+                page_info = browser_pages[page]
+                html_content = page_info.get("html") or ""
+                final_url = page_info.get("url") or page_url
+                log.info(f"Using browser-fetched forum HTML for page {page}.")
+            elif page == 1 and source.html:
+                html_content = source.html
+                final_url = source.url
+                log.info("Using pre-fetched forum HTML content.")
+            else:
+                html_content, final_url = await fetch_with_retry(session, page_url, 'text')
             if not html_content:
                 if target_pages:
                     log.warning(f"Page {page} missing.")
@@ -112,13 +124,13 @@ class ForumDriver(BaseDriver):
                 title = self._extract_title(soup, base_url)
 
             if source.assets and page == 1:
-                log.info(f"Preloaded assets received: {len(source.assets)}")
+                log.debug(f"Preloaded assets received: {len(source.assets)}")
                 for a in source.assets[:3]:
-                    log.info(f"Asset sample original={a.get('original_url')} viewer={a.get('viewer_url')} canonical={a.get('canonical_url')} type={a.get('content_type')}")
+                    log.debug(f"Asset sample original={a.get('original_url')} viewer={a.get('viewer_url')} canonical={a.get('canonical_url')} type={a.get('content_type')}")
 
             if not options.no_images:
                 base_for_imgs = final_url or base_url
-                await ForumImageProcessor.process_images(session, soup, base_for_imgs, assets, preloaded_assets=source.assets)
+                await ForumImageProcessor.process_images(session, soup, base_for_imgs, assets, preloaded_assets=source.assets, options=options)
 
             posts = self._extract_posts(soup)
             if posts:
@@ -133,6 +145,11 @@ class ForumDriver(BaseDriver):
 
             seen_pages.add(page)
             if target_pages:
+                continue
+
+            next_browser_page = page + 1
+            if next_browser_page in browser_pages and (not max_pages or next_browser_page <= max_pages):
+                page = next_browser_page
                 continue
 
             has_next = self._has_next_page(soup, page, final_url)
@@ -170,7 +187,13 @@ class ForumDriver(BaseDriver):
             is_article=True
         )
 
-        toc_links = [epub.Link("thread.xhtml", "Thread", "forum_thread")]
+        page_links = [
+            epub.Link(f"thread.xhtml#page_{page_no}", f"Page {page_no}", f"forum_page_{page_no}")
+            for page_no, _ in page_blocks
+        ]
+        toc_links = [(epub.Link("thread.xhtml", "Thread", "forum_thread"), page_links)] if page_links else [
+            epub.Link("thread.xhtml", "Thread", "forum_thread")
+        ]
         return BookData(
             title=title or "Forum Thread",
             author="Forum",
@@ -212,6 +235,27 @@ class ForumDriver(BaseDriver):
             new_path = f"{path}/page-{page}"
         rebuilt = parsed._replace(path=new_path)
         return rebuilt.geturl()
+
+    def _browser_page_map(self, source: Source) -> Dict[int, Dict[str, str]]:
+        pages: Dict[int, Dict[str, str]] = {}
+        for item in source.page_htmls or []:
+            if not isinstance(item, dict):
+                continue
+            html_value = item.get("html")
+            if not isinstance(html_value, str) or not html_value.strip():
+                continue
+            page_value = item.get("page")
+            try:
+                page_num = int(page_value)
+            except Exception:
+                page_num = self._extract_page_number(item.get("url") or "") or 1
+            if page_num < 1 or page_num in pages:
+                continue
+            url_value = item.get("url") if isinstance(item.get("url"), str) else source.url
+            pages[page_num] = {"html": html_value, "url": url_value}
+        if pages:
+            log.info(f"Browser-fetched forum pages available: {sorted(pages.keys())}")
+        return pages
 
     def _extract_title(self, soup, url):
         og = soup.find("meta", attrs={"property": "og:title"})
@@ -365,8 +409,7 @@ class ForumDriver(BaseDriver):
             except Exception as e:
                 return html_snippet
 
-        chunks = [f"""<!DOCTYPE html><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>{title}</title><link rel="stylesheet" href="style/default.css"/></head><body>"""]
-        chunks.append(f"<h1>{title}</h1><div class='post-meta'><p><strong>Source:</strong> <a href=\"{url}\">{url}</a></p></div>")
+        chunks = []
         
         if summary_html:
             chunks.append(f"<div class='ai-summary'><h3>AI Summary</h3>{summary_html}</div><hr/>")
@@ -387,8 +430,9 @@ class ForumDriver(BaseDriver):
                 chunks.append(f"<div class='forum-post-body'>{body_html}</div>")
                 chunks.append("</div>")
                 post_counter += 1
-        chunks.append("</body></html>")
-        return "".join(chunks)
+        body_html = "".join(chunks)
+        meta_html = ArticleExtractor.build_meta_block(url, {"sitename": urlparse(url).netloc})
+        return ArticleExtractor.build_article_html(title, body_html, meta_html=meta_html)
 
     def _dedupe_assets(self, assets: List[ImageAsset], html: str) -> Tuple[List[ImageAsset], str]:
         seen: Dict[str, ImageAsset] = {}

@@ -1,46 +1,65 @@
 # Todo & Roadmap
 
-- support wordpress comments, ex site: https://caseyhandmer.wordpress.com/2025/11/26/antimatter-development-program/
-- refactor code, see note (gemini?)
-- per site rules
-- should run in background not need popup open if many tabs are bundled
-- support crawling certain number of link hierarchy
-- sign extension
-- keyboard shortcut add selected to bundle
-- right click menu to add selected to bundle
-- keyboard shortcut to download bundle
-- headless mode, better for rss?
-- port to chrome extension 
-- on koreader siden plugin for saving links to special file? or could just parse highlights later.  
-- for youtube links: fetch transcript, optional formatting, optional summary?
-- for any link summary option
+This file tracks current work. Older items that are now implemented have been moved to the completed section so they do not keep steering new work in the wrong direction.
 
-## Other Ideas
+## Current Priorities
 
-### 1. Automated Testing Suite
-* **Problem:** The codebase relies heavily on manual testing. As we've seen (e.g., with the Next.js recursion issue), changes can easily introduce regressions or unexpected behavior on specific sites.
-* **Suggestion:** Implement a basic test suite using pytest.
-    * Unit Tests: Test individual components like `_extract_origin_from_proxy`, `_clean_soup`, and `_seed_images_from_nextjs_data` with mocked inputs (HTML/JSON strings).
-    * Integration Tests: Use `aioresponses` or a mock server to simulate site responses (including 403s, Timeouts, and specific HTML structures like WaPo) and verify that the drivers (Generic, HN, Reddit) behave as expected (retry logic, failover, extraction).
-    * Snapshot Testing: Save "known good" HTML inputs for key sites (WaPo, Substack, HN) and ensure the extractor output matches a stored "golden" output. This detects layout breakages.
+- Move remaining request preparation and download edge cases fully into extension background flows where practical, then simplify popup responsibilities to UI state and commands.
+- Persist server job metadata if restart-safe downloads become important. `/jobs` state and temporary download paths are currently process-local and disappear on restart.
+- Add a server-side cleanup policy for temporary files created by direct `/convert` responses.
+- Keep package and extension versions in sync. `pyproject.toml` currently reports the Python package version, while extension manifests carry their own version.
+- Expand automated regression coverage for image extraction and site-specific HTML:
+  - `_extract_origin_from_proxy`
+  - `_clean_soup`
+  - `_seed_images_from_nextjs_data`
+  - forum attachment and quote-link rewriting
+  - archive fallback paths
+- Add representative fixture-based tests for brittle sites and layouts instead of relying only on live manual runs.
+- Improve progress reporting from server jobs to the extension. Polling exists today; Server-Sent Events or WebSockets could provide richer phase-level updates.
 
-### 2. Refactor `GenericDriver` Complexity
-* **Problem:** `GenericDriver` handles too much: standard scraping, Next.js hydration, fallback image injection, and cleanup. It's becoming a "God Class".
-* **Suggestion:** Split the responsibilities.
-    * Create a `ContentEnhancer` or `HydrationManager` class responsible for detecting and applying special handling (like `__NEXT_DATA__` seeding).
-    * Create a dedicated `ImageInjector` class to handle the logic of "finding placeholders vs appending".
-    * `GenericDriver` would then orchestrate these smaller, testable components.
+## Feature Ideas
 
-### 3. Configurable Site Profiles
-* **Problem:** Site-specific logic (like `imrs.php` handling, though generalized now) is hardcoded or relies on heuristics.
-* **Suggestion:** Move site-specific configurations (proxy patterns, content selectors, anti-bot rules) into a configuration file (YAML/JSON) or a `SiteProfile` class registry.
-    * Example: A profile for `washingtonpost.com` could define `proxy_pattern: "imrs.php"`, `nextjs_hydration: true`, `fail_fast: true`.
-    * This makes adding support for new problematic sites easier without modifying core logic.
+- Support crawling a limited link hierarchy from a root URL, with guardrails for same-domain and main-content-only links.
+- Add RSS/feed ingestion for building periodic bundles.
+- Extend date-range discovery with more site-specific archive/feed patterns.
+- Add HN/Reddit filtering for index/subreddit crawling, such as points, dates, or comment counts.
+- Add Markdown output mode.
+- Explore a KOReader-side workflow for saving links into a file that `dala` can later bundle.
+- Sign and publish extension builds through the normal browser-store/release process.
 
-### 4. Unified "Context" Object
-* **Problem:** Data like cookies, raw_html, assets, and options are passed around as loose arguments to many functions (`prepare_book_data`, `process_images`, `seed...`).
-* **Suggestion:** Encapsulate this request context into a richer `ConversionContext` object that flows through the pipeline. This makes function signatures cleaner and easier to extend (e.g., adding headers or proxy settings later wouldn't require changing every function signature).
+## Completed / Implemented
 
-### 5. Better Progress Feedback
-* **Problem:** Long operations (like the initial 5-minute timeout we saw) give little feedback to the user via the extension (just "Processing...").
-* **Suggestion:** Implement a WebSocket or Server-Sent Events (SSE) endpoint for the server. The extension could listen to this to display real-time progress bars ("Fetching images: 3/10", "Retrying...", "Using Archive fallback"). This greatly improves perceived performance and troubleshooting.
+- WordPress article and comment extraction.
+- Translation output with LLM/Google providers, underneath/side-by-side/popup-footnote displays, caption/list support, scopes, caching, and glossary term preservation.
+- Configurable site profiles via `sites.yaml`.
+- Opt-in Playwright Chromium browser capture for CLI use on JavaScript-heavy pages and authenticated sessions.
+- Browser test harness with local fixtures and skippable Playwright integration coverage.
+- Bundle image filename remapping/deduplication to avoid collisions across many source articles.
+- Shared image budget presets and pre-write budget failures for image-heavy bundles.
+- Shared `ConversionContext` object for sessions, options, and profiles.
+- Chrome/Brave/Edge extension port using Manifest V3.
+- Chrome MV3 server-side HTML parsing helper at `/helper/extract-links`.
+- Background extension download/job flow after popup initiation.
+- Keyboard shortcuts for download and queue actions.
+- Popup actions for selected-tab and all-tab queue import.
+- Context menu actions for queueing and downloading pages.
+- YouTube transcript fetching, optional LLM formatting, optional summaries, thumbnails, and comment download.
+- AI summary option for generic articles, discussions, forums, and transcripts.
+- Formal pytest suite covering unit behavior, server endpoints, saving behavior, drivers, and HN delegation.
+- Ignored common generated/local artifacts including extension packages, `web-ext-artifacts/`, exports, logs, screenshots, and local `config/bpc/` helper files.
+- Server browser fallback diagnostics via `/ping`, extension Options controls for fallback/BPC path, and local BPC unpacked extension validation.
+- Extension server URL setting for local, LAN, or remote dala backends.
+- Options diagnostics panel for server version, browser fallback status, retained jobs, and last conversion errors.
+- Server-side finished job cleanup with configurable retention and interval.
+- Extension retry flow for requeueing failed sources from the most recent job.
+- Date-range post discovery and bundle generation for blog/archive pages.
+- PDF output mode with document and e-reader presets.
+- Browser challenge policy: default archive fallback, optional user-browser retry, and explicit warm-browser mode.
+- Dedicated Dala Chromium profile default for server browser fallback, with extension UI to initialize the profile.
+- Normalized package-relative Python imports.
+
+## Maintenance Notes
+
+- Prefer adding focused tests with local HTML/JSON fixtures when changing extraction heuristics.
+- Keep real-network manual tests for extension round trips, gated forums, cookies, and image downloads.
+- Avoid committing generated EPUBs, packaged extensions, logs, caches, and screenshots unless they are intentionally part of documentation or a release.

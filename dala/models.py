@@ -51,20 +51,67 @@ class ConversionOptions:
     max_posts: Optional[int] = None
     page_spec: Optional[List[int]] = None
     llm_format: bool = False
+    llm_provider: str = "auto"
     llm_model: Optional[str] = None
     llm_api_key: Optional[str] = None
     summary: bool = False
+    translation_enabled: bool = False
+    translation_provider: str = "llm"
+    translation_target_lang: Optional[str] = None
+    translation_source_lang: str = "auto"
+    translation_display: str = "underneath"
+    translation_scope: str = "article-captions"
+    translation_glossary: Optional[str] = None
+    translation_cache: bool = True
     thumbnails: bool = False
     youtube_lang: str = "en"
     youtube_prefer_auto: bool = False
     youtube_max_comments: int = 25
     youtube_comment_sort: str = "top"
+    image_preset: str = "balanced"
+    image_color: str = "color"
+    max_bundle_images: Optional[int] = None
+    max_image_bytes_mb: Optional[int] = None
+    output_format: str = "epub"
+    pdf_preset: str = "document"
+    pdf_page_size: str = "letter"
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    date_fallback: str = "auto"
+    include_undated: bool = False
+    max_discovery_pages: int = 20
+    max_discovered_posts: int = 200
+    browser_fallback: bool = False
+    browser_extension_path: Optional[str] = None
+    browser_profile_dir: Optional[str] = None
+    browser_executable: Optional[str] = None
+    browser_timeout_ms: int = 30000
+    browser_wait_until: str = "load"
+    browser_settle_ms: int = 1000
+    browser_challenge_action: str = "archive"
+
+    @property
+    def date_range_active(self) -> bool:
+        return bool(self.start_date or self.end_date)
+
+
+def normalize_image_preset(value: Optional[str]) -> str:
+    preset = (value or "balanced").strip().lower().replace("_", "-")
+    if preset == "baseline":
+        return "balanced"
+    if preset == "optimized":
+        return "compact"
+    if preset in {"compact", "balanced", "full"}:
+        return preset
+    return "balanced"
+
 
 @dataclass
 class Source:
     """Represents an input source: URL and optional pre-fetched HTML."""
     url: str
     html: Optional[str] = None
+    page_htmls: Optional[List[Dict[str, Any]]] = None
     cookies: Optional[Dict[str, str]] = None
     assets: Optional[List[Dict[str, Any]]] = None
     is_forum: bool = False

@@ -2,7 +2,7 @@ import os
 import yaml
 import re
 from typing import List, Optional
-from . .models import log, SiteProfile
+from ..models import log, SiteProfile
 
 class ProfileManager:
     _instance = None

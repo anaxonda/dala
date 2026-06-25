@@ -1,244 +1,491 @@
-# dala: Web-to-EPUB Downloader (E-Ink Optimized)
+# dala: Web pages and threads as e-ink EPUBs
 
-**dala** is a tool to convert  web content—articles, threaded discussions, forums, transcripts, and paywalled articles—into clean, e-ink optimized EPUBs. Koreader recommended.
-Its for when you have 30 tabs that you're going to read "soon". Make an ebook out of them instead. I was using the [Singlefile](https://github.com/gildas-lormeau/SingleFile) extension to download page html and reading that on Koreader; this works and is simpler, but much more limited to the pages and content that works. Yes, its mostly vibecoded, good vibes though.
+**dala** turns articles, comment threads, forum posts, Substack pages, and YouTube transcripts into clean EPUBs optimized for e-ink readers such as Kobo/KOReader. It works from a browser extension or CLI, can bundle many links into one anthology, and can preserve logged-in images or attachments when you explicitly share your browser session with the local backend. Translation support built in.
 
-Supports sources including but not limited to:
-*   **Hacker News & Reddit:** Recursively fetches nested comments and adds a clickable "navigation cluster" to every post, making it possible to read deep threads on an e-reader.
-*   **Substack** Download and format post, optionally embedding images, and recursively fetches nested comments (like HN) as a subchapter. If a hacker news post links to substack it will fetch both substack and HN comment threads as subchapters.
-*   **Forums (XenForo, etc.):** Uses a browser extension to capture your login session, downloading gated attachments and high-res imagesthat CLI tools miss.
-*   **YouTube:** Downloads transcripts and optionally uses AI to format them to be more readable (although they basic python parsing does ok and is much faster) or generate summaries. Suprisingly nice to read youtube videos instead of watching them. Optionally specify some number of comments to dl.
-*   **Paywalls:** The extension shares your browser's cookies with the backend to access gated content. (Substack, newspapers). Checkout "bypass-paywalls-firefox-clean" extension from magnolia1234 on gitflic.
+It is built for the "57 tabs I'll read later" problem: make an book out of it.
+
+> Everything mostly usable, i'm sure something doesn't work.
 
 <img src="firefox_extension/icon.png" alt="dala icon" width="72" />
 
+## Screenshots
+
+| Extension popup and queue | KOReader output |
+| --- | --- |
+| <img src="screenshot/Screenshot_20260118_155731.png" width="100%" alt="Dala extension popup" /> | <img src="screenshot/Screenshot_20260118_155753.png" width="100%" alt="EPUB output in KOReader" /> |
+
+| Thread navigation | Bundle workflow |
+| --- | --- |
+| <img src="screenshot/Screenshot_20260118_162833.png" width="100%" alt="Threaded comment output" /> | <img src="screenshot/Screenshot_20260118_163015.png" width="100%" alt="Bundle queue workflow" /> |
+
 <p align="center">
-  <img src="screenshot/Screenshot_20260118_155731.png" width="45%" />
-  <img src="screenshot/Screenshot_20260118_155753.png" width="45%" />
-</p>
-<p align="center">
-  <img src="screenshot/Screenshot_20260118_162833.png" width="45%" />
-  <img src="screenshot/Screenshot_20260118_163015.png" width="45%" />
-</p>
-<p align="center">
-  <img src="screenshot/Screenshot_20260118_155810.png" width="45%" />
+  <img src="screenshot/Screenshot_20260118_155810.png" width="45%" alt="Dala settings screen" />
+  <br />
+  <em>Extension settings for output, images, translation, and server options.</em>
 </p>
 
-## Table of Contents
-- [Quick Start](#-quick-start)
-- [Usage Guide](#-usage-guide)
-  - [Extension](#1-the-browser-extension-recommended)
-  - [CLI](#2-command-line-interface-cli)
-  - [Drivers & Features](#3-drivers--features)
-- [Extension Options](#%EF%B8%8F-extension-options-explained)
-- [Customization (sites.yaml)](#-advanced-customization-sitesyaml)
-- [Detailed Installation](#-detailed-installation)
-  - [macOS](#macos)
-  - [Windows](#windows)
-  - [Linux](#linux)
-  - [Android (Termux)](#android-termux)
-- [Run in Background](#-run-in-background)
-- [Configuration](#%EF%B8%8F-configuration)
-
----
-
-## ⚡ Quick Start
-
-1.  **Get the Code:**
-    ```bash
-    git clone https://github.com/anaxonda/dala.git
-    cd dala
-    ```
-
-2.  **Start the Server:**
-    *(Requires [uv](https://github.com/astral-sh/uv) or Python 3.8+)*
-    ```bash
-    # This automatically installs dependencies and runs the backend
-    uv run dala-server
-    ```
-
-3.  **Install the Extension:**
-    *   **Firefox:** Signed XPI provided in releases (otherwise load from about:debugging)
-    *   **Chrome/Brave:** Go to `chrome://extensions` -> Enable **Developer Mode** -> **Load unpacked** -> Select `extension_chrome/` folder.
-
-4.  **Download:**
-    Navigate to a page (e.g., a Hacker News thread), click the **dala** icon, and hit **"Download Page"**. The EPUB will be generated in the project folder (or `Downloads` via the extension).
-
----
-
-## 📖 Usage Guide
-
-### 1. The Browser Extension (Recommended)
-The extension is the primary way to use **dala**. It acts as a "Thin Client," capturing the current page's HTML and your session cookies, then sending them to the local Python server for processing.
-
-*   **Single Page:** Click the icon -> "Download Page".
-*   **Queue / Bundle:** Right-click multiple links and select **"Add to EPUB Queue"**. Open the popup to manage the queue and click **"Download Bundle"** to merge them into a single "Anthology" EPUB.
-
-#### 📂 Custom Download Folders & Server Archiving
-You can customize where your EPUBs are saved on the machine running the server via the extension's **Options** page:
-*   **Download Subfolder:** Specify a folder name (e.g., `Kindle`) to have EPUBs saved to `Downloads/Kindle/` on your browser's machine.
-*   **Save Directory (on Server):** Direct the **server** to save a copy of the EPUB to a specific absolute path on its own filesystem. 
-    *   Works on **Linux, Windows, macOS, and Android**.
-    *   If left blank, the server automatically attempts to save to the standard `Downloads` folder of the user running the server.
-*   **Always Archive:** Enable this to guarantee a backup copy is kept in the project's `exports/` folder, ensuring no content is lost if the browser download fails.
-
-### 2. Command Line Interface (CLI)
-For batch processing or automation, use the CLI directly. Doesn't work as well as the browser extension as it can't use already loaded content.
+## Quick Start
 
 ```bash
-# Single URL
-uv run dala "https://news.ycombinator.com/item?id=123456"
-
-# Bundle from a file (one URL per line)
-uv run dala -i links.txt --bundle --bundle-title "Weekly Digest"
+git clone https://github.com/anaxonda/dala.git
+cd dala
+uv run dala-server
 ```
 
-### 3. Drivers & Features
+Install the browser extension:
 
-#### 💬 Threaded Discussions (Hacker News / Reddit)
-Reading nested comments on an e-reader is usually painful. **dala** flattens the layout and inserts a **Navigation Cluster** into every comment header:
-> `↑ Parent` | `→ Next Sibling` | `⏮ Thread Root` | `⏭ Next Thread`
+- **Firefox:** install the release XPI when available, or load `firefox_extension/` temporarily from `about:debugging`.
+- **Chrome/Brave/Edge:** open `chrome://extensions`, enable **Developer Mode**, click **Load unpacked**, and select `extension_chrome/`.
 
-This allows you to skip boring branches or jump back up the tree easily using the touchscreen.
+Then open a page, click the **dala** icon, and click **Download Page**.
 
-#### 🔐 Forums & Paywalls
-Many forums (like XenForo) hide attachments or high-res images from guests. CLI tools fail here.
-*   **How to use:** Log in to the site in your browser. Use the **Extension** to download with 'use site cookies option' (there is also the 'force forum driver' option it it is not downloading correctly)
-*   **How it works:** The extension sends your cookies to the backend, allowing it to fetch gated images and attachments as *you*. 
+For PDF output, CLI/server rendering of JavaScript-heavy pages, or server-side browser fallback, see [PDF and Server-Side Browser Rendering](#pdf-and-server-side-browser-rendering).
 
-#### 📺 YouTube Transcripts & AI
-Convert videos into readable text.
-*   **Basic (No LLM required):** `uv run dala [YouTube URL]`. This fetches the raw transcript and uses timestamp gaps to create basic paragraphs.
-*   **AI Formatting:** Use `--llm` to have an AI (Gemini/GPT) fix punctuation, capitalization, and remove filler words ("um", "uh"). The content remains the same but reads like a professionally edited article.
-*   **AI Summary:** Use `--summary` to insert a 3-5 paragraph "Executive Summary" at the top of the EPUB.
+## What Do I Install?
 
-**Setup for AI:**
-Set your API key in a `.env` file or pass it via CLI. **dala** supports Google Gemini (free tier works great), OpenAI, and OpenRouter.
+| Goal | Best path | Extra setup |
+| --- | --- | --- |
+| Save a normal article | Extension or CLI | None |
+| Save the current logged-in page | Extension | None |
+| Save forum images or attachments behind login | Extension with **Use Site Cookies** | Usually none |
+| Bundle browser links | Extension queue | None |
+| Bundle URLs from a file | CLI | None |
+| Render JavaScript-heavy pages without extension capture | CLI/server browser rendering | Server-side browser setup |
+| Generate PDF | Extension or CLI | Same server-side browser setup |
+| Download a YouTube transcript | CLI or extension | None |
+| AI summaries or LLM translation | CLI or extension | API key |
+| Google Translate translation | CLI or extension | No API key |
 
-> [!TIP]
-> **Extension Overrides:** You can also set your API Key and Model directly in the extension's **Settings** page. Values entered in the browser will override your server's `.env` configuration, allowing you to easily switch models or keys without restarting the server.
+Server-side browser setup uses Dala's optional Python browser-control support plus either an existing Chrome/Edge/Brave/Chromium install or Playwright's managed Chromium; details are below.
+
+## Source Support
+
+| Source | Supported |
+| --- | --- |
+| Articles and blogs | EPUB/PDF, images, captions, cleanup, date-range discovery, Internet Archive fallback |
+| Hacker News | Nested comments with parent/sibling/thread navigation |
+| Reddit | Posts, linked article extraction, nested comments, comment images |
+| Substack | Posts, images, comments, custom domains |
+| WordPress | WordPress-specific post and comment extraction |
+| Forums | Multi-page threads, logged-in images/attachments, quote-link rewriting |
+| YouTube | Transcripts, optional comments, thumbnails, AI cleanup |
+
+## Output and Reading Features
+
+| Feature | Supported |
+| --- | --- |
+| EPUB | E-reader-oriented typography, metadata, table of contents, image optimization |
+| PDF | Document and e-reader presets through server-side browser rendering |
+| Bundles | Multiple pages combined into one anthology-style file |
+| Images | Compact, Balanced, or Full presets; optional grayscale conversion |
+| Translation | LLM or Google Translate; underneath, side-by-side, EPUB footnote, or replace modes |
+| Summaries | Optional LLM-generated summaries for long articles, discussions, forums, and transcripts |
+
+## Common Workflows
+
+### Save the current browser page
+
+Start the backend, open a readable page in your browser, then use the extension's **Download Page** button. This is the easiest path for pages where your browser already has the right login/session state.
+
+### Bundle many links
+
+Use the extension context menu to add links to the queue, then open the popup and click **Download Bundle**. From the CLI, put one URL per line in a file and use `--bundle`.
+
+### Download YouTube transcripts
 
 ```bash
-export GEMINI_API_KEY="AIzaSy..."
-# OR
-uv run dala [URL] --llm --api-key "AIzaSy..."
+# Basic transcript cleanup, no API key required
+uv run dala "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# Prefer auto-generated captions and include comments
+uv run dala --yt-auto --yt-max-comments 50 "https://www.youtube.com/watch?v=VIDEO_ID"
+
+# Use an LLM for transcript cleanup
+uv run dala --llm "https://www.youtube.com/watch?v=VIDEO_ID"
 ```
 
----
+### Translate or summarize
 
-## ⚙️ Extension Options Explained
+```bash
+# Summary
+uv run dala --summary "https://example.com/article"
+
+# Bilingual Spanish translation under each paragraph
+uv run dala --translate es --translation-display underneath "https://example.com/article"
+
+# Translated-only output
+uv run dala --translate es --translation-display replace "https://example.com/article"
+
+# Include comments/forum text in translation
+uv run dala --translate es --translation-scope all-readable "https://example.com/article"
+```
+
+## Security and Privacy Notes
+
+- The extension can send the current page HTML and captured page assets to the Dala backend.
+- When **Use Site Cookies** is enabled, the extension can send site cookies to the backend so it can fetch protected images or attachments.
+- Keep the backend bound to `127.0.0.1` unless you intentionally configure LAN or remote access.
+- Only enable cookie sharing for a backend you control and trust.
+- Do not expose the Dala server directly to the public internet.
+- API keys in the extension or `.env` are secrets. Do not commit `.env`.
+- Dala is intended to process pages you are allowed to access. Use authenticated capture and browser fallback responsibly.
+
+## PDF and Server-Side Browser Rendering
+
+Basic EPUB downloads do not need server-side browser rendering. This section is about Dala's optional Python support for controlling a browser on the server, not the browser extension.
+
+Install the optional dependency group only if you want PDF output, CLI/server rendering of JavaScript-heavy pages, or server-side browser fallback:
+
+```bash
+uv sync --extra browser
+uv run dala-server
+```
+
+Dala can then use an existing Chromium-compatible browser such as Chrome, Edge, Brave, or Chromium. If none is installed or detected, install Playwright's managed Chromium:
+
+```bash
+uv run playwright install chromium
+```
+
+<details>
+<summary>CLI examples for server-side browser rendering</summary>
+
+```bash
+# Render with an auto-detected browser
+uv run dala --browser "https://example.com/article"
+
+# Show the browser window for login/debugging
+uv run dala --browser --headed "https://example.com/article"
+
+# Point Dala at a specific browser
+uv run dala --browser --browser-executable /usr/bin/google-chrome "https://example.com/article"
+
+# Reuse a dedicated browser profile
+uv run dala --browser --browser-profile .browser-profile "https://example.com/article"
+
+# Load an unpacked Chromium-compatible extension
+uv run dala --browser --browser-extension /path/to/unpacked-extension "https://example.com/article"
+```
+
+</details>
+
+<details>
+<summary>Common browser executable paths</summary>
+
+```bash
+# macOS
+uv run dala --browser --browser-executable "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" "https://example.com/article"
+
+# Windows PowerShell
+uv run dala --browser --browser-executable "C:\Program Files\Google\Chrome\Application\chrome.exe" "https://example.com/article"
+
+# Linux
+uv run dala --browser --browser-executable google-chrome "https://example.com/article"
+```
+
+</details>
+
+PDF rendering uses the same browser detection and executable settings. EPUB output may use optimized WebP assets; PDF output feeds Chromium temporary JPEG render assets to avoid oversized embedded RGB image streams.
+
+## Authenticated Pages, Forums, and Difficult Sites
+
+Dala can process pages that are already readable in your browser, including pages that need your login session for images or attachments.
+
+### Forums and gated images
+
+- Log in to the forum in your browser.
+- Use the extension with **Use Site Cookies** enabled.
+- Enable **Force Forum Driver** if forum auto-detection misses the thread.
+- Use **Forum Pages** or **Max Pages** for long threads.
+
+### Difficult article pages
+
+The simplest workflow is normal browser capture: open the article until it is readable in your everyday browser, then click the Dala extension. If you use a browser extension to make pages readable, install it in the same browser where you run Dala.
+
+Server-side browser fallback is an advanced local fallback for automation and testing. The server uses a dedicated Dala browser profile at `~/.local/share/dala/browser-profile` by default; it does not automatically use your normal browser profile.
+
+<details>
+<summary>Advanced: server-side BPC helper for local testing</summary>
+
+If an unpacked Bypass Paywalls Clean Chrome extension exists at `config/bpc/chrome-unpacked/bypass-paywalls-chrome-clean-master`, the server can use it for browser fallback. You can override paths with:
+
+```bash
+export DALA_BPC_EXTENSION_PATH=/path/to/unpacked/bypass-paywalls-chrome-clean
+export DALA_BROWSER_EXECUTABLE=/usr/bin/google-chrome
+export DALA_BROWSER_PROFILE_DIR=/path/to/custom/dala-chromium-profile
+```
+
+To refresh the local BPC helper used for testing:
+
+```bash
+git clone --depth 1 https://gitflic.ru/project/magnolia1234/bpc_uploads.git config/bpc/latest
+mkdir -p config/bpc/chrome-unpacked
+unzip -oq config/bpc/latest/bypass-paywalls-chrome-clean-master.zip -d config/bpc/chrome-unpacked
+```
+
+`config/bpc/` is ignored by git.
+
+</details>
+
+When a site serves an interactive bot challenge, Dala defaults to archive fallback. If **Open challenged pages in my browser** is enabled, the extension opens the original article URL and asks you to run Dala again from the readable tab.
+
+## Extension Options
+
+The extension has a compact popup for common choices and an Options page for server, diagnostics, and advanced behavior.
+
+<details>
+<summary>Extension options reference</summary>
 
 | Option | What it does | When to use it |
-| :--- | :--- | :--- |
-| **No Comments** | Skips downloading comments. | If you only want the main article from Reddit/HN. |
-| **Comments Only** | Skips the main article body. | For "Ask HN" threads or when you only care about the discussion. |
-| **Text Only** | Removes all images. | To save space or data. Much faster download. |
-| **Archive.org** | Forces fetch from Wayback Machine. | Dead links or broken live sites. |
-| **AI Summary** | Generates a 3-5 paragraph summary. | Long articles/transcripts (requires API Key). |
-| **Video Thumbnails** | Embeds periodic screenshots (YouTube). | Adds visual context to transcripts at 25/50/75% marks. |
-| **Use Site Cookies** | Sends browser cookies to backend. | Mainly useful for forums, maybe for paywalls. |
-| **Force Forum Driver** | Triggers multi-page crawling/scraping. | XenForo/vBulletin threads. |
-| **Forum Pages** | Specify specific pages (e.g., `1,3-5`). | To download only specific parts of a thread. Overrides 'Max Pages'. |
-| **Max Pages** | Limit the total number of sequential pages. | Stops crawling after N pages (e.g. "Download first 5 pages"). |
+| --- | --- | --- |
+| **Server URL** | Chooses the Dala backend used by popup checks, helper parsing, jobs, downloads, and cancellation. | LAN/remote server workflows; leave as localhost for normal desktop use. |
+| **No Comments** | Skips downloading comments. | Article-only output from HN, Reddit, Substack, WordPress, or YouTube. |
+| **Comments Only** | Skips the main article body. | Ask HN, Reddit, or discussion-first reading. |
+| **Text Only** | Removes images. | Smaller/faster output. |
+| **Image Size** | Compact, Balanced, or Full image mode. | Compact for small e-reader EPUBs; Full when size is less important. |
+| **Grayscale Images** | Converts images to grayscale. | Monochrome e-ink readers. |
+| **Archive.org** | Forces Wayback Machine lookup. | Dead links or broken live pages. |
+| **AI Summary** | Adds a 3-5 paragraph summary. | Long articles or transcripts; requires an API key. |
+| **Translation** | Translates article text with LLM or Google Translate. | Bilingual reading or translated-only output. |
+| **Video Thumbnails** | Embeds periodic YouTube thumbnails. | Visual context for transcripts. |
+| **Use Site Cookies** | Sends browser cookies to the backend. Defaults on only for local server URLs. | Forums, protected images, authenticated pages. |
+| **Server Browser Fallback** | Lets the server retry failed extraction in a Chromium-compatible browser. | JavaScript-heavy, blocked, or difficult pages. |
+| **Force Forum Driver** | Uses forum multi-page scraping. | XenForo/vBulletin-style threads. |
+| **Forum Pages** | Downloads specific pages such as `1,3-5`. | Partial forum thread downloads. |
+| **Max Pages** | Limits sequential forum crawling. | Avoid unexpectedly large downloads. |
 
-*Note: For forums, you usually need **both** 'Use Site Cookies' and 'Force Forum Driver' enabled to download full-resolution attachments.*
+The Options page also includes diagnostics for server version, Playwright/browser/profile/BPC status, PDF availability, retained jobs, cleanup retention, and the last conversion status/error. If PDF is unavailable, the extension disables PDF output and falls back to EPUB.
 
-## ⌨️ Keyboard Shortcuts
-**dala** supports configurable shortcuts (defaulting to the same keys on Desktop & Android):
-*   `Ctrl + Shift + E` : **Download Page** immediately.
-*   `Ctrl + Shift + Q` : **Add to Queue**.
+</details>
 
-### Managing Shortcuts
-*   **Firefox:** Go to the Extension Options page (Right-click icon -> Manage Extension -> Preferences / Options).
-*   **Chrome / Brave:** Go to `chrome://extensions/shortcuts` to remap keys globally. You can also toggle them in the Extension Options page.
-*   **Android (Firefox):** Configure them via the Extension Options page in the browser menu.
+## CLI Recipes
 
-### 🏛️ Internet Archive Fallback
-**dala** tries to be resilient:
-1.  **Automatic:** If a live fetch fails (404 Not Found, 403 Forbidden), it **automatically** falls back to the Internet Archive (Wayback Machine) to find the latest snapshot.
-2.  **Manual:** You can force this behavior if you know a link is dead or want to view an older version:
-    *   **Extension:** Check the "Internet Archive" box in the popup before downloading.
-    *   **CLI:** Add the `-a` or `--archive` flag.
+```bash
+# Save one article
+uv run dala "https://example.com/article"
 
----
+# Save multiple URLs into one EPUB
+uv run dala -i links.txt --bundle --bundle-title "Weekend Reading"
 
-## 🎨 Advanced Customization (`sites.yaml`)
-You can define custom extraction rules for specific websites in a `sites.yaml` file in the project root. This is useful for stubborn sites with weird layouts.
+# Save all discovered posts from August 2025
+uv run dala --start-date 2025-08 --end-date 2025-08 "https://example.wordpress.com/"
 
-**Example `sites.yaml`:**
-```yaml
-- name: "The New York Times"
-  domains:
-    - "nytimes.com"
-  content_selector: "article#story"  # Only extract text from this ID
-  remove:                            # Delete these elements before generating EPUB
-    - "#top-wrapper"
-    - ".ad-container"
-    - "div[data-testid='recirculation']"
+# Save a forum thread with cookies exported from your browser
+uv run dala --forum --cookie-file cookies.txt --max-pages 5 "https://forum.example.com/thread"
+
+# Compact grayscale images for a small e-reader EPUB
+uv run dala --image-preset compact --image-color grayscale "https://example.com/article"
+
+# Full-size images, but fail before writing if the bundle gets too large
+uv run dala --image-preset full --max-bundle-images 250 --max-image-bytes-mb 200 -i links.txt --bundle
+
+# Smoke-test translation configuration
+uv run dala --translate es --test-translation-provider "Hello world"
 ```
-*   **content_selector:** CSS selector to pinpoint the main article text (ignores everything else).
-*   **remove:** List of CSS selectors to strip out (ads, sidebars, "read more" links).
 
----
+## CLI Reference
 
-## 🛠 Detailed Installation
-**Only tested on Linux/android**
+<details>
+<summary>Full CLI flag reference</summary>
+
+| Flag | Description |
+| --- | --- |
+| `-o`, `--output PATH` | Output filename. |
+| `--format epub\|pdf` | Output file format. |
+| `--pdf-preset document\|ereader` | PDF layout preset. |
+| `--pdf-page-size letter\|a4\|kobo_clara` | PDF page size. |
+| `--bundle` | Combine input URLs into one anthology EPUB/PDF. |
+| `--bundle-title "..."` | Set the anthology title. |
+| `--bundle-author "..."` | Set the anthology author. |
+| `-i`, `--input-file PATH` | Read URLs from a file, one per line. |
+| `--no-article` | Skip the article body. |
+| `--no-comments` | Skip comments. |
+| `--no-images` | Text-only output. |
+| `--image-preset compact\|balanced\|full` | Image optimization and budget preset. Balanced is default; compact uses smaller 720px WebP assets. |
+| `--image-color color\|grayscale` | Keep color or convert images to grayscale. |
+| `--max-bundle-images N` | Override the image count budget before EPUB/PDF write. |
+| `--max-image-bytes-mb N` | Override the optimized image byte budget before EPUB/PDF write. |
+| `-a`, `--archive` | Force Internet Archive lookup. |
+| `--css PATH` | Inject custom CSS. |
+| `--max-depth N` | Limit recursive comment depth. |
+| `--forum` | Force the forum driver. |
+| `--max-pages N` | Limit forum pages. |
+| `--max-posts N` | Limit forum posts. |
+| `--pages 1,3-5` | Download specific forum pages. |
+| `--cookie-file cookies.txt` | Load Netscape-format cookies for CLI authentication. |
+| `--start-date DATE` | Discover posts on/after `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`. |
+| `--end-date DATE` | Discover posts on/before `YYYY`, `YYYY-MM`, or `YYYY-MM-DD`. |
+| `--date-fallback auto\|shallow\|metadata\|full` | How hard to work to find post dates during discovery. |
+| `--include-undated` | Include discovered posts with no date. |
+| `--max-discovery-pages N` | Maximum listing/archive pages to scan. |
+| `--max-discovered-posts N` | Maximum post candidates to discover. |
+| `--browser` | Fetch with a headless Chromium-compatible browser. |
+| `--browser-extension PATH` | Load an unpacked Chromium-compatible extension with `--browser`. |
+| `--browser-profile PATH` | Reuse a browser user data directory with `--browser`. |
+| `--browser-executable PATH` | Use a specific Chrome/Edge/Brave/Chromium executable. |
+| `--headed` | Show the browser window for login/debugging. |
+| `--browser-timeout-ms N` | Browser navigation timeout. |
+| `--browser-wait-until load\|domcontentloaded\|networkidle\|commit` | Playwright navigation wait condition. |
+| `--browser-settle-ms N` | Extra delay after navigation before capture. |
+| `--browser-challenge-action archive\|user_browser\|warm` | Bot-challenge behavior. |
+| `--llm` | Use AI to format/clean text, mainly transcripts. |
+| `--llm-provider auto\|gemini\|openrouter\|openai` | Choose the LLM API family. |
+| `--llm-model MODEL` | Choose the LLM model. |
+| `--api-key KEY` | API key override. Prefer `.env` or shell secrets for normal use. |
+| `--summary` | Generate an AI summary. |
+| `--translate LANG` | Translate text to a target language. |
+| `--translation-provider llm\|google` | Choose translation provider. |
+| `--translation-source LANG` | Source language; default `auto`. |
+| `--translation-display underneath\|side-by-side\|popup-footnote\|replace` | Translation layout. Popup footnotes are EPUB-only. |
+| `--translation-scope article\|article-captions\|all-readable` | Translate article only, article plus captions, or all readable text including comments/forums. |
+| `--translation-glossary PATH` | Preserve/map terms using `source=target` lines. |
+| `--no-translation-cache` | Disable persistent translation cache. |
+| `--clear-translation-cache` | Remove the persistent translation cache. |
+| `--test-translation-provider TEXT` | Translate a short text and print the result without downloading. |
+| `--yt-lang en,es` | Preferred YouTube transcript languages. |
+| `--yt-auto` | Prefer auto-generated YouTube captions. |
+| `--thumbnails` | Embed periodic YouTube thumbnails. |
+| `--yt-max-comments N` | Maximum YouTube comments. |
+| `--yt-sort top\|new` | YouTube comment sort order. |
+
+</details>
+
+## Configuration
+
+### LLM configuration precedence
+
+LLM and translation settings are resolved in this order:
+
+1. Extension settings.
+2. CLI flags.
+3. Environment variables or `.env`.
+
+### Environment variables
+
+Create `.env` in the project root for persistent local settings. Do not commit it.
+
+```env
+# AI / LLM keys
+GEMINI_API_KEY=your-gemini-api-key
+OPENROUTER_API_KEY=your-openrouter-api-key
+OPENAI_API_KEY=your-openai-api-key
+
+# Default LLM provider/model
+LLM_PROVIDER=auto
+LLM_MODEL=gemini-3.1-flash-lite
+
+# Browser fallback
+DALA_BROWSER_EXECUTABLE=/path/to/chrome-or-chromium
+DALA_BROWSER_PROFILE_DIR=/path/to/dala-browser-profile
+DALA_BPC_EXTENSION_PATH=/path/to/unpacked-extension
+
+# Translation speed tuning
+DALA_GOOGLE_TRANSLATE_CHUNK_SIZE=5
+DALA_GOOGLE_TRANSLATE_CONCURRENCY=5
+DALA_TRANSLATION_CONCURRENCY=3
+
+# Server job cleanup
+DALA_JOB_RETENTION_SECONDS=7200
+DALA_JOB_CLEANUP_INTERVAL_SECONDS=300
+```
+
+## Where Files Are Saved
+
+| Workflow | Default output location |
+| --- | --- |
+| CLI | Current working directory, unless `--output` is set. |
+| Browser extension download | Browser Downloads folder, optionally under the configured Download Subfolder. |
+| Server save directory set | The absolute path configured on the server machine. |
+| Always Archive enabled | `exports/` inside the Dala project. |
+| Failed browser download with server archive | Server copy remains available from the job/download endpoint until cleanup. |
+
+CLI and extension outputs use the same title-based naming helpers where possible, but browser downloads may additionally apply browser-specific conflict renaming.
+
+## Platform-Specific Installation
+
+Dala is primarily tested on Linux and Android/Termux. macOS and Windows should work with the commands below; report platform-specific issues if you hit them.
+
+<details>
+<summary>macOS, Windows, Linux, Android, and pip setup</summary>
+
 ### Prerequisites
-*   **Python 3.8+**
-*   **uv** (Highly recommended for zero-config dependency management):
-    *   **macOS (Homebrew):** `brew install uv`
-    *   **Windows (PowerShell):** `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
-    *   **Linux:** `curl -LsSf https://astral.sh/uv/install.sh | sh`
-    *   **Android (Termux):** `pkg install uv`
 
-### 💻 Platform Specifics
+- Python 3.9+
+- `uv`
+- Git
 
-#### macOS
-1.  Open **Terminal**.
-2.  Install `uv`: `brew install uv`
-3.  Clone and run: `git clone ... && cd dala && uv run server.py`
-4.  *Note:* macOS may prompt you to install "Command Line Tools" if you don't have Git installed.
+Install `uv`:
 
-#### Windows
-1.  Open **PowerShell** (as Administrator).
-2.  Install `uv`: `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
-3.  Close and reopen PowerShell to refresh your PATH.
-4.  Run the server: `uv run server.py`
-5.  *Troubleshooting:* If you see a "Execution Policy" error, run `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` then try again.
+```bash
+# macOS
+brew install uv
 
-#### Linux
-Standard installation as described in the [Quick Start](#-quick-start). For background execution, use the [Systemd guide](#-systemd-auto-start-linux).
+# Windows PowerShell
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 
-#### Android (Termux)
-You can run the full backend on your phone!
-1.  Install **Termux** (from F-Droid) and **Termux:API**.
-2.  Open Termux and install dependencies:
-    ```bash
-    pkg update && pkg install git python tur-repo
-    pkg install uv
-    ```
-3.  Clone the repo:
-    ```bash
-    git clone https://github.com/anaxonda/dala.git
-    cd dala
-    ```
-4.  Setup environment (fix for `uv` caching on Android):
-    ```bash
-    # Create venv manually
-    python -m venv .venv
-    source .venv/bin/activate
-    
-    # Install dependencies
-    UV_LINK_MODE=copy UV_CACHE_DIR=$HOME/.cache/uv uv pip install -e .
-    ```
-5.  Run the server:
-    ```bash
-    python server.py
-    ```
-6.  should work with FF android automatically
+# Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-### Backend Setup (Alternative: PIP)
-If you prefer not to use `uv`, you can use standard Python virtual environments:
+# Android / Termux
+pkg install tur-repo
+pkg install uv
+```
+
+### macOS
+
+```bash
+git clone https://github.com/anaxonda/dala.git
+cd dala
+uv run dala-server
+```
+
+macOS may prompt you to install Command Line Tools if Git is not installed.
+
+### Windows
+
+Open PowerShell:
+
+```powershell
+git clone https://github.com/anaxonda/dala.git
+cd dala
+uv run dala-server
+```
+
+If you see an execution policy error, run:
+
+```powershell
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+### Linux
+
+Use the Quick Start. For PDF or server-side browser rendering, use the setup above; Dala can auto-detect `chromium`, `google-chrome`, `microsoft-edge`, or `brave-browser` from `PATH`.
+
+### Android / Termux
+
+You can run the backend on your phone:
+
+```bash
+pkg update
+pkg install git python tur-repo
+pkg install uv
+git clone https://github.com/anaxonda/dala.git
+cd dala
+```
+
+If `uv` cache/linking gives trouble on Android, create the environment manually:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+UV_LINK_MODE=copy UV_CACHE_DIR=$HOME/.cache/uv uv pip install -e .
+uv run dala-server
+```
+
+Firefox for Android can use the extension against the local Termux server.
+
+### Alternative: pip
+
 ```bash
 # macOS / Linux
 python3 -m venv .venv
@@ -251,122 +498,199 @@ python -m venv .venv
 pip install -e .
 ```
 
-## 🏃 Run in Background
+</details>
 
-#### macOS (`launchd`)
-1.  Create `~/Library/LaunchAgents/com.dala.server.plist`:
-    ```xml
-    <?xml version="1.0" encoding="UTF-8"?>
-    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-    <plist version="1.0">
-    <dict>
-        <key>Label</key>
-        <string>com.dala.server</string>
-        <key>ProgramArguments</key>
-        <array>
-            <string>/usr/local/bin/uv</string>
-            <string>run</string>
-            <string>server.py</string>
-        </array>
-        <key>WorkingDirectory</key>
-        <string>/path/to/dala</string>
-        <key>RunAtLoad</key>
-        <true/>
-        <key>KeepAlive</key>
-        <true/>
-        <key>StandardOutPath</key>
-        <string>/tmp/dala.log</string>
-        <key>StandardErrorPath</key>
-        <string>/tmp/dala.err</string>
-    </dict>
-    </plist>
-    ```
-2.  Load it: `launchctl load ~/Library/LaunchAgents/com.dala.server.plist`
+## Run in Background
 
-#### Windows (Startup Folder)
-1.  Create `start_dala.bat` in the project folder:
-    ```bat
-    @echo off
-    cd /d "%~dp0"
-    uv run server.py
-    ```
-2.  Press `Win + R`, type `shell:startup`, and press Enter.
-3.  Right-click in the folder -> **New Shortcut** -> browse to your `start_dala.bat`.
-4.  *Optional:* To run minimized, right-click the shortcut -> **Properties** -> **Run: Minimized**.
+Use this if you want the local Dala backend to start automatically instead of running `uv run dala-server` manually.
 
-#### Linux (Systemd)
-1.  Create `~/.config/systemd/user/epub_server.service`:
-    ```ini
-    [Unit]
-    Description=Web to EPUB Python Server
-    After=network.target
+<details>
+<summary>launchd, Windows Startup Folder, and systemd examples</summary>
 
-    [Service]
-    WorkingDirectory=/path/to/dala
-    # Using the venv python directly is most reliable for systemd
-    ExecStart=/path/to/dala/.venv/bin/python server.py
-    Restart=always
-    RestartSec=5
+### macOS launchd
 
-    [Install]
-    WantedBy=default.target
-    ```
-2.  Enable it: `systemctl --user enable --now epub_server`
+Create `~/Library/LaunchAgents/com.dala.server.plist`:
 
----
-
-## ⚙️ Configuration
-
-### LLM Configuration & Precedence
-You can configure LLM settings (Model & API Key) in multiple places. The priority order is:
-1.  **Extension Settings:** (Highest) If set in the browser popup's Settings page.
-2.  **CLI Flags:** If passed directly to the `dala` command.
-3.  **Environment Variables:** (Lowest) Set in the `.env` file or shell.
-
-### Environment Variables (`.env`)
-Create a `.env` file in the root directory to persist settings:
-```env
-# AI / LLM Keys
-GEMINI_API_KEY=AIzaSy...
-OPENROUTER_API_KEY=sk-or-v1-...
-OPENAI_API_KEY=sk-...
-
-# Default Model (optional)
-LLM_MODEL=gemini-1.5-flash
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.dala.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/uv</string>
+        <string>run</string>
+        <string>dala-server</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/path/to/dala</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/dala.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/dala.err</string>
+</dict>
+</plist>
 ```
 
-### CLI Flags Reference
+Load it:
 
-| Flag | Description |
-| :--- | :--- |
-| `--bundle` | Combine input URLs into a single anthology EPUB. |
-| `--bundle-title "..."` | Set the title for the anthology. |
-| `--no-comments` | Download only the article text (skip discussion). |
-| `--no-images` | Text-only mode (saves space). |
-| `-a`, `--archive` | Force fetch from the Internet Archive (Wayback Machine). |
-| `--llm` | Use AI to format/clean text (e.g., transcripts). |
-| `--summary` | Generate an AI summary at the beginning. |
-| `--forum` | Force usage of the Forum driver (usually auto-detected). |
-| `--cookie-file cookies.txt` | Load Netscape-format cookies for CLI authentication. |
+```bash
+launchctl load ~/Library/LaunchAgents/com.dala.server.plist
+```
 
----
+### Windows Startup Folder
 
-## 🏗 Architecture
-**dala** uses a "Modular Driver" pattern:
-*   **`dala/drivers/`**: Contains site-specific logic (e.g., `hn.py`, `reddit.py`, `forum.py`).
-*   **`dala/core/`**: Shared logic for text extraction, image processing, and EPUB generation.
-*   **`firefox_extension/` & `extension_chrome/`**: Thin clients that handle the "View Source" & authentication part of the pipeline.
+Create `start_dala.bat` in the project folder:
 
-## 🚀 Future Roadmap
-*   **Additional Formats:**
-    *   **PDF Output:** High-quality, printable PDFs with linked Tables of Contents and side-panel bookmarks.
-    *   **Markdown Output:** Clean `.md` files optimized for note-taking apps like Obsidian, Logseq, and Notion.
-*   **Intelligent Crawling:**
-    *   **Crawler Mode:** Follow links `N` levels deep starting from a root URL. Defaults to only following links within the *main content* area to avoid navigation/footer noise.
-    *   **Date-Range Archiver:** Download all posts from a blog (WordPress, Substack, etc.) published between specific dates. Perfect for creating "Yearly Anthology" volumes of your favorite writers.
-    *   **HN/Reddit Filtering:** Filter posts by points (e.g., "only > 100 points") or date when crawling indices or subreddits.
-*   **Advanced Discovery:** RSS feed integration to automatically find and bundle new content from your favorite sites.
-*   **Headless Browser Integration:** Use a headless browser (like Playwright) as a fallback for the CLI. This would allow automated crawling of JavaScript-heavy sites and better session/cookie management for background tasks.
+```bat
+@echo off
+cd /d "%~dp0"
+uv run dala-server
+```
 
-## 📄 License
+Press `Win + R`, enter `shell:startup`, and add a shortcut to `start_dala.bat`.
+
+### Linux systemd
+
+Create `~/.config/systemd/user/epub_server.service`:
+
+```ini
+[Unit]
+Description=Web to EPUB Python Server
+After=network.target
+
+[Service]
+WorkingDirectory=/path/to/dala
+ExecStart=/path/to/dala/.venv/bin/dala-server
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+Enable it:
+
+```bash
+systemctl --user enable --now epub_server
+```
+
+</details>
+
+## sites.yaml Customization
+
+You can define custom extraction rules for specific websites in `sites.yaml` at the project root.
+
+```yaml
+- name: "The New York Times"
+  domains:
+    - "nytimes.com"
+  content_selector: "article#story"
+  remove:
+    - "#top-wrapper"
+    - ".ad-container"
+    - "div[data-testid='recirculation']"
+```
+
+- `content_selector`: CSS selector for the main article text.
+- `remove`: CSS selectors to strip before EPUB/PDF generation.
+
+## Troubleshooting
+
+### The extension says the server is offline
+
+Start the backend:
+
+```bash
+uv run dala-server
+```
+
+Then open `http://127.0.0.1:8000/ping`.
+
+### The EPUB downloads but images are missing
+
+- For logged-in pages, enable **Use Site Cookies** and make sure the page is readable in your browser.
+- Try **Full** image mode if a site uses unusual thumbnails or lazy-loaded images.
+- For forums, enable **Force Forum Driver** and keep **Use Site Cookies** enabled.
+
+### PDF option is disabled
+
+Install server-side browser rendering support:
+
+```bash
+uv sync --extra browser
+```
+
+Restart the server and check `http://127.0.0.1:8000/ping`. If no Chrome, Edge, Brave, or Chromium executable is detected, run `uv run playwright install chromium`.
+
+### Browser fallback fails
+
+Use headed mode to debug login, bot challenges, or extension loading:
+
+```bash
+uv run dala --browser --headed "https://example.com/article"
+```
+
+If an interactive bot challenge appears, solve it in your normal browser and run the extension from the readable tab.
+
+### Android / Termux cannot find uv
+
+```bash
+pkg install tur-repo
+pkg install uv
+```
+
+If `uv run` still fails, use the manual virtualenv setup from [Android / Termux](#android--termux).
+
+### Translation fails
+
+- Confirm the API key is present in `.env`, the extension settings, or the shell.
+- Run `uv run dala --translate es --test-translation-provider "Hello world"`.
+- For Google Translate, confirm `deep-translator` is installed through the normal project dependencies.
+
+## Architecture
+
+```text
+Browser extension or CLI input
+    |
+Driver selection
+    |
+HTML, transcript, comment, or forum extraction
+    |
+Image fetching, cleanup, optimization, and budgeting
+    |
+EPUB/PDF generation
+    |
+Browser download, CLI output, or server archive
+```
+
+- `dala/drivers/`: source-specific extraction for HN, Reddit, Substack, YouTube, WordPress, forums, and generic articles.
+- `dala/core/`: shared extraction, browser fallback, image processing, translation, discovery, job, and writer logic.
+- `server.py`: FastAPI backend used by the extensions and async job flow.
+- `firefox_extension/` and `extension_chrome/`: browser clients for page capture, queueing, options, and downloads.
+
+## Roadmap
+
+### Planned
+
+- Markdown output for note-taking apps.
+- Translation polish, provider quality controls, and review tooling.
+- More fixture-based tests for brittle extraction heuristics.
+- Better progress reporting for long bundles.
+
+### Ideas
+
+- Crawler mode with same-domain/main-content guardrails.
+- RSS feed ingestion.
+- More date-range archive patterns.
+- HN/Reddit index filtering by points, dates, or comment counts.
+
+## License
+
 [MIT](LICENSE)
