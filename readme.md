@@ -89,7 +89,7 @@ Server-side browser setup uses Dala's optional Python browser-control support pl
 
 ## PDF and Server-Side Browser Rendering
 
-Basic EPUB downloads do not need server-side browser rendering. This section is about Dala's optional Python support for controlling a browser on the server, not the browser extension.
+*Basic EPUB downloads do not need server-side browser rendering. This section is about Dala's optional Python support for controlling a browser on the server, not the browser extension.*
 
 Install the optional dependency group only if you want PDF output, CLI/server rendering of JavaScript-heavy pages, or server-side browser fallback:
 
