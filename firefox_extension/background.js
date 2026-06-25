@@ -65,17 +65,17 @@ browser.runtime.onInstalled.addListener(() => {
     if (menus) {
         menus.create({
             id: "add-to-queue",
-            title: "Add to EPUB Queue",
+            title: "Add to Dala Queue",
             contexts: ["page", "link"]
         });
         menus.create({
             id: "add-selected-to-queue",
-            title: "Add selected tabs to EPUB Queue",
+            title: "Add selected tabs to Dala Queue",
             contexts: ["page"]
         });
         menus.create({
             id: "download-page",
-            title: "Download Page to EPUB",
+            title: "Download Page with Dala",
             contexts: ["page", "link"]
         });
     } else {
@@ -153,7 +153,7 @@ if (browser.commands && browser.commands.onCommand) {
             downloadFromShortcut(tab.url, html, tab.id);
         } else if (command === "add-to-queue") {
             await addToQueue(tab.url);
-            showNativeToast(tab.id, "Added to EPUB queue");
+            showNativeToast(tab.id, "Added to Dala queue");
         }
     });
 }
@@ -1022,7 +1022,7 @@ async function recoverServerSavedSuccess(payload, isBundle) {
             type: "basic",
             iconUrl: "icon.png",
             title: "Saved on Server",
-            message: "Server completed and saved the EPUB locally."
+            message: "Server completed and saved the output locally."
         });
 
         if (isBundle) {

@@ -90,7 +90,7 @@
         action: "shortcut-queue",
         url: window.location.href
       }).then(() => {
-        showToast("Added to EPUB queue");
+        showToast("Added to Dala queue");
       }).catch((e) => {
         showToast("Queue shortcut failed", "#d9534f");
         console.error("Shortcut queue failed", e);
