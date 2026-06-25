@@ -1,2 +1,2 @@
 #!/bin/sh
-dala-server --open
+dala-server

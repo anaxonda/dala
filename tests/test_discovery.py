@@ -156,6 +156,46 @@ async def test_discover_posts_filters_and_hydrates_metadata(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_discover_posts_sorts_by_date_and_preserves_metadata(monkeypatch):
+    listing_html = """
+    <a href="/2025/08/20/newer/">Newer</a>
+    <a href="/2025/08/10/older/">Older</a>
+    <a href="/2025/08/15/middle/">Middle</a>
+    """
+    pages = {"https://example.com/archive/": listing_html}
+
+    async def fake_fetch(session, url, response_type="text", **kwargs):
+        return pages.get(url), url
+
+    monkeypatch.setattr(discovery, "fetch_with_retry", fake_fetch)
+
+    sources = await discover_posts_for_sources(
+        object(),
+        [Source(url="https://example.com/archive/")],
+        ConversionOptions(start_date="2025-08", end_date="2025-08"),
+    )
+
+    assert [source.url for source in sources] == [
+        "https://example.com/2025/08/10/older",
+        "https://example.com/2025/08/15/middle",
+        "https://example.com/2025/08/20/newer",
+    ]
+    assert [source.published_date for source in sources] == ["2025-08-10", "2025-08-15", "2025-08-20"]
+
+    reversed_sources = await discover_posts_for_sources(
+        object(),
+        [Source(url="https://example.com/archive/")],
+        ConversionOptions(start_date="2025-08", end_date="2025-08", date_sort="desc"),
+    )
+
+    assert [source.url for source in reversed_sources] == [
+        "https://example.com/2025/08/20/newer",
+        "https://example.com/2025/08/15/middle",
+        "https://example.com/2025/08/10/older",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_discover_posts_handles_crazyguy_query_doc_links(monkeypatch):
     listing_html = """
     <div>

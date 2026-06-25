@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from bs4 import BeautifulSoup, Tag
+from bs4.element import NavigableString
 
 from ..models import BookData, Chapter, ConversionOptions, log
 from ..utils.llm import LLMHelper
@@ -40,7 +41,6 @@ CONTENT_SCOPE_CLASSES = {
 }
 ALWAYS_SKIP_CLASSES = {
     "post-meta",
-    "ai-summary",
     "comment-header",
     "forum-post-header",
     "nav-bar",
@@ -507,7 +507,17 @@ def should_translate_tag(tag: Tag, scope: str) -> bool:
     return True
 
 
+def prepare_ai_summary_text_nodes(soup: BeautifulSoup) -> None:
+    for summary in soup.select(".ai-summary"):
+        for child in list(summary.children):
+            if isinstance(child, NavigableString) and normalized_source_text(str(child)):
+                p = soup.new_tag("p")
+                p.string = normalized_source_text(str(child))
+                child.replace_with(p)
+
+
 def collect_translation_units(soup: BeautifulSoup, scope: str) -> List[TranslationUnit]:
+    prepare_ai_summary_text_nodes(soup)
     units: List[TranslationUnit] = []
     seen = set()
     for tag in soup.find_all(list(TRANSLATABLE_TAGS)):

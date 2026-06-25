@@ -121,6 +121,7 @@ class SourceItem(BaseModel):
     assets: Optional[list] = None
     asset_debug: Optional[dict] = None
     is_forum: Optional[bool] = False
+    published_date: Optional[str] = None
 
 class ConversionRequest(BaseModel):
     sources: List[SourceItem] # Renamed from urls
@@ -165,6 +166,7 @@ class ConversionRequest(BaseModel):
     pdf_page_size: str = "letter"
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    date_sort: str = "asc"
     date_fallback: str = "auto"
     include_undated: bool = False
     max_discovery_pages: int = 20
@@ -567,6 +569,7 @@ def _build_options_and_sources(req: ConversionRequest) -> Tuple[ConversionOption
         pdf_page_size=req.pdf_page_size or "letter",
         start_date=req.start_date,
         end_date=req.end_date,
+        date_sort=req.date_sort or "asc",
         date_fallback=req.date_fallback or "auto",
         include_undated=req.include_undated,
         max_discovery_pages=req.max_discovery_pages,
@@ -589,7 +592,8 @@ def _build_options_and_sources(req: ConversionRequest) -> Tuple[ConversionOption
             page_htmls=s.page_htmls,
             cookies=s.cookies,
             assets=s.assets,
-            is_forum=bool(s.is_forum)
+            is_forum=bool(s.is_forum),
+            published_date=s.published_date,
         ))
     return options, core_sources
 
@@ -795,7 +799,8 @@ async def run_conversion_job(
             stage=f"write_{options.output_format}",
             duration_ms=int((time.perf_counter() - stage_started_at) * 1000),
         )
-        filename = default_output_filename(final_book.title, options.output_format)
+        filename_title = core_main.bundle_filename_title(final_book.title, options) if bundle_mode == "bundle" else final_book.title
+        filename = default_output_filename(filename_title, options.output_format)
         log.info(f"Generated {format_info.label} at: {tmp_path}")
         log.info(f"Sending as: {filename}")
 
@@ -1602,7 +1607,9 @@ def parse_server_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Start the Dala local server")
     parser.add_argument("--host", default=os.getenv("DALA_SERVER_HOST", "127.0.0.1"), help="Host/interface to bind")
     parser.add_argument("--port", type=int, default=int(os.getenv("DALA_SERVER_PORT", "8000")), help="Port to bind")
-    parser.add_argument("--open", action="store_true", help="Open the local status page in your browser")
+    parser.add_argument("--open", dest="open", action="store_true", help="Open the local status page in your browser (default)")
+    parser.add_argument("--no-open", dest="open", action="store_false", help="Do not open a browser window")
+    parser.set_defaults(open=True)
     return parser.parse_args(argv)
 
 

@@ -94,9 +94,12 @@ async def process_urls(
                             cookies=source.cookies,
                             assets=source.assets,
                             is_forum=False,
+                            published_date=source.published_date,
                         )
                         book = await GenericDriver().prepare_book_data(context, generic_source)
                 success = book is not None
+                if book is not None and source.published_date:
+                    book.extra_metadata["published_date"] = source.published_date
                 return book
             except BrowserChallengeError:
                 raise
@@ -142,12 +145,35 @@ def create_bundle(books: List[BookData], title: str, author: str) -> BookData:
             elif chap.is_comments: comments_chap = chap
 
         if article_chap:
-             if comments_chap:
-                  master_toc.append( (epub.Link(article_chap.filename, book.title, article_chap.uid), [epub.Link(comments_chap.filename, "Comments", comments_chap.uid)]) )
-             else:
-                  master_toc.append(epub.Link(article_chap.filename, book.title, article_chap.uid))
+            toc_title = book.title
+            published_date = (book.extra_metadata or {}).get("published_date")
+            if published_date:
+                toc_title = f"{published_date} - {toc_title}"
+            article_chap.toc_title = toc_title
+            if comments_chap:
+                master_toc.append((
+                    epub.Link(article_chap.filename, toc_title, article_chap.uid),
+                    [epub.Link(comments_chap.filename, "Comments", comments_chap.uid)],
+                ))
+            else:
+                master_toc.append(epub.Link(article_chap.filename, toc_title, article_chap.uid))
 
     return BookData(title=title, author=author, uid=master_uid, language="en", description=f"Bundle of {len(books)} articles.", source_url="", chapters=master_chapters, images=master_images, toc_structure=master_toc)
+
+
+def bundle_filename_title(title: str, options: ConversionOptions) -> str:
+    if options.date_range_active:
+        if options.start_date and options.end_date:
+            suffix = f"{options.start_date}_to_{options.end_date}"
+        elif options.start_date:
+            suffix = f"from_{options.start_date}"
+        else:
+            suffix = f"until_{options.end_date}"
+        return title if suffix in title else f"{title}_{suffix}"
+    today = datetime.now().strftime("%Y-%m-%d")
+    if title.endswith(f"_{today}") or title.endswith(f"-{today}") or today in title:
+        return title
+    return f"{title}_{today}"
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Web to ebook downloader")
@@ -226,6 +252,7 @@ def parse_args():
     parser.add_argument("--max-image-bytes-mb", type=int, default=None, help="Override maximum optimized image MB allowed before write")
     parser.add_argument("--start-date", help="Discover and include posts on/after this date (YYYY, YYYY-MM, or YYYY-MM-DD)")
     parser.add_argument("--end-date", help="Discover and include posts on/before this date (YYYY, YYYY-MM, or YYYY-MM-DD)")
+    parser.add_argument("--date-sort", choices=["asc", "desc"], default="asc", help="Sort discovered date-range posts earliest-to-latest or latest-to-earliest")
     parser.add_argument("--date-fallback", choices=["auto", "shallow", "metadata", "full"], default="auto", help="How hard to work to find post dates during discovery")
     parser.add_argument("--include-undated", action="store_true", help="Include discovered posts with no date")
     parser.add_argument("--max-discovery-pages", type=int, default=20, help="Maximum listing/archive pages to scan")
@@ -372,6 +399,7 @@ async def async_main():
         pdf_page_size=args.pdf_page_size,
         start_date=args.start_date,
         end_date=args.end_date,
+        date_sort=args.date_sort,
         date_fallback=args.date_fallback,
         include_undated=args.include_undated,
         max_discovery_pages=args.max_discovery_pages,
@@ -463,7 +491,7 @@ async def async_main():
 
         master_author = args.bundle_author or "Various Authors"
         master_book = create_bundle(processed_books, master_title, master_author)
-        fname = ensure_output_extension(args.output, options.output_format) if args.output else default_output_filename(master_title, options.output_format)
+        fname = ensure_output_extension(args.output, options.output_format) if args.output else default_output_filename(bundle_filename_title(master_title, options), options.output_format)
         try:
             assert_image_budget(master_book, options)
         except ImageBudgetExceeded as e:

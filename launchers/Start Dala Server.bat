@@ -1,3 +1,3 @@
 @echo off
-dala-server --open
+dala-server
 pause

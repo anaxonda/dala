@@ -53,5 +53,5 @@ fi
 
 echo
 echo "Dala installed. Start the server with:"
-echo "  dala-server --open"
+echo "  dala-server"
 echo "If dala-server is not found, restart your terminal or run: uv tool update-shell"

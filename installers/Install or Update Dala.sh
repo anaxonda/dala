@@ -19,4 +19,4 @@ sh "$INSTALL_SCRIPT" $INSTALL_ARGS
 
 echo
 echo "Dala is installed or updated."
-echo "Start it with: dala-server --open"
+echo "Start it with: dala-server"

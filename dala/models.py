@@ -77,6 +77,7 @@ class ConversionOptions:
     pdf_page_size: str = "letter"
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    date_sort: str = "asc"
     date_fallback: str = "auto"
     include_undated: bool = False
     max_discovery_pages: int = 20
@@ -115,6 +116,7 @@ class Source:
     cookies: Optional[Dict[str, str]] = None
     assets: Optional[List[Dict[str, Any]]] = None
     is_forum: bool = False
+    published_date: Optional[str] = None
 
 @dataclass
 class SiteProfile:
@@ -150,6 +152,7 @@ class Chapter:
     uid: str
     is_article: bool = False
     is_comments: bool = False
+    toc_title: Optional[str] = None
 
 @dataclass
 class BookData:

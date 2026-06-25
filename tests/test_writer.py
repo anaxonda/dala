@@ -140,6 +140,29 @@ def test_pdf_html_adds_toc_for_multiple_chapters():
     assert 'href="#second"' in html
 
 
+def test_pdf_html_uses_chapter_toc_title_without_changing_heading():
+    book = make_book(
+        title="Bundle",
+        uid="urn:bundle",
+        chapters=[
+            make_chapter(
+                title="Article One",
+                filename="first.xhtml",
+                content_html="<p>One</p>",
+                uid="first",
+                toc_title="2025-08-15 - Article One",
+            ),
+            make_chapter(title="Second", filename="second.xhtml", content_html="<p>Two</p>", uid="second"),
+        ],
+    )
+
+    html = PdfWriter.build_html(book, ConversionOptions(output_format="pdf"))
+
+    assert '2025-08-15 - Article One' in html
+    assert '<h1>Article One</h1>' in html
+    assert '<h1>2025-08-15 - Article One</h1>' not in html
+
+
 def test_pdf_html_adds_forum_page_links_to_single_chapter_toc():
     book = make_forum_book(page_count=2)
 

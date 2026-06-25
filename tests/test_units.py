@@ -174,6 +174,8 @@ def test_parse_args_accepts_browser_flags(monkeypatch, tmp_path):
             "2025-08-01",
             "--end-date",
             "2025-08-31",
+            "--date-sort",
+            "desc",
             "--date-fallback",
             "shallow",
             "--include-undated",
@@ -217,6 +219,7 @@ def test_parse_args_accepts_browser_flags(monkeypatch, tmp_path):
     assert args.pdf_page_size == "kobo_clara"
     assert args.start_date == "2025-08-01"
     assert args.end_date == "2025-08-31"
+    assert args.date_sort == "desc"
     assert args.date_fallback == "shallow"
     assert args.include_undated is True
     assert args.max_discovery_pages == 3

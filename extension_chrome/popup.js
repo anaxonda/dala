@@ -410,6 +410,7 @@ async function clearDateOptions() {
             ...existing,
             start_date: "",
             end_date: "",
+            date_sort: "asc",
             date_fallback: "auto",
             include_undated: false
         }
@@ -442,9 +443,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Bulk Actions
         document.getElementById('btn-add-selected').onclick = importSelectedTabs;
         document.getElementById('btn-add-all').onclick = importAllTabs;
-        const retryFailedBtn = document.getElementById('btn-retry-failed');
-        if (retryFailedBtn) retryFailedBtn.onclick = retryFailedSources;
-
         // Options
         document.querySelectorAll('input[type="checkbox"]').forEach(box => {
             box.onchange = saveOptions;
@@ -620,6 +618,7 @@ async function saveOptions(meta = {}) {
         browser_challenge_action: document.getElementById('opt-open-challenge-user-browser')?.checked ? "user_browser" : "archive",
         start_date: (document.getElementById('opt-start-date')?.value || "").trim(),
         end_date: (document.getElementById('opt-end-date')?.value || "").trim(),
+        date_sort: document.getElementById('opt-date-sort-desc')?.checked ? "desc" : "asc",
         date_fallback: "auto",
         include_undated: false,
         pages: (document.getElementById('opt-pages')?.value || "").trim(),
@@ -671,6 +670,7 @@ async function restoreOptions() {
         if (res.savedOptions.end_date !== undefined) {
             document.getElementById('opt-end-date').value = res.savedOptions.end_date || "";
         }
+        document.getElementById('opt-date-sort-desc').checked = res.savedOptions.date_sort === "desc";
         if (res.savedOptions.pages !== undefined) {
             document.getElementById('opt-pages').value = res.savedOptions.pages;
         }
@@ -713,6 +713,7 @@ function getOptions() {
         browser_challenge_action: document.getElementById('opt-open-challenge-user-browser')?.checked ? "user_browser" : "archive",
         start_date: (document.getElementById('opt-start-date')?.value || "").trim(),
         end_date: (document.getElementById('opt-end-date')?.value || "").trim(),
+        date_sort: document.getElementById('opt-date-sort-desc')?.checked ? "desc" : "asc",
         date_fallback: "auto",
         include_undated: false,
         pages: (document.getElementById('opt-pages')?.value || "").trim(),
@@ -742,12 +743,14 @@ function syncImageOptionsState() {
     const group = document.getElementById('image-settings');
     const imagePreset = document.getElementById('opt-image-preset');
     const grayscale = document.getElementById('opt-grayscale');
+    const thumbnails = document.getElementById('opt-thumbnails');
     if (group) {
         group.classList.toggle("disabled", noImages);
         group.setAttribute("aria-disabled", noImages ? "true" : "false");
     }
     if (imagePreset) imagePreset.disabled = noImages;
     if (grayscale) grayscale.disabled = noImages;
+    if (thumbnails) thumbnails.disabled = noImages;
 }
 
 function syncTranslationDisplayOptions() {
@@ -796,6 +799,15 @@ function syncAdvancedOptionSections() {
     if (dateSection) dateSection.open = hasDates;
     if (forumSection) forumSection.open = hasForumOptions;
     if (translationSection) translationSection.open = hasTranslationOptions;
+    syncQueueScopedOptionsVisibility();
+}
+
+function syncQueueScopedOptionsVisibility() {
+    const isQueue = !!document.getElementById('view-queue')?.classList.contains('active');
+    for (const id of ['date-options', 'forum-options']) {
+        const section = document.getElementById(id);
+        if (section) section.classList.toggle('hidden', isQueue);
+    }
 }
 
 function parsePageSpecInput(spec) {
@@ -1042,6 +1054,7 @@ function switchTab(tab) {
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
     document.getElementById(`view-${tab}`).classList.add('active');
     document.getElementById(`tab-${tab}`).classList.add('active');
+    syncQueueScopedOptionsVisibility();
 }
 
 function showStatus(msg) {

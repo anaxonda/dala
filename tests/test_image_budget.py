@@ -71,6 +71,41 @@ def test_create_bundle_uses_prepared_image_refs():
     assert all(any(name in chapter.content_html for chapter in bundle.chapters) for name in filenames)
 
 
+def test_create_bundle_prefixes_toc_entries_with_published_date():
+    book = _book("one", b"first")
+    book.title = "Article One"
+    book.extra_metadata["published_date"] = "2025-08-15"
+
+    bundle = main.create_bundle([book], "Bundle", "Author")
+
+    assert bundle.toc_structure[0].title == "2025-08-15 - Article One"
+    assert bundle.chapters[0].toc_title == "2025-08-15 - Article One"
+
+
+def test_bundle_filename_title_adds_today_or_date_range(monkeypatch):
+    class FixedDateTime:
+        @staticmethod
+        def now():
+            class FixedNow:
+                @staticmethod
+                def strftime(fmt):
+                    assert fmt == "%Y-%m-%d"
+                    return "2026-06-25"
+            return FixedNow()
+
+    monkeypatch.setattr(main, "datetime", FixedDateTime)
+
+    assert main.bundle_filename_title("Daily Read", ConversionOptions()) == "Daily Read_2026-06-25"
+    assert main.bundle_filename_title(
+        "August Posts",
+        ConversionOptions(start_date="2025-08", end_date="2025-08-31"),
+    ) == "August Posts_2025-08_to_2025-08-31"
+    assert main.bundle_filename_title(
+        "site_2025-08_to_2025-08-31",
+        ConversionOptions(start_date="2025-08", end_date="2025-08-31"),
+    ) == "site_2025-08_to_2025-08-31"
+
+
 def test_assert_image_budget_fails_before_write():
     book = _book("large", b"x" * 1024, "images/a.jpg")
     book.images.append(ImageAsset(

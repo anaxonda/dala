@@ -36,7 +36,7 @@ Install the command-line tools:
 
 ```bash
 uv tool install dala
-dala-server --open
+dala-server
 ```
 
 For development from a source checkout:
@@ -44,7 +44,7 @@ For development from a source checkout:
 ```bash
 git clone https://github.com/anaxonda/dala.git
 cd dala
-uv run dala-server --open
+uv run dala-server
 ```
 
 Install the browser extension:
@@ -53,6 +53,8 @@ Install the browser extension:
 - **Chrome/Brave/Edge:** open `chrome://extensions`, enable **Developer Mode**, click **Load unpacked**, and select `extension_chrome/`.
 
 Then open a page, click the **dala** icon, and click **Download Page**.
+
+Dala opens its local status page when `dala-server` starts. Use `dala-server --no-open` for background services, SSH sessions, or scripts that should not open a browser.
 
 For PDF output, JavaScript-heavy pages without extension capture, or headless browser fallback, see [Headless Browser Support](#headless-browser-support).
 
@@ -105,7 +107,7 @@ Install Dala with headless browser support only if you want PDF output, JavaScri
 ```bash
 uv tool install --force "dala[browser]"
 dala-setup-browser
-dala-server --open
+dala-server
 ```
 
 For development from a source checkout:
@@ -113,7 +115,7 @@ For development from a source checkout:
 ```bash
 uv sync --extra browser
 uv run dala-setup-browser
-uv run dala-server --open
+uv run dala-server
 ```
 
 `dala-setup-browser` first tries to use an existing Chromium-compatible browser such as Chrome, Edge, Brave, or Chromium. If none is detected, it installs Playwright's managed Chromium.
@@ -121,7 +123,7 @@ uv run dala-server --open
 <details>
 <summary>Installer scripts and launchers</summary>
 
-The `installers/` directory has double-click installers that install or update Dala, ask whether to add optional headless browser support, and create a desktop launcher:
+The `installers/` directory has desktop-oriented installers and wrappers. Windows and macOS installers prompt for optional headless browser support and create a desktop launcher when possible; the Linux wrapper installs or updates from a terminal:
 
 ```text
 installers/Install or Update Dala.bat       # Windows double-click wrapper
@@ -142,7 +144,7 @@ The `scripts/` directory has conservative lower-level installers that reuse an e
 .\scripts\install-dala.ps1 -HeadlessBrowser
 ```
 
-The `launchers/` directory has double-click templates that start `dala-server --open` after Dala is installed.
+The `launchers/` directory has double-click templates that start `dala-server` after Dala is installed.
 
 </details>
 
@@ -415,46 +417,46 @@ CLI and extension outputs use the same title-based naming helpers where possible
 
 ## Platform-Specific Installation
 
-Dala is primarily tested on Linux and Android/Termux. macOS and Windows should work with the commands below; report platform-specific issues if you hit them.
+Dala is primarily tested on Linux and Android/Termux. Windows and macOS should work with the packaged installers or the manual `uv` commands below.
 
-<details>
-<summary>macOS, Windows, Linux, and Android setup</summary>
+Git is not required when installing the published package with `uv tool install dala`. It is only needed for source-checkout development.
 
-### Prerequisites
+The GitHub release asset `dala-installers-vVERSION.zip` contains:
 
-- `uv`
-- Git, unless installing from a published package/wheel
+- `installers/`: double-click or terminal installers for desktop users
+- `scripts/`: lower-level install/update scripts
+- `launchers/`: templates that start the installed `dala-server`
 
-Install `uv`:
-
-```bash
-# macOS
-brew install uv
-
-# Windows PowerShell
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Android / Termux
-pkg install tur-repo
-pkg install uv
-```
+The installers install or update the Python server from PyPI, install `uv` only if it is missing, optionally add headless browser support, and do not install the browser extension.
 
 ### macOS
 
+Recommended: unzip `dala-installers-vVERSION.zip`, then right-click `installers/Install or Update Dala.command` and choose **Open**. The installer prompts for optional headless browser support and creates `Start Dala Server.command` on the Desktop when possible.
+
+Manual install:
+
 ```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
 uv tool install dala
-dala-server --open
+dala-server
 ```
 
-macOS may prompt you to install Command Line Tools if Git is not installed.
+Headless browser/PDF support:
+
+```bash
+./scripts/install-dala.sh --headless-browser
+```
 
 <details>
 <summary>Start Dala automatically with launchd</summary>
 
-Create `~/Library/LaunchAgents/com.dala.server.plist`:
+Find the installed server path:
+
+```bash
+command -v dala-server
+```
+
+Create `~/Library/LaunchAgents/com.dala.server.plist`, replacing `/Users/YOU/.local/bin/dala-server` with that path:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -465,12 +467,9 @@ Create `~/Library/LaunchAgents/com.dala.server.plist`:
     <string>com.dala.server</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/uv</string>
-        <string>run</string>
-        <string>dala-server</string>
+        <string>/Users/YOU/.local/bin/dala-server</string>
+        <string>--no-open</string>
     </array>
-    <key>WorkingDirectory</key>
-    <string>/path/to/dala</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -493,17 +492,26 @@ launchctl load ~/Library/LaunchAgents/com.dala.server.plist
 
 ### Windows
 
-Open PowerShell:
+Recommended: unzip `dala-installers-vVERSION.zip`, then double-click `installers\Install or Update Dala.bat`. It runs the PowerShell installer, prompts for optional headless browser support, and creates `Start Dala Server.bat` on the Desktop when possible.
+
+Manual install from PowerShell:
 
 ```powershell
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 uv tool install dala
-dala-server --open
+dala-server
 ```
 
 If you see an execution policy error, run:
 
 ```powershell
 Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+Headless browser/PDF support:
+
+```powershell
+.\scripts\install-dala.ps1 -HeadlessBrowser
 ```
 
 <details>
@@ -513,7 +521,7 @@ Use `launchers/Start Dala Server.bat`, or create `start_dala.bat`:
 
 ```bat
 @echo off
-dala-server --open
+dala-server
 ```
 
 Press `Win + R`, enter `shell:startup`, and add a shortcut to `start_dala.bat`.
@@ -522,10 +530,36 @@ Press `Win + R`, enter `shell:startup`, and add a shortcut to `start_dala.bat`.
 
 ### Linux
 
-Use the Quick Start. For PDF or headless browser rendering, use the setup above; Dala can auto-detect `chromium`, `google-chrome`, `microsoft-edge`, or `brave-browser` from `PATH`. A `.desktop` launcher template is available at `launchers/dala-server.desktop`.
+Recommended: unzip `dala-installers-vVERSION.zip`, then run:
+
+```bash
+sh "installers/Install or Update Dala.sh"
+```
+
+Manual install:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv tool install dala
+dala-server
+```
+
+Headless browser/PDF support:
+
+```bash
+./scripts/install-dala.sh --headless-browser
+```
+
+Dala can auto-detect `chromium`, `google-chrome`, `microsoft-edge`, or `brave-browser` from `PATH`. A `.desktop` launcher template is available at `launchers/dala-server.desktop`; if your desktop environment cannot find `dala-server`, edit `Exec=` to the absolute path from `command -v dala-server`.
 
 <details>
 <summary>Start Dala automatically with systemd</summary>
+
+Find the installed server path:
+
+```bash
+command -v dala-server
+```
 
 Create `~/.config/systemd/user/epub_server.service`:
 
@@ -535,8 +569,7 @@ Description=Web to ebook Python Server
 After=network.target
 
 [Service]
-WorkingDirectory=/path/to/dala
-ExecStart=/path/to/dala/.venv/bin/dala-server
+ExecStart=/home/YOU/.local/bin/dala-server --no-open
 Restart=always
 RestartSec=5
 
@@ -554,28 +587,29 @@ systemctl --user enable --now epub_server
 
 ### Android / Termux
 
-You can run the backend on your phone:
+Termux does not use the desktop installer bundle. Install from PyPI with Termux `uv`:
 
 ```bash
 pkg update
-pkg install git python tur-repo
+pkg install tur-repo
 pkg install uv
-git clone https://github.com/anaxonda/dala.git
-cd dala
+uv tool install dala
+dala-server --no-open
 ```
 
-If `uv` cache/linking gives trouble on Android, create the environment manually:
+Open `http://127.0.0.1:8000/` manually, or point Firefox for Android plus the Dala extension at the local Termux server.
+
+If `uv tool install` cache/linking gives trouble on Android, use a source checkout and virtualenv:
 
 ```bash
+pkg install git python
+git clone https://github.com/anaxonda/dala.git
+cd dala
 python -m venv .venv
 source .venv/bin/activate
 UV_LINK_MODE=copy UV_CACHE_DIR=$HOME/.cache/uv uv pip install -e .
-uv run dala-server
+uv run dala-server --no-open
 ```
-
-Firefox for Android can use the extension against the local Termux server.
-
-</details>
 
 ## sites.yaml Customization
 

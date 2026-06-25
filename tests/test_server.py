@@ -82,7 +82,7 @@ def test_parse_server_args_defaults(monkeypatch):
 
     assert args.host == "127.0.0.1"
     assert args.port == 8000
-    assert args.open is False
+    assert args.open is True
 
 
 def test_parse_server_args_reads_env(monkeypatch):
@@ -101,10 +101,22 @@ def test_server_start_opens_localhost_for_wildcard_host(monkeypatch):
     monkeypatch.setattr(server.webbrowser, "open", lambda url: opened.append(url))
     monkeypatch.setattr(server.uvicorn, "run", lambda app, host, port: launched.update({"host": host, "port": port}))
 
-    server.start(["--host", "0.0.0.0", "--port", "8765", "--open"])
+    server.start(["--host", "0.0.0.0", "--port", "8765"])
 
     assert opened == ["http://127.0.0.1:8765/"]
     assert launched == {"host": "0.0.0.0", "port": 8765}
+
+
+def test_server_start_can_disable_browser_open(monkeypatch):
+    opened = []
+    launched = {}
+    monkeypatch.setattr(server.webbrowser, "open", lambda url: opened.append(url))
+    monkeypatch.setattr(server.uvicorn, "run", lambda app, host, port: launched.update({"host": host, "port": port}))
+
+    server.start(["--host", "127.0.0.1", "--port", "8765", "--no-open"])
+
+    assert opened == []
+    assert launched == {"host": "127.0.0.1", "port": 8765}
 
 
 def test_build_options_normalizes_legacy_image_preset():
@@ -278,6 +290,7 @@ def test_convert_endpoint(mock_write, mock_process):
         "translation_scope": "all-readable",
         "translation_glossary": "KOReader=KOReader",
         "translation_cache": False,
+        "date_sort": "desc",
     }
     
     response = client.post("/convert", json=payload)
@@ -323,6 +336,7 @@ def test_convert_endpoint(mock_write, mock_process):
     assert options.translation_scope == "all-readable"
     assert options.translation_glossary == "KOReader=KOReader"
     assert options.translation_cache is False
+    assert options.date_sort == "desc"
     
     # Verify bundle creation logic (if applicable) or just single book return
     # The server logic handles single vs bundle.

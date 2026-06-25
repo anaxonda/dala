@@ -1,6 +1,14 @@
 # Dala Installers
 
-These files install or update the Dala Python server from PyPI. They do not install the browser extension.
+These files install or update the Dala Python server from PyPI. They install `uv` only if it is missing, ask whether to add optional headless browser/PDF support, and do not install the browser extension.
+
+After installation, start Dala with the Desktop launcher if one was created, or run:
+
+```bash
+dala-server
+```
+
+`dala-server` opens the local status page by default. Use `dala-server --no-open` for background services or SSH sessions.
 
 ## Windows
 
@@ -11,6 +19,12 @@ Install or Update Dala.bat
 ```
 
 The batch file runs the PowerShell installer. The installer creates a Desktop launcher named `Start Dala Server.bat`.
+
+Manual PowerShell fallback:
+
+```powershell
+.\Install or Update Dala.ps1
+```
 
 ## macOS
 
@@ -30,6 +44,14 @@ Run:
 sh "Install or Update Dala.sh"
 ```
 
+The Linux installer does not create a `.desktop` file automatically. Use `launchers/dala-server.desktop` from the release bundle as a template if you want a desktop launcher.
+
 ## Headless Browser Support
 
-The installers ask whether to add optional headless browser support. This lets the Dala server control Chrome/Chromium in the background. It is needed for PDF output and some JavaScript-heavy pages, and it is separate from the normal Dala browser extension.
+The Windows and macOS installers ask whether to add optional headless browser support. This lets the Dala server control Chrome/Chromium in the background. It is needed for PDF output and some JavaScript-heavy pages, and it is separate from the normal Dala browser extension.
+
+Linux users can pass the option directly:
+
+```bash
+sh "Install or Update Dala.sh" --headless-browser
+```

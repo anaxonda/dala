@@ -73,6 +73,67 @@ async def test_translation_underneath_includes_captions_and_simple_lists(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_translation_underneath_includes_ai_summary(monkeypatch):
+    async def fake_translate_texts(texts, options):
+        return {text: f"ES: {text}" for text in texts}
+
+    book = make_translation_book()
+    book.chapters[0].content_html = """
+    <html><body>
+      <div class="ai-summary"><h3>AI Summary</h3>This is the summary.</div>
+      <p>Body text.</p>
+    </body></html>
+    """
+
+    monkeypatch.setattr(TranslationProcessor, "translate_texts", fake_translate_texts)
+    translated = await TranslationProcessor.translate_book(
+        book,
+        ConversionOptions(
+            translation_enabled=True,
+            translation_target_lang="es",
+            translation_display="underneath",
+            translation_cache=False,
+        ),
+    )
+
+    article = BeautifulSoup(translated.chapters[0].content_html, "html.parser")
+    blocks = [tag.get_text(" ", strip=True) for tag in article.select(".dala-translation-under")]
+
+    assert "ES: AI Summary" in blocks
+    assert "ES: This is the summary." in blocks
+
+
+@pytest.mark.asyncio
+async def test_translation_replace_includes_ai_summary(monkeypatch):
+    async def fake_translate_texts(texts, options):
+        return {text: f"ES: {text}" for text in texts}
+
+    book = make_translation_book()
+    book.chapters[0].content_html = """
+    <html><body>
+      <div class="ai-summary"><h3>AI Summary</h3><p>This is the summary.</p></div>
+      <p>Body text.</p>
+    </body></html>
+    """
+
+    monkeypatch.setattr(TranslationProcessor, "translate_texts", fake_translate_texts)
+    translated = await TranslationProcessor.translate_book(
+        book,
+        ConversionOptions(
+            translation_enabled=True,
+            translation_target_lang="es",
+            translation_display="replace",
+            translation_cache=False,
+        ),
+    )
+
+    article = BeautifulSoup(translated.chapters[0].content_html, "html.parser")
+
+    assert article.select_one(".ai-summary h3").get_text(" ", strip=True) == "ES: AI Summary"
+    assert article.select_one(".ai-summary p").get_text(" ", strip=True) == "ES: This is the summary."
+
+
+@pytest.mark.asyncio
 async def test_translation_side_by_side_uses_bitextual_style_table(monkeypatch):
     async def fake_translate_texts(texts, options):
         return {text: f"FR: {text}" for text in texts}

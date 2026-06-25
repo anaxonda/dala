@@ -34,10 +34,10 @@ if ($HeadlessBrowser) {
 $desktop = [Environment]::GetFolderPath("Desktop")
 if ($desktop) {
     $launcher = Join-Path $desktop "Start Dala Server.bat"
-    Set-Content -Path $launcher -Encoding ASCII -Value "@echo off`r`ndala-server --open`r`npause`r`n"
+    Set-Content -Path $launcher -Encoding ASCII -Value "@echo off`r`ndala-server`r`npause`r`n"
     Write-Host "Created launcher: $launcher"
 }
 
 Write-Host ""
 Write-Host "Dala is installed or updated."
-Write-Host "Start it with the Desktop launcher or run: dala-server --open"
+Write-Host "Start it with the Desktop launcher or run: dala-server"

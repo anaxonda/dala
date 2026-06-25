@@ -498,6 +498,18 @@ def in_range(value: Optional[date], start: Optional[date], end: Optional[date], 
     return True
 
 
+def sorted_posts_for_output(posts: List[DiscoveredPost], options: ConversionOptions) -> List[DiscoveredPost]:
+    descending = (getattr(options, "date_sort", "asc") or "asc").lower() == "desc"
+
+    def key(post: DiscoveredPost):
+        if post.published_date is None:
+            return (1, 0)
+        ordinal = post.published_date.toordinal()
+        return (0, -ordinal if descending else ordinal)
+
+    return sorted(posts, key=key)
+
+
 def default_year_from_bounds(start: Optional[date], end: Optional[date]) -> Optional[int]:
     if start and end and start.year == end.year:
         return start.year
@@ -570,12 +582,15 @@ async def discover_posts_for_sources(session, sources: Iterable[Source], options
     ]
     deduped = []
     seen = set()
-    for post in filtered:
+    for post in sorted_posts_for_output(filtered, options):
         key = canonical_url(post.url)
         if key in seen:
             continue
         seen.add(key)
-        deduped.append(Source(url=post.url))
+        deduped.append(Source(
+            url=post.url,
+            published_date=post.published_date.isoformat() if post.published_date else None,
+        ))
 
     if not deduped:
         raise DiscoveryError("No posts found in date range.")

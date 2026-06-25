@@ -776,7 +776,7 @@ class PdfWriter:
                 for title, anchor in cls._chapter_subentries(chapter)
             )
             entries.append(TocEntry(
-                chapter.title or f"Chapter {idx}",
+                getattr(chapter, "toc_title", None) or chapter.title or f"Chapter {idx}",
                 chapter_anchor,
                 fallback_page,
                 children,

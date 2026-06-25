@@ -17,18 +17,17 @@
             <label>Title (Optional)</label>
             <input type="text" id="single-title" placeholder="Page Title">
         </div>
-        <button id="btn-download-single" class="action-btn">Download Page</button>
+        <button id="btn-download-single" class="action-btn" title="Download the current browser tab with the selected options.">Download Page</button>
     </div>
 
     <!-- TAB 2: QUEUE -->
     <div id="view-queue" class="tab-content">
         <div class="queue-actions">
-            <button id="btn-add-tab" class="small-btn">+ Current</button>
+            <button id="btn-add-tab" class="small-btn" title="Add the current tab URL to the queue.">+ Current</button>
             <div class="group-right">
                 <button id="btn-add-selected" class="small-btn" title="Add Selected Tabs">+ Selected</button>
                 <button id="btn-add-all" class="small-btn" title="Add All Tabs">+ All</button>
-                <button id="btn-retry-failed" class="small-btn" title="Requeue sources that failed in the last job">Retry Failed</button>
-                <button id="btn-clear" class="small-btn text-red">Clear</button>
+                <button id="btn-clear" class="small-btn text-red" title="Clear all queued URLs.">Clear</button>
             </div>
         </div>
 
@@ -42,42 +41,43 @@
             <label>Bundle Title</label>
             <input type="text" id="bundle-title" placeholder="e.g. Daily Read">
         </div>
-        <button id="btn-download-bundle" class="action-btn">Download Bundle</button>
+        <button id="btn-download-bundle" class="action-btn" title="Download queued URLs as one anthology.">Download Bundle</button>
     </div>
 
     <!-- FOOTER: SETTINGS -->
     <div class="footer">
         <div class="col">
-            <label><input type="checkbox" id="opt-nocomments"> No Comments</label>
-            <label><input type="checkbox" id="opt-noarticle"> Comments Only</label>
+            <label title="Skip comment sections and discussion threads."><input type="checkbox" id="opt-nocomments"> No Comments</label>
+            <label title="Download only comments or discussion content when available."><input type="checkbox" id="opt-noarticle"> Comments Only</label>
+            <label title="Try Archive.org as a fallback when the live page cannot be fetched."><input type="checkbox" id="opt-archive"> Archive.org</label>
+            <label title="Generate an AI summary at the start of the output. Requires an API key."><input type="checkbox" id="opt-summary"> AI Summary</label>
         </div>
         <div class="col">
-            <label><input type="checkbox" id="opt-noimages"> Text Only</label>
-            <label for="opt-output-format">Output</label>
-            <select id="opt-output-format">
+            <label for="opt-output-format" title="Choose EPUB for e-readers or PDF for fixed-page output.">Output</label>
+            <select id="opt-output-format" title="Choose EPUB for e-readers or PDF for fixed-page output.">
                 <option value="epub">EPUB</option>
                 <option value="pdf">PDF</option>
             </select>
             <div id="pdf-options">
-                <label for="opt-pdf-page-size">PDF Page</label>
-                <select id="opt-pdf-page-size">
+                <label for="opt-pdf-page-size" title="Document pages use Letter/A4; E-reader uses a small e-reader-sized page.">PDF Page</label>
+                <select id="opt-pdf-page-size" title="Document pages use Letter/A4; E-reader uses a small e-reader-sized page.">
                     <option value="letter">Letter</option>
                     <option value="a4">A4</option>
-                    <option value="kobo_clara">Kobo Clara</option>
+                    <option value="kobo_clara">E-reader</option>
                 </select>
             </div>
             <div id="image-settings" class="image-settings">
-                <label for="opt-image-preset">Image Size</label>
-                <select id="opt-image-preset">
+                <div class="section-label" title="Image controls for article images and video thumbnails.">Images</div>
+                <label title="Skip all downloaded images and image placeholders."><input type="checkbox" id="opt-noimages"> No images</label>
+                <label for="opt-image-preset" title="Compact is smallest, Balanced is the default e-reader choice, Full keeps more detail.">Image Size</label>
+                <select id="opt-image-preset" title="Compact is smallest, Balanced is the default e-reader choice, Full keeps more detail.">
                     <option value="compact">Compact</option>
                     <option value="balanced">Balanced</option>
                     <option value="full">Full</option>
                 </select>
-                <label><input type="checkbox" id="opt-grayscale"> Grayscale Images</label>
+                <label title="Convert images to grayscale for e-ink readers."><input type="checkbox" id="opt-grayscale"> Grayscale Images</label>
+                <label title="Add periodic thumbnails to YouTube transcript downloads."><input type="checkbox" id="opt-thumbnails"> Video Thumbnails</label>
             </div>
-            <label><input type="checkbox" id="opt-archive"> Archive.org</label>
-            <label><input type="checkbox" id="opt-summary" title="Requires API Key"> AI Summary</label>
-            <label><input type="checkbox" id="opt-thumbnails" title="Add periodic thumbnails (YouTube only)"> Video Thumbnails</label>
         </div>
     </div>
 
@@ -101,46 +101,47 @@
                         </span>
                     </div>
                 </div>
-                <button type="button" id="opt-clear-dates" class="small-btn">Clear Dates</button>
+                <label class="inline-check" title="Reverse date-range downloads so newest posts appear first."><input type="checkbox" id="opt-date-sort-desc"> Newest first</label>
+                <button type="button" id="opt-clear-dates" class="small-btn" title="Clear start and end dates.">Clear Dates</button>
             </div>
         </details>
         <details id="forum-options" class="option-section">
             <summary>Forum</summary>
             <div class="option-section-body">
-                <label class="inline-check"><input type="checkbox" id="opt-forum"> Use forum driver</label>
+                <label class="inline-check" title="Use the forum-specific extractor and automatically include site cookies."><input type="checkbox" id="opt-forum"> Use forum driver</label>
                 <div class="input-group">
-                    <label>Forum Pages (e.g., 1,3-5)</label>
-                    <input type="text" id="opt-pages" placeholder="All pages">
+                    <label title="Limit forum download to specific pages, for example 1,3-5.">Forum Pages (e.g., 1,3-5)</label>
+                    <input type="text" id="opt-pages" placeholder="All pages" title="Limit forum download to specific pages, for example 1,3-5.">
                 </div>
                 <div class="input-group">
-                    <label>Max Pages</label>
-                    <input type="number" id="opt-maxpages" min="1" placeholder="Unlimited">
+                    <label title="Stop forum pagination after this many pages.">Max Pages</label>
+                    <input type="number" id="opt-maxpages" min="1" placeholder="Unlimited" title="Stop forum pagination after this many pages.">
                 </div>
             </div>
         </details>
         <details id="translation-options" class="option-section">
             <summary>Translation</summary>
             <div class="option-section-body">
-                <label class="inline-check"><input type="checkbox" id="opt-translate"> Translate article text</label>
+                <label class="inline-check" title="Translate readable article text using the selected provider."><input type="checkbox" id="opt-translate"> Translate article text</label>
                 <div class="input-group">
                     <label>Target Language</label>
-                    <input type="text" id="opt-translation-target" list="translation-language-list" placeholder="Search language or code">
+                    <input type="text" id="opt-translation-target" list="translation-language-list" placeholder="Search language or code" title="Target language name or code, for example Spanish or es.">
                 </div>
                 <div class="input-group">
                     <label>Source Language</label>
-                    <input type="text" id="opt-translation-source" list="translation-language-list" placeholder="auto">
+                    <input type="text" id="opt-translation-source" list="translation-language-list" placeholder="auto" title="Source language, or auto to let the provider detect it.">
                 </div>
                 <datalist id="translation-language-list"></datalist>
                 <div class="input-group">
                     <label>Provider</label>
-                    <select id="opt-translation-provider">
+                    <select id="opt-translation-provider" title="Choose LLM translation or Google Translate.">
                         <option value="llm">LLM</option>
                         <option value="google">Google Translate</option>
                     </select>
                 </div>
                 <div class="input-group">
                     <label>Display</label>
-                    <select id="opt-translation-display">
+                    <select id="opt-translation-display" title="Choose how translated text is displayed in the ebook.">
                         <option value="underneath">Underneath</option>
                         <option value="side_by_side">Side by side</option>
                         <option value="popup_footnote">Popup footnote</option>
@@ -149,7 +150,7 @@
                 </div>
                 <div class="input-group">
                     <label>Scope</label>
-                    <select id="opt-translation-scope">
+                    <select id="opt-translation-scope" title="Choose whether captions and comments/forum text are translated.">
                         <option value="article-captions">Text + captions</option>
                         <option value="article">Text only</option>
                         <option value="all-readable">All readable text</option>
@@ -157,24 +158,24 @@
                 </div>
                 <div class="input-group">
                     <label>Glossary</label>
-                    <textarea id="opt-translation-glossary" class="small-textarea" placeholder="Coye=Coye&#10;KOReader=KOReader"></textarea>
+                    <textarea id="opt-translation-glossary" class="small-textarea" placeholder="Coye=Coye&#10;KOReader=KOReader" title="One glossary entry per line, source=target."></textarea>
                 </div>
-                <label class="inline-check"><input type="checkbox" id="opt-translation-cache" checked> Cache translations</label>
+                <label class="inline-check" title="Reuse previous translations for matching text and language settings."><input type="checkbox" id="opt-translation-cache" checked> Cache translations</label>
                 <div class="translation-actions">
-                    <button id="btn-test-translation" type="button" class="small-btn">Test</button>
-                    <button id="btn-clear-translation-cache" type="button" class="small-btn">Clear Cache</button>
+                    <button id="btn-test-translation" type="button" class="small-btn" title="Test the selected translation provider with a short phrase.">Test</button>
+                    <button id="btn-clear-translation-cache" type="button" class="small-btn" title="Clear the server-side translation cache.">Clear Cache</button>
                 </div>
             </div>
         </details>
     </div>
 
     <div class="cookie-opt">
-        <label><input type="checkbox" id="opt-cookies"> Use site cookies (default for local server)</label>
-        <label><input type="checkbox" id="opt-open-challenge-user-browser"> Open challenged pages in browser</label>
+        <label title="Send cookies for the current site to a trusted Dala server so protected images and attachments can be fetched."><input type="checkbox" id="opt-cookies"> Use site cookies (default for local server)</label>
+        <label title="When server-side browser fetch hits a challenge, open the original page in your browser instead of only using archive fallback."><input type="checkbox" id="opt-open-challenge-user-browser"> Open challenged pages in browser</label>
     </div>
 
     <div class="cancel-row">
-        <button id="btn-cancel" class="small-btn text-red">Cancel Download</button>
+        <button id="btn-cancel" class="small-btn text-red" title="Cancel the active background download job.">Cancel Download</button>
         <button id="btn-options" class="small-btn" title="Shortcuts, downloads, and LLM settings">Settings</button>
     </div>
 

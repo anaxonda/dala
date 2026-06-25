@@ -54,5 +54,5 @@ if ($installHeadlessBrowser) {
 
 Write-Host ""
 Write-Host "Dala installed. Start the server with:"
-Write-Host "  dala-server --open"
+Write-Host "  dala-server"
 Write-Host "If dala-server is not found, restart your terminal or run: uv tool update-shell"

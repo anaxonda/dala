@@ -86,9 +86,15 @@ def test_popup_exposes_simplified_image_and_pdf_translation_controls():
         assert '<option value="compact">Compact</option>' in source
         assert '<option value="balanced">Balanced</option>' in source
         assert '<option value="full">Full</option>' in source
+        assert '<option value="kobo_clara">E-reader</option>' in source
+        assert "Kobo Clara" not in source
         assert '<option value="baseline">' not in source
         assert '<option value="optimized">' not in source
         assert 'id="image-settings"' in source
+        assert "No images" in source
+        assert "Text Only" not in source
+        assert 'id="btn-retry-failed"' not in source
+        assert 'id="opt-date-sort-desc"' in source
 
     for popup_js_path in (root / "extension_chrome" / "popup.js", root / "firefox_extension" / "popup.js"):
         source = popup_js_path.read_text()
@@ -96,6 +102,8 @@ def test_popup_exposes_simplified_image_and_pdf_translation_controls():
         assert 'if (preset === "optimized") return "compact";' in source
         assert "imagePreset.disabled = noImages" in source
         assert "grayscale.disabled = noImages" in source
+        assert "thumbnails.disabled = noImages" in source
+        assert 'date_sort: document.getElementById(\'opt-date-sort-desc\')?.checked ? "desc" : "asc"' in source
         assert "footnoteOption.hidden = isPdf" in source
         assert 'display.value = "underneath";' in source
 
@@ -155,6 +163,7 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 await page.click("#opt-noimages")
                 assert await page.locator("#opt-image-preset").is_disabled()
                 assert await page.locator("#opt-grayscale").is_disabled()
+                assert await page.locator("#opt-thumbnails").is_disabled()
                 assert not await page.locator("#date-options").evaluate("el => el.open")
                 assert not await page.locator("#forum-options").evaluate("el => el.open")
                 assert not await page.locator("#translation-options").evaluate("el => el.open")
@@ -206,6 +215,7 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 await page.click('.date-popover-day[data-date="2026-06-23"]')
                 assert await page.locator("#opt-start-date").input_value() == "2026-06-23"
                 await page.fill("#opt-start-date", "2025-08")
+                await page.check("#opt-date-sort-desc")
                 await page.evaluate("""
                     const picker = document.querySelector('#opt-end-date-picker');
                     picker.value = '2025-08-31';
@@ -266,6 +276,7 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 assert saved_options["savedOptions"]["no_images"] is True
                 assert saved_options["savedOptions"]["start_date"] == "2025-08"
                 assert saved_options["savedOptions"]["end_date"] == "2025-08-31"
+                assert saved_options["savedOptions"]["date_sort"] == "desc"
                 assert saved_options["savedOptions"]["date_fallback"] == "auto"
                 assert saved_options["savedOptions"]["include_undated"] is False
                 assert saved_options["savedOptions"]["browser_challenge_action"] == "user_browser"
@@ -277,18 +288,9 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 assert saved_options["savedOptions"]["browser_executable"] == "/usr/bin/google-chrome"
 
                 await page.click("#tab-queue")
-                await page.evaluate("""
-                    browser.storage.local.set({
-                        lastFailedSources: [
-                            {url: 'https://example.com/failed-a'},
-                            {url: 'https://example.com/failed-a'},
-                            {url: 'not-a-url'}
-                        ]
-                    })
-                """)
-                await page.click("#btn-retry-failed")
-                retry_queue = await page.evaluate("browser.storage.local.get('urlQueue')")
-                assert retry_queue["urlQueue"] == ["https://example.com/failed-a"]
+                assert await page.locator("#btn-retry-failed").count() == 0
+                assert await page.locator("#date-options").evaluate("el => el.classList.contains('hidden')")
+                assert await page.locator("#forum-options").evaluate("el => el.classList.contains('hidden')")
 
                 await page.fill("#queue-editor", "https://example.com/a\nhttps://example.com/a\nnot-a-url\nhttps://example.com/b")
                 await page.wait_for_timeout(500)

@@ -30,7 +30,7 @@ if [ -d "$DESKTOP" ]; then
   LAUNCHER="$DESKTOP/Start Dala Server.command"
   cat > "$LAUNCHER" <<'EOF'
 #!/bin/sh
-dala-server --open
+dala-server
 EOF
   chmod +x "$LAUNCHER"
   echo "Created launcher: $LAUNCHER"
@@ -38,4 +38,4 @@ fi
 
 echo
 echo "Dala is installed or updated."
-echo "Start it with the Desktop launcher or run: dala-server --open"
+echo "Start it with the Desktop launcher or run: dala-server"

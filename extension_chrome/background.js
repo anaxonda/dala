@@ -483,6 +483,7 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
         ...translationOptionsFromSaved(savedOpts),
         start_date: options.start_date,
         end_date: options.end_date,
+        date_sort: options.date_sort || "asc",
         date_fallback: options.date_fallback,
         include_undated: options.include_undated,
         youtube_lang: options.youtube_lang,
@@ -1068,6 +1069,7 @@ async function runServerJob(payload, signal) {
                 const errText = await response.text();
                 throw new Error(`Server ${response.status}: ${errText}`);
             }
+            response.failedSourceDetails = job.failed_source_details || [];
             return response;
         }
         if (job.status === "failed") {
@@ -1116,6 +1118,7 @@ async function processDownloadCore(payload, isBundle) {
     try {
         const response = await runServerJob(payload, controller.signal);
         console.log("Server job download response received:", response.status);
+        const failedSourceDetails = Array.isArray(response.failedSourceDetails) ? response.failedSourceDetails : [];
 
         const serverSaved = response.headers.get("X-Dala-Server-Saved") === "1";
         const filename = getFilenameFromHeader(response.headers.get('Content-Disposition'));
@@ -1266,7 +1269,13 @@ async function processDownloadCore(payload, isBundle) {
         } catch (_) { } 
 
         if (isBundle) {
-            await browser.storage.local.set({ urlQueue: [] });
+            if (failedSourceDetails.length) {
+                const failedUrls = new Set(failedSourceDetails.map(item => item && item.url).filter(Boolean));
+                const queued = (await browser.storage.local.get("urlQueue")).urlQueue || [];
+                await browser.storage.local.set({ urlQueue: queued.filter(url => failedUrls.has(url)) });
+            } else {
+                await browser.storage.local.set({ urlQueue: [] });
+            }
             updateBadge();
         } else {
             setTimeout(updateBadge, 3000);
@@ -1291,7 +1300,7 @@ async function processDownloadCore(payload, isBundle) {
                 iconUrl: "icon.png",
                 title: "Download Failed",
                 message: error.failedSourceDetails && error.failedSourceDetails.length
-                    ? `${error.failedSourceDetails.length} source(s) failed. Open Queue > Retry Failed.`
+                    ? `${error.failedSourceDetails.length} source(s) failed. Failed URLs remain in the queue.`
                     : (error.message || "Check server.py console")
             });
         }
