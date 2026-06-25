@@ -66,7 +66,7 @@ class SubstackDriver(BaseDriver):
         if options.summary:
             log.info("Generating AI summary for Substack...")
             text_content = body_soup.get_text(separator=" ", strip=True)
-            summary_html = await LLMHelper.generate_summary(text_content, options.llm_model, options.llm_api_key)
+            summary_html = await LLMHelper.generate_summary(text_content, options.llm_model, options.llm_api_key, options.llm_provider)
 
         title = data['title'] or "Substack Article"
         chapter_html = body_soup.prettify()

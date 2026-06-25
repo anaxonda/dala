@@ -168,7 +168,12 @@ class LLMHelper:
             return None
 
     @staticmethod
-    async def format_transcript(text: str, model: Optional[str] = None, api_key: Optional[str] = None) -> str:
+    async def format_transcript(
+        text: str,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        provider: Optional[str] = None,
+    ) -> str:
         # Prepare Prompt
         custom_prompt = os.getenv("LLM_PROMPT")
         if custom_prompt:
@@ -183,11 +188,16 @@ class LLMHelper:
                 f"{text}"
             )
         
-        result = await LLMHelper._call_llm(prompt, model, api_key)
+        result = await LLMHelper._call_llm(prompt, model, api_key, provider=provider)
         return result if result else text
 
     @staticmethod
-    async def generate_summary(text: str, model: Optional[str] = None, api_key: Optional[str] = None) -> Optional[str]:
+    async def generate_summary(
+        text: str,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        provider: Optional[str] = None,
+    ) -> Optional[str]:
         custom_prompt = os.getenv("LLM_SUMMARY_PROMPT")
         if custom_prompt:
             prompt = custom_prompt.replace("{text}", text[:15000]) # truncate to avoid huge context costs?
@@ -200,4 +210,4 @@ class LLMHelper:
                 f"{text[:25000]}" # Limit context window usage for summary
             )
         
-        return await LLMHelper._call_llm(prompt, model, api_key)
+        return await LLMHelper._call_llm(prompt, model, api_key, provider=provider)

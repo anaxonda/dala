@@ -204,7 +204,7 @@ class YouTubeDriver(BaseDriver):
                 "These represent where images should be placed. DO NOT REMOVE THEM. "
                 "Ensure they remain on their own line between paragraphs."
             )
-            final_text = await LLMHelper.format_transcript(f"{llm_instruction}\n\n{full_text}", options.llm_model, options.llm_api_key)
+            final_text = await LLMHelper.format_transcript(f"{llm_instruction}\n\n{full_text}", options.llm_model, options.llm_api_key, options.llm_provider)
             if "<p>" not in final_text:
                 final_text = "".join(f"<p>{p.strip()}</p>" for p in final_text.split('\n\n') if p.strip())
             if thumbnail_map:
@@ -234,7 +234,7 @@ class YouTubeDriver(BaseDriver):
         summary_html = ""
         if options.summary:
             raw_transcript_text = " ".join([t['text'] for t in transcript_list])
-            sum_res = await LLMHelper.generate_summary(raw_transcript_text, options.llm_model, options.llm_api_key)
+            sum_res = await LLMHelper.generate_summary(raw_transcript_text, options.llm_model, options.llm_api_key, options.llm_provider)
             if sum_res:
                 summary_html = f"<div class='ai-summary'><h3>AI Summary</h3>{sum_res}</div><hr/>"
 

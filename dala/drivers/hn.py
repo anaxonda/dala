@@ -103,7 +103,7 @@ class HackerNewsDriver(BaseDriver):
                     if options.summary:
                         log.info("Generating AI summary for HN Link...")
                         txt = body.get_text(separator=" ", strip=True)
-                        summary_html = await LLMHelper.generate_summary(txt, options.llm_model, options.llm_api_key)
+                        summary_html = await LLMHelper.generate_summary(txt, options.llm_model, options.llm_api_key, options.llm_provider)
 
                     if not options.no_images:
                         base = art_data.get('archive_url') if art_data.get('was_archived') else article_url
@@ -121,7 +121,7 @@ class HackerNewsDriver(BaseDriver):
             elif post_text:
                 if options.summary:
                     log.info("Generating AI summary for HN Self Text...")
-                    summary_html = await LLMHelper.generate_summary(post_text, options.llm_model, options.llm_api_key)
+                    summary_html = await LLMHelper.generate_summary(post_text, options.llm_model, options.llm_api_key, options.llm_provider)
                 
                 sum_div = f"<div class='ai-summary'><h3>AI Summary</h3>{summary_html}</div><hr/>" if summary_html else ""
                 art_html = f"{sum_div}<div>{post_text}</div>"

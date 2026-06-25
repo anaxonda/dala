@@ -62,7 +62,7 @@ class RedditDriver(BaseDriver):
                 
                 if options.summary:
                     log.info("Generating AI summary for Reddit Selftext...")
-                    summary_html = await LLMHelper.generate_summary(soup.get_text(separator=" ", strip=True), options.llm_model, options.llm_api_key)
+                    summary_html = await LLMHelper.generate_summary(soup.get_text(separator=" ", strip=True), options.llm_model, options.llm_api_key, options.llm_provider)
 
                 if not options.no_images:
                     await ImageProcessor.process_images(session, soup, source.url, assets, options=options)
@@ -95,7 +95,7 @@ class RedditDriver(BaseDriver):
                     
                     if options.summary:
                         log.info("Generating AI summary for Reddit Link...")
-                        summary_html = await LLMHelper.generate_summary(body.get_text(separator=" ", strip=True), options.llm_model, options.llm_api_key)
+                        summary_html = await LLMHelper.generate_summary(body.get_text(separator=" ", strip=True), options.llm_model, options.llm_api_key, options.llm_provider)
 
                     if not options.no_images:
                         base = art_data.get('archive_url') if art_data.get('was_archived') else link_url

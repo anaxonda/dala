@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 
 from dala.core.translation import TranslationCache, TranslationError, TranslationProcessor, normalize_translation_display
 from dala.models import BookData, Chapter, ConversionOptions
+from dala.utils.llm import LLMHelper
 
 
 def make_translation_book():
@@ -500,6 +501,57 @@ async def test_llm_translation_sends_no_reasoning_payload(monkeypatch):
     assert captured["request_options"]["chat_payload"]["temperature"] == 0
     assert captured["request_options"]["openrouter_payload"]["reasoning_effort"] == "none"
     assert captured["request_options"]["openrouter_payload"]["include_reasoning"] is False
+
+
+@pytest.mark.asyncio
+async def test_llm_transcript_formatting_forwards_provider(monkeypatch):
+    captured = {}
+
+    async def fake_call(prompt, model, api_key, provider=None, request_options=None):
+        captured["model"] = model
+        captured["api_key"] = api_key
+        captured["provider"] = provider
+        return "<p>Formatted transcript.</p>"
+
+    monkeypatch.setattr("dala.utils.llm.LLMHelper._call_llm", fake_call)
+
+    result = await LLMHelper.format_transcript(
+        "raw transcript",
+        model="deepseek/deepseek-v4-flash",
+        api_key="test-key",
+        provider="openrouter",
+    )
+
+    assert result == "<p>Formatted transcript.</p>"
+    assert captured == {
+        "model": "deepseek/deepseek-v4-flash",
+        "api_key": "test-key",
+        "provider": "openrouter",
+    }
+
+
+@pytest.mark.asyncio
+async def test_llm_summary_forwards_provider(monkeypatch):
+    captured = {}
+
+    async def fake_call(prompt, model, api_key, provider=None, request_options=None):
+        captured["model"] = model
+        captured["provider"] = provider
+        return "<p>Summary.</p>"
+
+    monkeypatch.setattr("dala.utils.llm.LLMHelper._call_llm", fake_call)
+
+    result = await LLMHelper.generate_summary(
+        "article text",
+        model="gemini-3.1-flash-lite",
+        provider="gemini",
+    )
+
+    assert result == "<p>Summary.</p>"
+    assert captured == {
+        "model": "gemini-3.1-flash-lite",
+        "provider": "gemini",
+    }
 
 
 @pytest.mark.asyncio

@@ -345,7 +345,7 @@ class GenericDriver(BaseDriver):
         if options.summary:
             log.info("Generating AI summary...")
             text_content = body_soup.get_text(separator=" ", strip=True)
-            summary_html = await LLMHelper.generate_summary(text_content, options.llm_model, options.llm_api_key)
+            summary_html = await LLMHelper.generate_summary(text_content, options.llm_model, options.llm_api_key, options.llm_provider)
 
         chapter_html = body_soup.prettify()
         meta_html = ArticleExtractor.build_meta_block(url, data, summary_html=summary_html)

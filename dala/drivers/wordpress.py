@@ -99,7 +99,7 @@ class WordPressDriver(BaseDriver):
         if options.summary:
             log.info("Generating AI summary for WordPress...")
             text_content = body_soup.get_text(separator=" ", strip=True)
-            summary_html = await LLMHelper.generate_summary(text_content, options.llm_model, options.llm_api_key)
+            summary_html = await LLMHelper.generate_summary(text_content, options.llm_model, options.llm_api_key, options.llm_provider)
 
         article_body = self._clean_article_body(body_soup, title)
         chapter_html = article_body.prettify()

@@ -175,7 +175,7 @@ class ForumDriver(BaseDriver):
                 if count >= 5: break
             
             if sample_text:
-                summary_html = await LLMHelper.generate_summary("\n\n".join(sample_text), options.llm_model, options.llm_api_key)
+                summary_html = await LLMHelper.generate_summary("\n\n".join(sample_text), options.llm_model, options.llm_api_key, options.llm_provider)
 
         chapter_html = self._render_thread_html(title or "Forum Thread", source.url, page_blocks, summary_html=summary_html)
         assets, chapter_html = self._dedupe_assets(assets, chapter_html)
