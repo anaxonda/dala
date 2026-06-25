@@ -760,7 +760,7 @@ wheels = [
 
 [[package]]
 name = "dala"
-version = "2.3.8"
+version = "2.3.9"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp", extra = ["speedups"] },

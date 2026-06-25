@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dala"
-version = "2.3.8"
+version = "2.3.9"
 description = "Web to EPUB Downloader with E-Ink Optimizations"
 readme = "readme.md"
 requires-python = ">=3.9"
