@@ -1,4 +1,4 @@
-# dala: Web pages and threads as e-ink EPUBs
+# dala: Web pages and threads as books
 
 **dala** turns articles, comment threads, forum posts, Substack pages, and YouTube transcripts into clean EPUBs optimized for e-ink readers such as Kobo/KOReader. It works from a browser extension or CLI, can bundle many links into one anthology, and can preserve logged-in images or attachments when you explicitly share your browser session with the local backend. Translation support built in.
 
