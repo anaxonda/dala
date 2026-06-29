@@ -12,6 +12,7 @@ from dala.drivers.forum import ForumDriver
 from dala.drivers.generic import GenericDriver
 from dala.drivers.hn import HackerNewsDriver
 from dala.drivers.substack import SubstackDriver
+from dala.drivers.youtube import YouTubeDriver
 from dala.models import BookData, Chapter, ConversionOptions, ImageAsset, Source, normalize_url_for_matching
 
 
@@ -95,6 +96,22 @@ def test_driver_dispatch_generic():
     src = Source(url="https://example.com")
     driver = DriverDispatcher.get_driver(src)
     assert isinstance(driver, GenericDriver)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.youtube.com/watch?v=abc123",
+        "https://m.youtube.com/watch?v=abc123",
+        "https://music.youtube.com/watch?v=abc123",
+        "https://youtu.be/abc123",
+        "https://www.youtube-nocookie.com/embed/abc123",
+    ],
+)
+def test_driver_dispatch_youtube_hosts(url):
+    src = Source(url=url)
+    driver = DriverDispatcher.get_driver(src)
+    assert isinstance(driver, YouTubeDriver)
 
 def test_is_junk_generic():
     assert BaseImageProcessor.is_junk("https://example.com/spacer.gif")

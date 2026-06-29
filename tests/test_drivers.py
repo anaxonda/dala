@@ -49,6 +49,21 @@ class FakeFetchedTranscript:
         return self._rows
 
 
+@pytest.mark.parametrize(
+    ("url", "video_id"),
+    [
+        ("https://www.youtube.com/watch?v=abc123", "abc123"),
+        ("https://m.youtube.com/watch?v=abc123", "abc123"),
+        ("https://music.youtube.com/watch?v=abc123", "abc123"),
+        ("https://youtu.be/abc123", "abc123"),
+        ("https://www.youtube-nocookie.com/embed/abc123?rel=0", "abc123"),
+        ("https://youtube.com/v/abc123/more", "abc123"),
+    ],
+)
+def test_youtube_extract_video_id_accepts_common_hosts(url, video_id):
+    assert YouTubeDriver()._extract_video_id(url) == video_id
+
+
 class FakeYouTubeTranscript:
     def __init__(self, language_code, text, is_generated=False, translated=None, translate_error=None):
         self.language_code = language_code

@@ -40,7 +40,17 @@ class DriverDispatcher:
             return SubstackDriver()
         if "wordpress.com" in url:
             return WordPressDriver()
-        if parsed.netloc in ("www.youtube.com", "youtube.com", "youtu.be"):
+        host = (parsed.hostname or parsed.netloc or "").lower()
+        youtube_hosts = {
+            "youtube.com",
+            "www.youtube.com",
+            "m.youtube.com",
+            "music.youtube.com",
+            "youtube-nocookie.com",
+            "www.youtube-nocookie.com",
+            "youtu.be",
+        }
+        if host in youtube_hosts:
             return YouTubeDriver()
             
         # 3. Content Sniffing

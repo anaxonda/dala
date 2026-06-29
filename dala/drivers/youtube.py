@@ -419,9 +419,17 @@ class YouTubeDriver(BaseDriver):
 
     def _extract_video_id(self, url):
         parsed = urlparse(url)
-        if parsed.netloc == "youtu.be": return parsed.path[1:]
-        if parsed.netloc in ("www.youtube.com", "youtube.com"):
+        host = (parsed.hostname or parsed.netloc or "").lower()
+        if host == "youtu.be": return parsed.path.strip("/") or None
+        if host in (
+            "www.youtube.com",
+            "youtube.com",
+            "m.youtube.com",
+            "music.youtube.com",
+            "youtube-nocookie.com",
+            "www.youtube-nocookie.com",
+        ):
             if "/watch" in parsed.path: return parse_qs(parsed.query).get("v", [None])[0]
-            if "/embed/" in parsed.path: return parsed.path.split("/embed/")[1]
-            if "/v/" in parsed.path: return parsed.path.split("/v/")[1]
+            if "/embed/" in parsed.path: return parsed.path.split("/embed/")[1].split("/")[0]
+            if "/v/" in parsed.path: return parsed.path.split("/v/")[1].split("/")[0]
         return None
