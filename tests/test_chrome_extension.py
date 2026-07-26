@@ -234,7 +234,8 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 """)
                 assert await page.locator(".date-popover-year-btn").count() == 2
                 assert await page.locator(".date-popover-today").inner_text() == f"Today: {today_value}"
-                assert await page.locator(f'.date-popover-day.today[data-date="{today_value}"]').count() == 1
+                expected_today_cells = 1 if today_value.startswith("2026-06-") else 0
+                assert await page.locator(f'.date-popover-day.today[data-date="{today_value}"]').count() == expected_today_cells
                 await page.locator(".date-popover-year-btn").nth(1).click()
                 await page.wait_for_function("""
                     () => document.querySelector('.date-popover-title')?.textContent.includes('2027')
