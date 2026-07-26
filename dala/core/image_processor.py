@@ -581,6 +581,8 @@ class BaseImageProcessor:
             if caption_text:
                 caption_norm = BaseImageProcessor._normalized_text(caption_text)
                 for candidate in list(fig.find_all(["figcaption", "p", "div"])):
+                    if candidate.name is None or candidate.attrs is None:
+                        continue
                     if candidate.find("img"):
                         continue
                     if BaseImageProcessor._is_upper_caption(candidate):
@@ -1415,6 +1417,10 @@ class ImageProcessor(BaseImageProcessor):
 
         async def _process_tag(img_tag):
             if img_tag.get('class') == ['epub-image'] or str(img_tag.get('src')).startswith(IMAGE_DIR_IN_EPUB):
+                if not img_tag.find_parent(class_="img-block"):
+                    caption_text = ImageProcessor.find_caption(img_tag)
+                    if caption_text:
+                        ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
                 return
 
             log.debug(f"Processing img tag attrs={img_tag.attrs}")
@@ -1442,9 +1448,21 @@ class ImageProcessor(BaseImageProcessor):
                         wapo_origin_seed = ImageProcessor._extract_origin_from_proxy(parsed_set[0], profile=profile)
                         break
 
-            if src and src.startswith("data:image/"):
+            # Brightspot/Forum Communications uses an empty inline SVG in `src`
+            # while placing the real photograph URLs in `srcset`.
+            inline_svg_placeholder = bool(
+                src
+                and src.startswith("data:image/svg+xml")
+                and candidates
+            )
+            if src and src.startswith("data:image/") and not inline_svg_placeholder:
                 final_src = src
-            elif src and not ImageProcessor.is_junk(src) and not ImageProcessor.is_blur_placeholder(src):
+            elif (
+                src
+                and not src.startswith("data:image/")
+                and not ImageProcessor.is_junk(src)
+                and not ImageProcessor.is_blur_placeholder(src)
+            ):
                 final_src = src
             else:
                 for c in candidates:

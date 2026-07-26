@@ -246,6 +246,141 @@ def test_article_extractor_preserves_commented_article_images():
     assert "Map showing 2000" in extracted["html"]
 
 
+def test_article_extractor_preserves_brightspot_photo_story_gallery():
+    html = """
+    <html>
+      <head>
+        <title>Forum Communications photo story</title>
+        <script type="application/ld+json">
+          {"@type": "NewsArticle", "isAccessibleForFree": false}
+        </script>
+      </head>
+      <body>
+        <div class="Page-articleBody">
+          <div class="RichTextArticleBody RichTextBody">
+            <p>Reported article text. Reported article text. Reported article text.
+            Reported article text. Reported article text. Reported article text.
+            Reported article text. Reported article text. Reported article text.</p>
+            <figure><picture><img srcset="/photo-1.jpg 1x, /photo-1-large.jpg 2x"
+              alt="First gallery photograph"></picture><div class="Figure-content">
+              <figcaption class="Figure-caption">First caption.</figcaption>
+              <div class="Figure-credit">Photographer One / Newsroom</div></div></figure>
+            <figure><picture><img srcset="/photo-2.jpg 1x, /photo-2-large.jpg 2x"
+              alt="Second gallery photograph"></picture><div class="Figure-content">
+              <figcaption class="Figure-caption">Second caption.</figcaption>
+              <div class="Figure-credit">Photographer Two / Newsroom</div></div></figure>
+            <figure><picture><img srcset="/photo-3.jpg 1x, /photo-3-large.jpg 2x"
+              alt="Third gallery photograph"></picture><div class="Figure-content">
+              <figcaption class="Figure-caption">Third caption.</figcaption>
+              <div class="Figure-credit">Photographer Three / Newsroom</div></div></figure>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+    extracted = ArticleExtractor.extract_from_html(html, "https://www.duluthnewstribune.com/news/local/story")
+    soup = BeautifulSoup(extracted["html"], "html.parser")
+
+    assert extracted["is_paywall"] is True
+    assert len(soup.find_all("img")) == 3
+    assert len(soup.find_all("figcaption")) == 3
+    assert soup.find("img", alt="Third gallery photograph") is not None
+    first_caption = soup.find("figcaption")
+    assert ArticleExtractor._compact_text(first_caption.get_text(" ", strip=True)) == (
+        "First caption. Photographer One / Newsroom"
+    )
+    assert soup.select_one(".Figure-credit") is None
+
+
+def test_article_extractor_removes_embedded_player_controls_text():
+    html = """
+    <html><head><title>Story with video</title></head><body>
+      <article>
+        <p>Article reporting remains intact. Article reporting remains intact.
+        Article reporting remains intact. Article reporting remains intact.
+        Article reporting remains intact. Article reporting remains intact.
+        Article reporting remains intact. Article reporting remains intact.</p>
+        <div class="VideoEnhancement">
+          <div class="VideoEnhancement-player">
+            <div class="jwplayer jw-reset">
+              <span>0 seconds of 3 minutes, 56 seconds Volume 70%</span>
+              <div class="jw-shortcuts-tooltip jw-modal jw-reset">
+                Press shift question mark to access a list of keyboard shortcuts
+                Keyboard Shortcuts Shortcuts Open/Close / or ? Play/Pause SPACE
+                Increase Volume Decrease Volume Seek Forward Seek Backward
+                Captions On/Off Fullscreen/Exit Fullscreen Mute/Unmute
+              </div>
+            </div>
+          </div>
+        </div>
+        <p>The article continues after the embedded video.</p>
+      </article>
+    </body></html>
+    """
+
+    extracted = ArticleExtractor.extract_from_html(html, "https://example.com/story")
+
+    assert extracted["success"] is True
+    assert "Article reporting remains intact" in extracted["html"]
+    assert "article continues after the embedded video" in extracted["html"]
+    assert "Keyboard Shortcuts" not in extracted["html"]
+    assert "Volume 70%" not in extracted["html"]
+
+
+@pytest.mark.asyncio
+async def test_image_processor_prefers_srcset_over_inline_svg_placeholder(monkeypatch):
+    placeholder = (
+        "data:image/svg+xml;base64,"
+        "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjwvc3ZnPg=="
+    )
+    soup = BeautifulSoup(
+        f'<article><img src="{placeholder}" '
+        'srcset="/photo-840.jpg 1x, /photo-1680.jpg 2x" alt="Gallery photo"></article>',
+        "html.parser",
+    )
+    image_buffer = BytesIO()
+    Image.new("RGB", (40, 40), color="white").save(image_buffer, format="JPEG")
+    image_bytes = image_buffer.getvalue()
+    downloaded = []
+
+    async def fake_fetch(session, url, referer=None):
+        downloaded.append(url)
+        return {"Content-Type": "image/jpeg"}, image_bytes, None
+
+    monkeypatch.setattr(ImageProcessor, "fetch_image_data", fake_fetch)
+    assets = []
+    await ImageProcessor.process_images(object(), soup, "https://example.com/story", assets)
+
+    assert downloaded[0].endswith("/photo-1680.jpg")
+    assert len(assets) == 1
+    assert assets[0].media_type.startswith("image/")
+    assert soup.find("img")["src"] == assets[0].filename
+
+
+@pytest.mark.asyncio
+async def test_image_processor_attaches_caption_to_preloaded_image():
+    soup = BeautifulSoup(
+        """
+        <article><figure>
+          <img class="epub-image" src="images/preloaded.jpg" alt="Gallery photo">
+          <div><figcaption>Gallery caption. Photographer / Newsroom</figcaption></div>
+        </figure></article>
+        """,
+        "html.parser",
+    )
+
+    await ImageProcessor.process_images(object(), soup, "https://example.com/story", [])
+
+    block = soup.select_one(".img-block")
+    assert block is not None
+    assert block.find("img", src="images/preloaded.jpg") is not None
+    assert block.select_one(".caption").get_text(" ", strip=True) == (
+        "Gallery caption. Photographer / Newsroom"
+    )
+    assert soup.find("figcaption") is None
+
+
 def test_article_extractor_prefers_visible_byline_over_admin_metadata():
     html = """
     <html>
@@ -438,6 +573,55 @@ async def test_article_extractor_uses_browser_fallback_before_archive(monkeypatc
     assert data["title"] == "Rendered Article"
     assert "Full rendered content" in data["html"]
     assert calls == {"browser": 1, "archive": 0}
+
+
+@pytest.mark.asyncio
+async def test_article_extractor_retries_short_structured_paywall_capture(monkeypatch):
+    url = "https://www.duluthnewstribune.com/news/local/example"
+    schema = """
+    <script type="application/ld+json">
+      {"@type": "NewsArticle", "isAccessibleForFree": false}
+    </script>
+    """
+    captured_html = f"""
+    <html><head><title>Photo story</title>{schema}</head><body><article>
+      <figure><img src="/lead.jpg"><figcaption>
+        Lead image caption from the article. This caption is long enough for the
+        article selector but it is not the story body. It repeats some descriptive
+        details solely to represent the captured paywall teaser shown in the browser.
+        More caption text makes this container exceed the selector's minimum length.
+      </figcaption></figure>
+    </article></body></html>
+    """
+    paragraphs = "".join(
+        f"<p>Full article paragraph {index}. "
+        + ("Reported story content from Knife River. " * 12)
+        + "</p>"
+        for index in range(6)
+    )
+    live_html = (
+        f"<html><head><title>Photo story</title>{schema}</head>"
+        f"<body><article><div class='Page-articleBody'>{paragraphs}</div></article></body></html>"
+    )
+    calls = {"live": 0, "archive": 0}
+
+    async def fake_fetch(session, target_url, response_type="text", **kwargs):
+        calls["live"] += 1
+        return live_html, target_url
+
+    async def fake_wayback(session, target_url):
+        calls["archive"] += 1
+        return None
+
+    monkeypatch.setattr("dala.core.extractor.fetch_with_retry", fake_fetch)
+    monkeypatch.setattr(ArticleExtractor, "get_wayback_url", fake_wayback)
+
+    data = await ArticleExtractor.get_article_content(object(), url, raw_html=captured_html)
+
+    assert data["success"] is True
+    assert "Full article paragraph 5" in data["html"]
+    assert "Lead image caption" not in data["html"]
+    assert calls == {"live": 1, "archive": 0}
 
 
 @pytest.mark.asyncio

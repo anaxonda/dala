@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import html as html_lib
+import json
 import os
 import re
 import trafilatura
@@ -117,6 +118,29 @@ class ArticleExtractor:
             return False
         text = BeautifulSoup(extracted["html"], "html.parser").get_text(" ", strip=True)
         return len(text) >= min_chars
+
+    @staticmethod
+    def _has_structured_paywall(soup: BeautifulSoup) -> bool:
+        """Detect Schema.org paywall declarations that may not render a wall element."""
+        def declares_paywall(value) -> bool:
+            if isinstance(value, dict):
+                accessible = value.get("isAccessibleForFree")
+                if accessible is False or (
+                    isinstance(accessible, str) and accessible.casefold() == "false"
+                ):
+                    return True
+                return any(declares_paywall(child) for child in value.values())
+            if isinstance(value, list):
+                return any(declares_paywall(child) for child in value)
+            return False
+
+        for script in soup.select('script[type="application/ld+json"]'):
+            try:
+                if declares_paywall(json.loads(script.string or script.get_text())):
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
 
     @staticmethod
     def browser_options_from_conversion_options(options) -> Optional[BrowserFetchOptions]:
@@ -263,24 +287,33 @@ class ArticleExtractor:
                 '.subscribe-promo',
                 '#reg-wall-message'
             ]
-            for ps in paywall_selectors:
-                if soup.select_one(ps):
-                    log.warning(f"Paywall/Truncation detected using selector: {ps}")
-                    # Return extracted HTML (truncated) but keep success=False to trigger archive
-                    truncated_html = None
-                    if content_soup:
-                         ArticleExtractor._clean_soup(content_soup)
-                         truncated_html = content_soup.prettify()
-                    return {
-                        'success': False, 
-                        'html': truncated_html, 
-                        'error': 'Paywall detected', 
-                        'is_paywall': True,
-                        'title': metadata.title if metadata else None,
-                        'author': author,
-                        'date': metadata.date if metadata else None,
-                        'sitename': metadata.sitename if metadata else None
-                    }
+            paywall_marker = next((ps for ps in paywall_selectors if soup.select_one(ps)), None)
+            if not paywall_marker and ArticleExtractor._has_structured_paywall(soup):
+                paywall_marker = "Schema.org isAccessibleForFree=false"
+            if paywall_marker:
+                log.warning(f"Paywall/Truncation detected using marker: {paywall_marker}")
+                # Return extracted HTML (truncated) but keep success=False to trigger archive
+                truncated_html = None
+                if content_soup:
+                    ArticleExtractor._clean_soup(content_soup)
+                    truncated_html = content_soup.prettify()
+                else:
+                    truncated_html = trafilatura.extract(
+                        html_content,
+                        include_images=True,
+                        include_tables=True,
+                        output_format='html',
+                    )
+                return {
+                    'success': False,
+                    'html': truncated_html,
+                    'error': 'Paywall detected',
+                    'is_paywall': True,
+                    'title': metadata.title if metadata else None,
+                    'author': author,
+                    'date': metadata.date if metadata else None,
+                    'sitename': metadata.sitename if metadata else None
+                }
 
             extracted_html = None
             if content_soup:
@@ -317,7 +350,19 @@ class ArticleExtractor:
 
     @staticmethod
     def _smart_selector_extract(soup):
-        selectors = ['article', '[data-qa="article-body"]', '[role="main"]', '.main-content', '.post-content', '.entry-content', '#main', '#content', '.article-body', '.storycontent']
+        selectors = [
+            '.RichTextArticleBody',
+            'article',
+            '[data-qa="article-body"]',
+            '[role="main"]',
+            '.main-content',
+            '.post-content',
+            '.entry-content',
+            '#main',
+            '#content',
+            '.article-body',
+            '.storycontent',
+        ]
         for selector in selectors:
             found = soup.select_one(selector)
             if found and len(found.get_text(strip=True)) > 200:
@@ -419,6 +464,8 @@ class ArticleExtractor:
             "[class*='popular' i]",
             "[class*='podcast' i]",
             "[class*='video-player' i]",
+            "[class*='videoenhancement' i]",
+            ".jwplayer",
             "[class*='advertisement' i]",
             "[class*='ad-' i]",
         ]:
@@ -449,6 +496,7 @@ class ArticleExtractor:
     @staticmethod
     def _clean_soup(soup):
         ArticleExtractor._remove_publisher_boilerplate(soup)
+        ArticleExtractor._merge_figure_credits(soup)
         ArticleExtractor._convert_injected_svg_images(soup)
         # FIX: Removed 'header' from the kill list. NYTimes puts the main image inside a <header> within the <article>.
         for tag in soup(['script', 'style', 'noscript', 'iframe', 'footer', 'nav', 'aside', 'form', 'button', 'svg']):
@@ -482,6 +530,38 @@ class ArticleExtractor:
             if tag.name == 'div' and not tag.get_text(strip=True) and not tag.find(['img', 'figure']):
                 if tag.has_attr('id'): continue # Preserve potential placeholders
                 tag.decompose()
+
+    @staticmethod
+    def _merge_figure_credits(soup) -> None:
+        credit_selectors = [
+            ".Figure-credit",
+            "[class*='image-credit' i]",
+            "[class*='photo-credit' i]",
+        ]
+        for figure in soup.find_all("figure"):
+            credits = []
+            seen = set()
+            for selector in credit_selectors:
+                for credit in figure.select(selector):
+                    if credit.find_parent("figcaption") is not None:
+                        continue
+                    text = ArticleExtractor._compact_text(credit.get_text(" ", strip=True))
+                    key = text.casefold()
+                    if text and key not in seen:
+                        seen.add(key)
+                        credits.append(text)
+                    credit.decompose()
+            if not credits:
+                continue
+            caption = figure.find("figcaption")
+            if caption is None:
+                caption = BeautifulSoup("", "html.parser").new_tag("figcaption")
+                figure.append(caption)
+            caption_text = ArticleExtractor._compact_text(caption.get_text(" ", strip=True))
+            for credit_text in credits:
+                if credit_text.casefold() not in caption_text.casefold():
+                    caption.append(f" {credit_text}" if caption_text else credit_text)
+                    caption_text = ArticleExtractor._compact_text(caption.get_text(" ", strip=True))
 
     @staticmethod
     def _convert_injected_svg_images(soup):
@@ -701,6 +781,13 @@ class ArticleExtractor:
              if extracted.get('is_paywall'):
                  log.info("Paywall detected. Storing truncated content as fallback.")
                  fallback_extracted = extracted
+                 if ArticleExtractor._paywall_fallback_has_content(extracted):
+                     log.warning("Live content is paywall-marked but substantial; using it without archive fallback.")
+                     result.update(extracted)
+                     result['success'] = True
+                     result['raw_html_for_metadata'] = raw_html
+                     result['source_url'] = final_url or url
+                     return result
 
         if browser_options and not browser_attempted and not raw_html and not force_archive:
             try:
