@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 # --- Constants ---
 HN_API_BASE_URL = "https://hacker-news.firebaseio.com/v0/"
 HN_ITEM_URL_BASE = "https://news.ycombinator.com/item?id="
+HN_ALGOLIA_SEARCH_URL = "https://hn.algolia.com/api/v1/search"
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=45)
 IMAGE_TIMEOUT = aiohttp.ClientTimeout(total=2)
 MAX_RETRIES = 5
@@ -44,6 +45,7 @@ class ConversionOptions:
     """Configuration passed from CLI or Server to Drivers."""
     no_article: bool = False
     no_comments: bool = False
+    hn_comments: bool = False
     no_images: bool = False
     archive: bool = False
     compact_comments: bool = False

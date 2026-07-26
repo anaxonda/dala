@@ -6,6 +6,7 @@ import aiohttp
 import socket
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import urlparse
 from inspect import isawaitable
 from typing import Any, Callable, Dict, List, Optional
@@ -29,6 +30,68 @@ from dala.core.discovery import DiscoveryError, discover_posts_for_sources
 from dala.core.translation import TranslationCache, TranslationProcessor, TranslationError
 
 BROWSER_FALLBACK_LOCK = asyncio.Lock()
+
+
+def _dedupe_comment_chapter_identity(book: BookData, chapter) -> None:
+    filenames = {chap.filename for chap in book.chapters}
+    uids = {chap.uid for chap in book.chapters}
+
+    if chapter.filename in filenames:
+        path = Path(chapter.filename)
+        stem = path.stem
+        suffix = path.suffix or ".xhtml"
+        idx = 2
+        while f"{stem}_{idx}{suffix}" in filenames:
+            idx += 1
+        chapter.filename = f"{stem}_{idx}{suffix}"
+
+    if chapter.uid in uids:
+        base = chapter.uid
+        idx = 2
+        while f"{base}_{idx}" in uids:
+            idx += 1
+        chapter.uid = f"{base}_{idx}"
+
+
+def _append_comment_to_toc(book: BookData, chapter, title: str) -> None:
+    link = epub.Link(chapter.filename, title, chapter.uid)
+    article_chapter = next((chap for chap in book.chapters if chap.is_article), None)
+    if not article_chapter:
+        book.toc_structure.append(link)
+        return
+
+    for idx, item in enumerate(book.toc_structure):
+        if isinstance(item, tuple):
+            parent, children = item
+            if getattr(parent, "href", None) == article_chapter.filename:
+                if not any(getattr(child, "href", None) == chapter.filename for child in children):
+                    children.append(link)
+                return
+        elif getattr(item, "href", None) == article_chapter.filename:
+            book.toc_structure[idx] = (item, [link])
+            return
+
+    article_title = article_chapter.toc_title or article_chapter.title or book.title
+    book.toc_structure.append((epub.Link(article_chapter.filename, article_title, article_chapter.uid), [link]))
+
+
+async def _append_hn_comments_if_available(context: ConversionContext, source: Source, book: BookData) -> None:
+    if context.options.no_comments or not context.options.hn_comments:
+        return
+    try:
+        from dala.drivers.hn import HackerNewsDriver
+
+        chapter = await HackerNewsDriver.build_comments_chapter_for_url(context, source.url)
+    except Exception as exc:
+        log.warning(f"HN comment lookup failed for {source.url}: {exc}")
+        return
+    if not chapter:
+        return
+
+    _dedupe_comment_chapter_identity(book, chapter)
+    book.chapters.append(chapter)
+    _append_comment_to_toc(book, chapter, "HN Comments")
+    log.info(f"Added Hacker News comments for {source.url}")
 
 async def process_urls(
     sources: List[Source],
@@ -117,6 +180,8 @@ async def process_urls(
                         )
                         book = await GenericDriver().prepare_book_data(context, generic_source)
                 success = book is not None
+                if book is not None:
+                    await _append_hn_comments_if_available(context, source, book)
                 if book is not None and source.published_date:
                     book.extra_metadata["published_date"] = source.published_date
                 if book is not None and source.saved_at:
@@ -157,13 +222,13 @@ def create_bundle(books: List[BookData], title: str, author: str) -> BookData:
             if img not in master_images: master_images.append(img)
 
         article_chap = None
-        comments_chap = None
+        comments_chapters = []
 
         for chap in book.chapters:
             chap.filename = f"doc_{abs(hash(book.source_url))}_{chap.filename}"
             master_chapters.append(chap)
             if chap.is_article: article_chap = chap
-            elif chap.is_comments: comments_chap = chap
+            elif chap.is_comments: comments_chapters.append(chap)
 
         if article_chap:
             toc_title = book.title
@@ -171,10 +236,13 @@ def create_bundle(books: List[BookData], title: str, author: str) -> BookData:
             if published_date:
                 toc_title = f"{published_date} - {toc_title}"
             article_chap.toc_title = toc_title
-            if comments_chap:
+            if comments_chapters:
                 master_toc.append((
                     epub.Link(article_chap.filename, toc_title, article_chap.uid),
-                    [epub.Link(comments_chap.filename, "Comments", comments_chap.uid)],
+                    [
+                        epub.Link(chap.filename, chap.title or "Comments", chap.uid)
+                        for chap in comments_chapters
+                    ],
                 ))
             else:
                 master_toc.append(epub.Link(article_chap.filename, toc_title, article_chap.uid))
@@ -208,6 +276,7 @@ def parse_args():
     parser.add_argument("--no-images", action="store_true")
     parser.add_argument("-a", "--archive", action="store_true")
     parser.add_argument("--no-comments", action="store_true", help="Skip downloading comments entirely")
+    parser.add_argument("--hn-comments", action="store_true", help="Add Hacker News comments when the article URL has a matching HN discussion")
     parser.add_argument("--bundle", action="store_true", help="Combine all URLs into a single EPUB")
     parser.add_argument("--bundle-title", help="Custom title for the bundle")
     parser.add_argument("--bundle-author", help="Custom author for the bundle")
@@ -389,6 +458,7 @@ async def async_main():
     options = ConversionOptions(
         no_article=args.no_article,
         no_comments=args.no_comments,
+        hn_comments=args.hn_comments,
         no_images=args.no_images,
         archive=args.archive,
         compact_comments=args.compact_comments,

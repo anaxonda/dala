@@ -130,6 +130,7 @@ class ConversionRequest(BaseModel):
     bundle_author: Optional[str] = None
     request_token: Optional[str] = None
     no_comments: bool = False
+    hn_comments: bool = False
     no_images: bool = False
     no_article: bool = False
     archive: bool = False
@@ -509,7 +510,8 @@ def _build_options_and_sources(req: ConversionRequest) -> Tuple[ConversionOption
     log.info(f"Received request: {len(req.sources)} sources")
     log.info(
         f"Options: NoComments={req.no_comments}, NoImages={req.no_images}, "
-        f"Thumbnails={req.thumbnails}, YTLang={req.youtube_lang}, YTSort={req.youtube_comment_sort}"
+        f"HNComments={req.hn_comments}, Thumbnails={req.thumbnails}, "
+        f"YTLang={req.youtube_lang}, YTSort={req.youtube_comment_sort}"
     )
     if req.sources:
         for idx, s in enumerate(req.sources):
@@ -535,6 +537,7 @@ def _build_options_and_sources(req: ConversionRequest) -> Tuple[ConversionOption
 
     options = ConversionOptions(
         no_comments=req.no_comments,
+        hn_comments=req.hn_comments,
         no_images=req.no_images,
         no_article=req.no_article,
         archive=req.archive,

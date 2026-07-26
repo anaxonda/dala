@@ -1,13 +1,15 @@
 import asyncio
-from urllib.parse import urlparse, parse_qs
+from html import escape
+from urllib.parse import parse_qsl, urlencode, urlparse, parse_qs, unquote
 from bs4 import BeautifulSoup
 from ebooklib import epub
 from pygments.formatters import HtmlFormatter
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional
 
 from .base import BaseDriver
 from ..models import (
-    log, BookData, ConversionContext, Source, Chapter, HN_API_BASE_URL
+    log, BookData, ConversionContext, Source, Chapter, HN_API_BASE_URL, HN_ALGOLIA_SEARCH_URL,
+    HN_ITEM_URL_BASE
 )
 from ..core.extractor import ArticleExtractor
 from ..core.image_processor import ImageProcessor
@@ -17,6 +19,124 @@ from ..utils.llm import LLMHelper
 from ..utils.formatting import _enrich_comment_tree, format_comment_html, fetch_comments_recursive
 
 class HackerNewsDriver(BaseDriver):
+    TRACKING_QUERY_PARAMS = {"fbclid", "gclid", "mc_cid", "mc_eid"}
+
+    @staticmethod
+    def _canonical_story_url(url: str) -> tuple[str, str, str]:
+        parsed = urlparse(unquote(url or ""))
+        host = (parsed.hostname or parsed.netloc or "").lower()
+        if host.startswith("www."):
+            host = host[4:]
+        path = parsed.path.rstrip("/") or "/"
+        query_pairs = [
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if not key.lower().startswith("utm_") and key.lower() not in HackerNewsDriver.TRACKING_QUERY_PARAMS
+        ]
+        return host, path, urlencode(sorted(query_pairs))
+
+    @staticmethod
+    def _story_urls_match(left: str, right: str) -> bool:
+        return HackerNewsDriver._canonical_story_url(left) == HackerNewsDriver._canonical_story_url(right)
+
+    @staticmethod
+    async def find_story_for_url(session, url: str) -> Optional[Dict[str, Any]]:
+        if not url or "news.ycombinator.com" in urlparse(url).netloc:
+            return None
+
+        params = urlencode({
+            "query": url,
+            "tags": "story",
+            "restrictSearchableAttributes": "url",
+        })
+        search_url = f"{HN_ALGOLIA_SEARCH_URL}?{params}"
+        data, _ = await fetch_with_retry(session, search_url, max_retries=2)
+        if not data:
+            return None
+
+        matches = []
+        for hit in data.get("hits", []):
+            hit_url = hit.get("url") or ""
+            if not HackerNewsDriver._story_urls_match(hit_url, url):
+                continue
+            try:
+                comment_count = int(hit.get("num_comments") or 0)
+            except (TypeError, ValueError):
+                comment_count = 0
+            if comment_count <= 0:
+                continue
+            item_id = hit.get("objectID") or hit.get("story_id") or hit.get("id")
+            if not item_id:
+                continue
+            matches.append({
+                "item_id": str(item_id),
+                "title": hit.get("title") or hit.get("story_title") or "Hacker News discussion",
+                "num_comments": comment_count,
+                "points": hit.get("points") or 0,
+            })
+
+        if not matches:
+            return None
+        matches.sort(key=lambda item: (item["num_comments"], item["points"]), reverse=True)
+        return matches[0]
+
+    @staticmethod
+    async def render_comments_for_post_data(context: ConversionContext, post_data: Dict[str, Any]) -> str:
+        if not post_data or not post_data.get("kids"):
+            return ""
+
+        fetched_comments = {}
+        raw_comments = await fetch_comments_recursive(
+            context.session,
+            post_data["kids"],
+            fetched_comments,
+            context.options.max_depth,
+        )
+        top_comments = sorted([c for c in raw_comments if c], key=lambda c: c.get("time", 0))
+        enriched_roots = _enrich_comment_tree(top_comments)
+
+        fmt = HtmlFormatter(style='default', cssclass='codehilite', noclasses=False)
+        chunks = []
+        for comment in enriched_roots:
+            chunks.append("<div class='thread-container'>")
+            chunks.append(format_comment_html(comment, fmt))
+            chunks.append("</div>")
+        return "".join(chunks)
+
+    @staticmethod
+    async def render_comments_for_item(context: ConversionContext, item_id: str) -> str:
+        post_data, _ = await fetch_with_retry(context.session, f"{HN_API_BASE_URL}item/{item_id}.json")
+        return await HackerNewsDriver.render_comments_for_post_data(context, post_data or {})
+
+    @staticmethod
+    async def build_comments_chapter_for_url(context: ConversionContext, url: str) -> Optional[Chapter]:
+        if context.options.no_comments or not context.options.hn_comments:
+            return None
+
+        story = await HackerNewsDriver.find_story_for_url(context.session, url)
+        if not story:
+            return None
+
+        item_id = story["item_id"]
+        comments_html = await HackerNewsDriver.render_comments_for_item(context, item_id)
+        if not comments_html:
+            return None
+
+        discussion_url = f"{HN_ITEM_URL_BASE}{item_id}"
+        heading = (
+            f"<p><strong>Hacker News discussion:</strong> "
+            f"<a href=\"{discussion_url}\">{escape(story['title'])}</a> "
+            f"({story['num_comments']} comments)</p>"
+        )
+        full_com_html = ArticleExtractor.build_article_html("Hacker News Comments", heading + comments_html)
+        return Chapter(
+            title="HN Comments",
+            filename="hn_comments.xhtml",
+            content_html=full_com_html,
+            uid="hn_comments",
+            is_comments=True,
+        )
+
     async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
         session = context.session
         options = context.options
@@ -130,19 +250,7 @@ class HackerNewsDriver(BaseDriver):
                 chapters.append(art_chap)
 
         if post_data.get('kids') and not options.no_comments:
-            kids = post_data['kids']
-            fetched_comments = {}
-            raw_comments = await fetch_comments_recursive(session, kids, fetched_comments, options.max_depth)
-            top_comments = sorted([c for c in raw_comments if c], key=lambda c: c.get('time', 0))
-            enriched_roots = _enrich_comment_tree(top_comments)
-
-            fmt = HtmlFormatter(style='default', cssclass='codehilite', noclasses=False)
-            chunks = []
-            for i, comment in enumerate(enriched_roots):
-                chunks.append(f"<div class='thread-container'>")
-                chunks.append(format_comment_html(comment, fmt))
-                chunks.append("</div>")
-            comments_html = "".join(chunks)
+            comments_html = await self.render_comments_for_post_data(context, post_data)
 
         com_chap = None
         if comments_html:

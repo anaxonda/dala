@@ -405,6 +405,7 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
     
     const options = {
         no_comments: !!savedOpts.no_comments,
+        hn_comments: !!savedOpts.hn_comments,
         no_article: !!savedOpts.no_article,
         no_images: !!savedOpts.no_images,
         archive: !!savedOpts.archive,
@@ -512,6 +513,7 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
         sources: sources,
         bundle_title: bundleTitle,
         no_comments: options.no_comments,
+        hn_comments: options.hn_comments,
         no_article: options.no_article,
         no_images: options.no_images,
         archive: options.archive,
@@ -807,6 +809,7 @@ async function downloadFromShortcut(url, html, tabId = null) {
         sources: [{ url, html: html || null, cookies: cookies, assets: assets, asset_debug: { entry: "shortcut", asset_count: assets.length, ...(lastArticleAssetDebug || {}) }, is_forum, saved_at: savedAtNow() }],
         bundle_title: null,
         no_comments: !!opts.no_comments,
+        hn_comments: !!opts.hn_comments,
         no_article: !!opts.no_article,
         no_images: !!opts.no_images,
         archive: !!opts.archive,
@@ -892,6 +895,7 @@ async function downloadSingleFromContext(url, tabId = null) {
         sources: [{ url, html: null, cookies: cookies, assets: assets, asset_debug: { entry: "context", asset_count: assets.length, ...(lastArticleAssetDebug || {}) }, is_forum, saved_at: savedAtNow() }],
         bundle_title: null,
         no_comments: !!opts.no_comments,
+        hn_comments: !!opts.hn_comments,
         no_article: !!opts.no_article,
         no_images: !!opts.no_images,
         archive: !!opts.archive,

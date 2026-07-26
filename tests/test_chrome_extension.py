@@ -95,9 +95,12 @@ def test_popup_exposes_simplified_image_and_pdf_translation_controls():
         assert "Text Only" not in source
         assert 'id="btn-retry-failed"' not in source
         assert 'id="opt-date-sort-desc"' in source
+        assert 'id="opt-hncomments"' in source
 
     for popup_js_path in (root / "extension_chrome" / "popup.js", root / "firefox_extension" / "popup.js"):
         source = popup_js_path.read_text()
+        assert "hn_comments: document.getElementById('opt-hncomments')?.checked || false" in source
+        assert "res.savedOptions.hn_comments" in source
         assert 'if (preset === "baseline") return "balanced";' in source
         assert 'if (preset === "optimized") return "compact";' in source
         assert "imagePreset.disabled = noImages" in source
@@ -123,6 +126,16 @@ def test_android_extension_avoids_blob_tab_download_fallbacks():
         assert 'const url = browser.runtime.getURL("options.html");' in source
         assert "await browser.tabs.create({ url });" in source
         assert "Opening options tab failed; trying runtime options page" in source
+
+
+def test_extension_payload_preserves_hn_comments_option():
+    root = Path(__file__).resolve().parents[1]
+
+    for bg_path in (root / "extension_chrome" / "background.js", root / "firefox_extension" / "background.js"):
+        source = bg_path.read_text()
+        assert "hn_comments: !!savedOpts.hn_comments" in source
+        assert "hn_comments: options.hn_comments" in source
+        assert "hn_comments: !!opts.hn_comments" in source
 
 
 def _skip_if_playwright_unavailable(exc: Exception):
@@ -176,6 +189,8 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 await page.select_option("#opt-pdf-page-size", "kobo_clara")
                 await page.select_option("#opt-image-preset", "compact")
                 assert await page.locator("#opt-image-color").count() == 0
+                assert await page.locator("#opt-hncomments").count() == 1
+                await page.check("#opt-hncomments")
                 await page.click("#opt-grayscale")
                 await page.click("#opt-noimages")
                 assert await page.locator("#opt-image-preset").is_disabled()

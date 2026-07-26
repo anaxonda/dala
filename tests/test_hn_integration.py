@@ -1,7 +1,11 @@
+import re
+
 import pytest
 import aiohttp
 from unittest.mock import patch, MagicMock, AsyncMock
 from aioresponses import aioresponses
+from dala.cli import process_urls
+from dala.core.extractor import ArticleExtractor
 from dala.drivers.hn import HackerNewsDriver
 from dala.models import BookData, Chapter, ConversionContext, ConversionOptions, HN_API_BASE_URL, Source
 
@@ -108,3 +112,58 @@ async def test_hn_driver_delegates_to_substack():
                 
                 assert children[1].href == "hn_comments.xhtml"
                 assert children[1].title == "HN Comments"
+
+
+@pytest.mark.asyncio
+async def test_process_urls_adds_hn_comments_for_matching_article(monkeypatch):
+    article_url = "https://example.com/article"
+
+    async def fake_get_article_content(*args, **kwargs):
+        return {
+            "success": True,
+            "title": "Article Title",
+            "author": "Author",
+            "html": "<html><body><p>Article Body</p></body></html>",
+            "source_url": article_url,
+        }
+
+    monkeypatch.setattr(ArticleExtractor, "get_article_content", fake_get_article_content)
+
+    with aioresponses() as m:
+        m.get(
+            re.compile(r"^https://hn\.algolia\.com/api/v1/search\?.*"),
+            payload={
+                "hits": [
+                    {
+                        "objectID": "42",
+                        "title": "HN Discussion",
+                        "url": article_url,
+                        "num_comments": 1,
+                        "points": 10,
+                    }
+                ]
+            },
+        )
+        m.get(
+            f"{HN_API_BASE_URL}item/42.json",
+            payload={"id": 42, "title": "HN Discussion", "url": article_url, "kids": [43]},
+        )
+        m.get(
+            f"{HN_API_BASE_URL}item/43.json",
+            payload={"id": 43, "text": "HN comment body", "by": "hnuser", "time": 1},
+        )
+
+        async with aiohttp.ClientSession() as session:
+            books = await process_urls(
+                [Source(url=article_url)],
+                ConversionOptions(hn_comments=True, no_images=True),
+                session,
+            )
+
+    assert len(books) == 1
+    book = books[0]
+    assert [chap.title for chap in book.chapters] == ["Article Title", "HN Comments"]
+    assert "HN comment body" in book.chapters[1].content_html
+    assert "https://news.ycombinator.com/item?id=42" in book.chapters[1].content_html
+    assert isinstance(book.toc_structure[0], tuple)
+    assert book.toc_structure[0][1][0].href == "hn_comments.xhtml"

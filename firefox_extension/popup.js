@@ -600,6 +600,7 @@ async function saveOptions(meta = {}) {
     }
     const options = {
         no_comments: document.getElementById('opt-nocomments').checked,
+        hn_comments: document.getElementById('opt-hncomments')?.checked || false,
         no_article: document.getElementById('opt-noarticle').checked,
         no_images: document.getElementById('opt-noimages').checked,
         archive: document.getElementById('opt-archive').checked,
@@ -642,6 +643,7 @@ async function restoreOptions() {
     }
     if (res.savedOptions) {
         document.getElementById('opt-nocomments').checked = res.savedOptions.no_comments;
+        document.getElementById('opt-hncomments').checked = !!res.savedOptions.hn_comments;
         document.getElementById('opt-noarticle').checked = res.savedOptions.no_article;
         document.getElementById('opt-noimages').checked = res.savedOptions.no_images;
         document.getElementById('opt-archive').checked = res.savedOptions.archive;
@@ -696,6 +698,7 @@ function getOptions() {
     const cookiesEnabled = document.getElementById('opt-cookies').checked || forumEnabled;
     return {
         no_comments: document.getElementById('opt-nocomments').checked,
+        hn_comments: document.getElementById('opt-hncomments')?.checked || false,
         no_article: document.getElementById('opt-noarticle').checked,
         no_images: document.getElementById('opt-noimages').checked,
         archive: document.getElementById('opt-archive').checked,
