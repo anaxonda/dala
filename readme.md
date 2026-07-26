@@ -430,6 +430,14 @@ The GitHub release asset `dala-installers-vVERSION.zip` contains:
 
 The installers install or update the Python server from PyPI, install `uv` only if it is missing, optionally add headless browser support, and do not install the browser extension.
 
+If a GitHub release includes a Python wheel such as `dala-VERSION-py3-none-any.whl`, it is mainly an exact-version/offline testing artifact. On desktop platforms you can install it with:
+
+```bash
+uv tool install --force ./dala-VERSION-py3-none-any.whl
+```
+
+The wheel installs the base CLI/server. For normal desktop installs, prefer `uv tool install dala` or the installer bundle. For Android/Termux, prefer the Termux installer because it handles native packages, constraints, storage setup, and known `uv` limitations.
+
 ### macOS
 
 Recommended: unzip `dala-installers-vVERSION.zip`, then right-click `installers/Install or Update Dala.command` and choose **Open**. The installer prompts for optional headless browser support and creates `Start Dala Server.command` on the Desktop when possible.
@@ -743,6 +751,7 @@ Expected GitHub release assets:
 dala-chrome-vEXTENSION_VERSION.zip
 dala-firefox-vEXTENSION_VERSION-signed.xpi
 dala-installers-vPYTHON_PACKAGE_VERSION.zip
+dala-PYTHON_PACKAGE_VERSION-py3-none-any.whl  # optional convenience artifact
 ```
 
 If only the Python package/installers changed, extension assets may keep the previous extension version. State that explicitly in the release notes.
