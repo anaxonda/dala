@@ -1255,6 +1255,7 @@ async function refreshJobProgress() {
     const active = (job.source_states || []).filter(item => !["completed", "skipped", "queued"].includes(item.stage));
     active.sort((a, b) => Number(b.stage === "fetching_browser") - Number(a.stage === "fetching_browser"));
     let text = `${job.successful_sources || 0} saved, ${job.skipped_sources || 0} skipped / ${job.total_sources || 0}`;
+    if ((job.media_warnings || []).length) text += `, ${job.media_warnings.length} images unavailable`;
     if (active.length && ["running", "discovering"].includes(job.status)) {
         const source = active[0];
         let host = source.url;

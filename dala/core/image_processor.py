@@ -7,7 +7,7 @@ import mimetypes
 import hashlib
 import json
 import base64
-from urllib.parse import urlparse, parse_qs, urljoin, unquote_to_bytes
+from urllib.parse import urlparse, parse_qs, urljoin, unquote_to_bytes, parse_qsl, urlencode
 from bs4 import BeautifulSoup, Tag, Comment
 from typing import List, Dict, Optional, Any, Tuple
 from tqdm.asyncio import tqdm_asyncio
@@ -575,6 +575,7 @@ class BaseImageProcessor:
         if not img_tag or not soup:
             return
         fig = img_tag.find_parent("figure")
+        figure_id = fig.get("id") if fig else None
         if fig:
             if not caption_text:
                 caption_text = BaseImageProcessor._caption_from_container(fig)
@@ -597,6 +598,8 @@ class BaseImageProcessor:
 
         tag_factory = BaseImageProcessor._tag_factory(soup)
         wrapper = tag_factory.new_tag("div", attrs={"class": "img-block"})
+        if figure_id:
+            wrapper["id"] = figure_id
         parent = img_tag.parent
         if parent:
             img_tag.replace_with(wrapper)
@@ -748,24 +751,18 @@ class ImageProcessor(BaseImageProcessor):
     def _find_existing_asset(book_assets: list, url: str) -> Optional[ImageAsset]:
         if not url:
             return None
-        normalized = normalize_url_for_matching(url)
-        target_name = os.path.basename(urlparse(url).path or "")
-        allow_basename_match = bool(
-            target_name
-            and len(target_name) > 8
-            and not ImageProcessor._is_generic_image_filename(target_name)
-        )
+        from .image_layout import asset_url_keys
+        keys = asset_url_keys(url)
+        matches = []
         for asset in book_assets:
             asset_urls = [asset.original_url] + list(asset.alt_urls or [])
             for asset_url in asset_urls:
                 if not asset_url:
                     continue
-                if asset_url == url or normalize_url_for_matching(asset_url) == normalized:
-                    return asset
-                asset_name = os.path.basename(urlparse(asset_url).path or "")
-                if allow_basename_match and asset_name == target_name and not ImageProcessor._is_generic_image_filename(asset_name):
-                    return asset
-        return None
+                if keys.intersection(asset_url_keys(asset_url)):
+                    if asset not in matches:
+                        matches.append(asset)
+        return matches[0] if len(matches) == 1 else None
 
     @staticmethod
     def _sequence_year(img: Tag) -> int:
@@ -1117,7 +1114,8 @@ class ImageProcessor(BaseImageProcessor):
                 return qs.get("src") or qs.get("url") or qs.get("original")
             if parsed.netloc and qs.keys() & {"w", "q", "fit", "h", "fm"}:
                 if re.search(r'\.(jpe?g|png|webp|gif|svg)$', parsed.path, re.IGNORECASE):
-                    return parsed._replace(query=None).geturl()
+                    retained = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key not in {"w", "q", "fit", "h", "fm"}]
+                    return parsed._replace(query=urlencode(retained)).geturl()
         except Exception:
             return None
         return None
@@ -1291,6 +1289,8 @@ class ImageProcessor(BaseImageProcessor):
     @staticmethod
     async def _seed_images_from_metadata(raw_html: str, body_soup: BeautifulSoup, base_url: str, book_assets: list, session, options: Optional[ConversionOptions] = None) -> None:
         if not raw_html:
+            return
+        if body_soup.find("img"):
             return
         try:
             full_soup = BeautifulSoup(raw_html, "html.parser")
@@ -1533,6 +1533,13 @@ class ImageProcessor(BaseImageProcessor):
 
                 started = asyncio.get_event_loop().time()
                 existing = ImageProcessor._find_existing_asset(book_assets, full_url)
+                from .image_layout import image_urls
+                declared_urls = image_urls(img_tag, base_url)
+                if not existing:
+                    for candidate in declared_urls:
+                        existing = ImageProcessor._find_existing_asset(book_assets, candidate)
+                        if existing:
+                            break
                 if existing:
                     img_tag['src'] = existing.filename
                     ImageProcessor._strip_processed_image_attrs(img_tag)
@@ -1556,6 +1563,8 @@ class ImageProcessor(BaseImageProcessor):
                             candidate_urls.append(u)
 
                 origin_src = ImageProcessor._extract_origin_from_proxy(full_url, profile=profile)
+                for candidate in declared_urls:
+                    _add_candidate(candidate)
 
                 lede_img = None
                 parent_fig = img_tag.find_parent("figure")
@@ -1618,8 +1627,10 @@ class ImageProcessor(BaseImageProcessor):
 
                 if not final_data:
                     log.debug(f"Failed to fetch/validate image after candidates: {candidate_urls}")
+                    caption_text = ImageProcessor.find_caption(img_tag)
                     img_tag['src'] = full_url
                     ImageProcessor._strip_processed_image_attrs(img_tag)
+                    ImageProcessor.wrap_in_img_block(soup, img_tag, caption_text)
                     return
 
                 # Double-check if asset was added by another task while we were fetching

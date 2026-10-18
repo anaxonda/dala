@@ -41,7 +41,7 @@ class GenericDriver(BaseDriver):
                     raw = None
             if not raw:
                 continue
-            url_like = item.get("canonical_url") or item.get("original_url") or item.get("viewer_url") or ""
+            url_like = item.get("original_url") or item.get("canonical_url") or item.get("viewer_url") or ""
             if not isinstance(url_like, str) or not url_like.startswith(("http://", "https://")):
                 continue
             header_mime = item.get("media_type") or item.get("content_type") or mimetypes.guess_type(url_like)[0] or "image/jpeg"
@@ -67,11 +67,9 @@ class GenericDriver(BaseDriver):
                 count += 1
                 fname = f"{IMAGE_DIR_IN_EPUB}/{fname_base}_{count}{ext}"
             alt_urls = []
-            for u in (item.get("original_url"), item.get("viewer_url"), item.get("canonical_url")):
+            for u in [item.get("original_url"), *(item.get("alt_urls") or [])]:
                 if u and isinstance(u, str):
                     alt_urls.append(u)
-                    if "?" in u:
-                        alt_urls.append(u.split("?", 1)[0])
             assets.append(ImageAsset(
                 uid=f"img_{ImageProcessor._short_stable_hash(fname)}",
                 filename=fname,

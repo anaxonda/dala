@@ -30,6 +30,7 @@ from dala.core.image_budget import ImageBudgetExceeded, assert_image_budget, pre
 from dala.core.discovery import DiscoveryError, discover_posts_for_sources
 from dala.core.translation import TranslationCache, TranslationProcessor, TranslationError
 from dala.core.runtime import CURRENT_SOURCE, SourceRuntime
+from dala.core.image_layout import validate_book_media
 
 def _aiohttp_compatible_cookies(cookies: Dict[str, str]) -> Dict[str, str]:
     """Return cookies that Python's SimpleCookie can place in an aiohttp jar.
@@ -206,6 +207,8 @@ async def process_urls(
                     book.extra_metadata["published_date"] = source.published_date
                 if book is not None and source.saved_at:
                     mark_book_saved_at(book, source.saved_at)
+                if book is not None:
+                    validate_book_media(book, options)
                 return book
             finally:
                 if local_session is not session:
@@ -338,7 +341,7 @@ def create_bundle(books: List[BookData], title: str, author: str) -> BookData:
             else:
                 master_toc.append(epub.Link(article_chap.filename, toc_title, article_chap.uid))
 
-    return BookData(title=title, author=author, uid=master_uid, language="en", description=f"Bundle of {len(books)} articles.", source_url="", chapters=master_chapters, images=master_images, toc_structure=master_toc)
+    return BookData(title=title, author=author, uid=master_uid, language="en", description=f"Bundle of {len(books)} articles.", source_url="", chapters=master_chapters, images=master_images, toc_structure=master_toc, media_warnings=[warning for book in books for warning in book.media_warnings])
 
 
 def bundle_filename_title(title: str, options: ConversionOptions) -> str:

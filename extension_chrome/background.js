@@ -572,7 +572,11 @@ function scrapeArticleImagesFunc() {
         const viewer = a && a.href ? a.href : null;
         const width = img.naturalWidth || img.width || 0;
         const height = img.naturalHeight || img.height || 0;
-        return {src, srcset, dataUrl, viewer, alt, width, height};
+        const rawUrls = [img.currentSrc, ...["src", "data-src", "data-original", "data-url"].map(attr => img.getAttribute(attr))]
+                .filter(Boolean).map(url => { try { return new URL(url, document.baseURI).href; } catch (_) { return null; } }).filter(Boolean);
+        const picture = img.closest("picture");
+        const sourceSets = picture ? Array.from(picture.querySelectorAll("source")).map(source => source.getAttribute("srcset") || source.getAttribute("data-srcset")).filter(Boolean) : [];
+        return {src, srcset, dataUrl, viewer, alt, width, height, rawUrls, sourceSets, baseUri: document.baseURI, viewerType: a && a.getAttribute("type")};
     };
     const readSvg = (svg) => {
         const src = svg.getAttribute('data-inject-url') || svg.getAttribute('data-src') || svg.getAttribute('src');
@@ -659,9 +663,15 @@ async function scrapeArticleAssetsFromTab(tabId, refererUrl, html) {
         const seen = new Set();
         const addPicked = (item) => {
             const url = item && (item.url || item.original_url);
-            if (!url || seen.has(url)) return;
+            if (!url) return;
+            if (seen.has(url)) {
+                const existing = picked.find(candidate => candidate.url === url);
+                existing.alt_urls = Array.from(new Set([...(existing.alt_urls || []), ...(item.alt_urls || [])]));
+                return;
+            }
             seen.add(url);
             picked.push({
+                alt_urls: item.alt_urls || [url],
                 url,
                 original_url: url,
                 viewer_url: item.viewer_url || null,
@@ -678,7 +688,7 @@ async function scrapeArticleAssetsFromTab(tabId, refererUrl, html) {
             debug.parsed_assets = (parsed.assets || []).length;
             debug.parsed_externals = (parsed.externals || []).length;
             for (const asset of (parsed.assets || [])) {
-                addPicked({url: asset.url, viewer_url: asset.viewer_url, filename_hint: asset.filename_hint});
+                addPicked({url: asset.url, viewer_url: asset.viewer_url, filename_hint: asset.filename_hint, alt_urls: asset.alt_urls});
             }
             for (const url of (parsed.externals || [])) {
                 addPicked({url});
@@ -692,7 +702,8 @@ async function scrapeArticleAssetsFromTab(tabId, refererUrl, html) {
                 return {
                     original_url: item.url,
                     viewer_url: item.viewer_url || null,
-                    canonical_url: item.url.split("?")[0],
+                    canonical_url: item.url,
+                    alt_urls: item.alt_urls || [item.url],
                     filename_hint: item.url.split("/").pop(),
                     content_type: data.type,
                     content: data.base64
@@ -725,27 +736,39 @@ function isLowValueArticleImage(rec) {
 
 function pickBestImageCandidate(rec, baseUrl) {
     const candidates = [];
-    if (rec.dataUrl) candidates.push({u: rec.dataUrl, w: 99999});
-    if (rec.srcset) {
-        const parts = rec.srcset.split(',').map(p => p.trim()).filter(Boolean);
-        for (const p of parts) {
-            const [u, w] = p.split(/\\s+/);
-            let width = parseInt((w || '').replace('w',''), 10);
-            if (isNaN(width)) width = 0;
-            candidates.push({u, w: width});
+    const base = rec.baseUri || baseUrl;
+    const add = (url, width) => {
+        if (!url) return;
+        try {
+            const resolved = new URL(url, base);
+            if (!["http:", "https:"].includes(resolved.protocol)) return;
+            if (Number(resolved.searchParams.get("blur")) > 0) return;
+            candidates.push({url: resolved.href, width});
+        } catch (_) { }
+    };
+    if (rec.dataUrl) add(rec.dataUrl, 99999);
+    for (const set of [rec.srcset, ...(rec.sourceSets || [])].filter(Boolean)) {
+        const pattern = /(\S+)\s+(\d+(?:\.\d+)?)(w|x)(?=\s*,|\s*$)/g;
+        const matches = Array.from(set.matchAll(pattern));
+        if (matches.length) {
+            for (const match of matches) add(match[1].replace(/^,/, ""), Number(match[2]) * (match[3] === "x" ? 1000 : 1));
+        } else if (!set.includes(",") && !/\s/.test(set)) {
+            add(set, 0);
         }
     }
-    if (rec.src) candidates.push({u: rec.src, w: 0});
-    let best = null;
-    let maxw = -1;
-    for (const c of candidates) {
-        let abs = null;
-        try { abs = new URL(c.u, baseUrl).href; } catch(e) { abs = null; }
-        if (!abs) continue;
-        if (c.w > maxw) { maxw = c.w; best = abs; }
+    if (rec.src) add(rec.src, 0);
+    for (const url of rec.rawUrls || []) add(url, 0);
+    if (rec.viewer) {
+        try {
+            const path = new URL(rec.viewer, base).pathname.toLowerCase();
+            if ((rec.viewerType || "").startsWith("image/") || [".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", ".avif"].some(ext => path.endsWith(ext))) add(rec.viewer, 100000);
+        } catch (_) { }
     }
-    if (!best) return null;
-    return {original_url: best, url: best, viewer_url: rec.viewer || null};
+    candidates.sort((a, b) => b.width - a.width);
+    if (!candidates.length) return null;
+    const best = candidates[0].url;
+    return {original_url: best, url: best, viewer_url: rec.viewer || null,
+        alt_urls: Array.from(new Set(candidates.map(candidate => candidate.url)))};
 }
 
 async function getCookiesForUrl(url) {

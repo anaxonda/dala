@@ -14,6 +14,7 @@ from yarl import URL
 from ..models import log, ARCHIVE_ORG_API_BASE, SiteProfile
 from .browser import DEFAULT_BROWSER_PROFILE_DIR, BrowserChallengeError, BrowserFetchError, BrowserFetchOptions, detect_browser_challenge, fetch_rendered_source, resolve_browser_extension_path
 from .session import fetch_with_retry
+from .image_layout import normalize_image_layout
 
 class ArticleExtractor:
     VISIBLE_AUTHOR_SELECTORS = [
@@ -268,6 +269,7 @@ class ArticleExtractor:
                 for selector in profile.remove_selectors:
                     for element in soup.select(selector):
                         element.decompose()
+            normalize_image_layout(soup, url)
 
             # Prefer profile-specific content selector
             content_soup = None

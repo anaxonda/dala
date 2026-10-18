@@ -1635,7 +1635,7 @@ async def test_generic_driver_appends_same_site_linked_reference_tables():
 
 
 @pytest.mark.asyncio
-async def test_metadata_image_seed_reuses_preloaded_asset_by_basename():
+async def test_metadata_image_seed_reuses_preloaded_asset_by_explicit_alias():
     body = BeautifulSoup("<body><p>Article body.</p></body>", "html.parser").body
     raw_html = """
     <html><head>
@@ -1649,6 +1649,7 @@ async def test_metadata_image_seed_reuses_preloaded_asset_by_basename():
             media_type="image/jpeg",
             content=b"jpeg",
             original_url="https://www.science.org/do/10.1126/science.zk8ch0m/full/_20260618_nf_wolves_night.jpg",
+            alt_urls=["https://www.science.org/cms/asset/d1b394f5/_20260618_nf_wolves_night.jpg"],
         )
     ]
 

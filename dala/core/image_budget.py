@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
-from ..models import BookData, Chapter, ImageAsset, ConversionOptions, normalize_image_preset, normalize_url_for_matching, sanitize_filename
+from ..models import BookData, Chapter, ImageAsset, ConversionOptions, normalize_image_preset, sanitize_filename
 
 
 class ImageBudgetExceeded(ValueError):
@@ -97,18 +97,6 @@ def _content_hash(asset: ImageAsset) -> Optional[str]:
     return hashlib.sha1(asset.content).hexdigest()
 
 
-def _url_keys(asset: ImageAsset) -> List[str]:
-    urls = []
-    for u in [asset.original_url] + list(asset.alt_urls or []):
-        if not u:
-            continue
-        urls.append(u)
-        norm = normalize_url_for_matching(u)
-        if norm:
-            urls.append(norm)
-    return list(dict.fromkeys(urls))
-
-
 def _unique_filename(existing: set, original: str, book_index: int) -> str:
     parsed = urlparse(original)
     dirname = os.path.dirname(parsed.path or original) or "images"
@@ -158,7 +146,6 @@ def prepare_books_for_bundle(books: List[BookData]) -> Tuple[List[BookData], Ima
     prepared = []
     seen_filenames = set()
     seen_hashes: Dict[str, ImageAsset] = {}
-    seen_urls: Dict[str, ImageAsset] = {}
     stats = ImageStats()
 
     for idx, book in enumerate(books, start=1):
@@ -167,11 +154,6 @@ def prepare_books_for_bundle(books: List[BookData]) -> Tuple[List[BookData], Ima
         for asset in book.images:
             digest = _content_hash(asset)
             existing = seen_hashes.get(digest) if digest else None
-            if not existing:
-                for key in _url_keys(asset):
-                    if key in seen_urls:
-                        existing = seen_urls[key]
-                        break
             if existing:
                 filename_map[asset.filename] = existing.filename
                 stats.duplicate_count += 1
@@ -186,8 +168,6 @@ def prepare_books_for_bundle(books: List[BookData]) -> Tuple[List[BookData], Ima
             seen_filenames.add(new_asset.filename)
             if digest:
                 seen_hashes[digest] = new_asset
-            for key in _url_keys(new_asset):
-                seen_urls[key] = new_asset
             images.append(new_asset)
 
         new_book = copy.copy(book)

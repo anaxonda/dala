@@ -953,6 +953,7 @@ async def run_conversion_job(
             failed_source_details=failed_source_details,
             output_filename=filename,
             server_saved=bool(saved_user_copy),
+            media_warnings=final_book.media_warnings,
         )
 
         return ConversionResult(
@@ -1019,40 +1020,24 @@ async def extract_links(req: ScanRequest):
 
     soup = BeautifulSoup(req.html, 'html.parser')
     base_url = req.url
+    from dala.core.image_layout import normalize_image_layout, image_urls, resolve_image_url
+    from dala.core.image_processor import ImageProcessor
+    normalize_image_layout(soup, base_url)
+    base_tag = soup.find("base", href=True)
+    if base_tag:
+        base_url = resolve_image_url(base_url, base_tag["href"]) or base_url
     
     # 1. Extract Images (matching background.js logic)
     images = []
     seen = set()
     
-    def _srcset_candidates(srcset: str) -> list[tuple[int, str]]:
-        candidates = []
-        if not srcset:
-            return candidates
-        for part in srcset.split(","):
-            part = part.strip()
-            if not part:
-                continue
-            bits = part.split()
-            url = bits[0]
-            width = 0
-            if len(bits) > 1:
-                m = re.match(r"(\d+)[wx]$", bits[1])
-                if m:
-                    try:
-                        width = int(m.group(1))
-                    except Exception:
-                        width = 0
-            candidates.append((width, url))
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        return candidates
-
     def _best_img_url(img):
         for attr in ("data-url", "data-original", "data-src"):
             value = img.get(attr)
             if value:
                 return value
         for attr in ("data-srcset", "srcset"):
-            for _, candidate in _srcset_candidates(img.get(attr) or ""):
+            for candidate in ImageProcessor.parse_srcset(img.get(attr) or ""):
                 if candidate:
                     return candidate
         return img.get("src")
@@ -1073,8 +1058,10 @@ async def extract_links(req: ScanRequest):
     def _append_image_url(src: str, img=None, viewer=None) -> None:
         if _is_low_value_img(src, img or {}):
             return
-        primary = urljoin(base_url, src)
-        key = primary.split("?", 1)[0]
+        primary = resolve_image_url(base_url, src)
+        if not primary:
+            return
+        key = primary
         if key in seen:
             return
         seen.add(key)
@@ -1082,6 +1069,7 @@ async def extract_links(req: ScanRequest):
             "url": primary,
             "viewer_url": viewer,
             "filename_hint": src.split("/")[-1],
+            "alt_urls": image_urls(img, base_url) if hasattr(img, "attrs") else [primary],
         })
 
     # Selectors for forum posts
@@ -1098,7 +1086,7 @@ async def extract_links(req: ScanRequest):
     for img in img_tags:
         src = _best_img_url(img)
         parent = img.find_parent("a")
-        viewer = urljoin(base_url, parent["href"]) if (parent and parent.get("href")) else None
+        viewer = resolve_image_url(base_url, parent["href"]) if (parent and parent.get("href")) else None
         _append_image_url(src, img=img, viewer=viewer)
 
     for svg in soup.select("article svg[data-inject-url], article svg[data-src], article svg[src], main svg[data-inject-url], main svg[data-src], main svg[src], figure svg[data-inject-url], figure svg[data-src], figure svg[src]"):
@@ -1134,8 +1122,8 @@ async def extract_links(req: ScanRequest):
         src = _best_img_url(img)
         if _is_low_value_img(src, img):
             continue
-        full = urljoin(base_url, src)
-        if full not in seen:
+        full = resolve_image_url(base_url, src)
+        if full and full not in seen:
             externals.append(full)
             seen.add(full)
 

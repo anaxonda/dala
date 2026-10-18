@@ -1163,6 +1163,8 @@ async def write_output_book(
     options: Optional[ConversionOptions] = None,
     custom_css: str = None,
 ) -> None:
+    from .image_layout import validate_book_media
+    validate_book_media(book_data, options)
     book_data = prepare_book_for_output(book_data, options)
     book_data = await TranslationProcessor.translate_book(book_data, options)
     output_format = normalize_output_format(getattr(options, "output_format", None))

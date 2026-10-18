@@ -172,6 +172,7 @@ class BookData:
     images: List[ImageAsset] = field(default_factory=list)
     toc_structure: List[Any] = field(default_factory=list)
     extra_metadata: Dict[str, str] = field(default_factory=dict)
+    media_warnings: List[Dict[str, str]] = field(default_factory=list)
 
 # --- Helper Functions ---
 

@@ -102,6 +102,7 @@ class JobRecord:
             "source_recoveries": [item.to_public() for item in self.source_recoveries.values()],
             "source_states": [{**item, "url": url, "elapsed_seconds": max(0, item.get("finished_at", time.time()) - item["started_at"])} for url, item in self.source_states.items()],
             "successful_sources": len(self.cached_books),
+            "media_warnings": [warning for book in self.cached_books.values() for warning in book.media_warnings],
             "skipped_sources": len(self.failed_source_details),
             "finish_requested": self.finish_event.is_set(),
             "can_finish": self.status in {"running", "discovering"} and bool(self.cached_books),
