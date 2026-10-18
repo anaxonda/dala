@@ -450,7 +450,8 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
         const saved_at = item.saved_at || savedAtNow();
         console.log(`Processing payload for: ${url}`);
         let html = null;
-        const match = allTabs.find(t => t.url === url);
+        const match = allTabs.find(t => t.status === "complete" && sourceTabKey(t.url) === sourceTabKey(url))
+            || allTabs.find(t => sourceTabKey(t.url) === sourceTabKey(url));
 
         if (match) {
             try {
@@ -1026,13 +1027,15 @@ function abortableDelay(ms, signal) {
             reject(new DOMException("Aborted", "AbortError"));
             return;
         }
-        const timer = setTimeout(resolve, ms);
-        if (signal) {
-            signal.addEventListener("abort", () => {
-                clearTimeout(timer);
-                reject(new DOMException("Aborted", "AbortError"));
-            }, { once: true });
-        }
+        const onAbort = () => {
+            clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+        };
+        const timer = setTimeout(() => {
+            if (signal) signal.removeEventListener("abort", onAbort);
+            resolve();
+        }, ms);
+        if (signal) signal.addEventListener("abort", onAbort, { once: true });
     });
 }
 
@@ -1054,6 +1057,87 @@ async function rememberFailedSourcesFromJob(job) {
     }
 }
 
+function sourceTabKey(url) {
+    try {
+        const parsed = new URL(url);
+        parsed.hash = "";
+        parsed.pathname = parsed.pathname.replace(/\/$/, "") || "/";
+        return parsed.toString();
+    } catch (_) {
+        return url;
+    }
+}
+
+function captureRecoveryPage() {
+    return { url: location.href, html: document.documentElement.outerHTML };
+}
+
+async function recoverBundleSources(job, serverUrl, payload, recoveries, signal) {
+    for (const pending of job.source_recoveries || []) {
+        if (pending.captured) continue;
+        if (signal && signal.aborted) throw new DOMException("Aborted", "AbortError");
+        let state = recoveries.get(pending.recovery_id);
+        if (!state) {
+            state = { nextCaptureAt: 0, opened: false, submitted: false };
+            recoveries.set(pending.recovery_id, state);
+        }
+        if (state.submitted || Date.now() < state.nextCaptureAt) continue;
+        state.nextCaptureAt = Date.now() + 3000;
+        try {
+            const tabs = await browser.tabs.query({});
+            const matches = tabs.filter(tab => sourceTabKey(tab.url) === sourceTabKey(pending.url))
+                .sort((a, b) => Number(b.status === "complete") - Number(a.status === "complete"));
+            if (!matches.length && !state.opened) {
+                state.opened = true;
+                await browser.tabs.create({ url: pending.url });
+                continue;
+            }
+            // Prefer all existing copies of the article before opening another tab.
+            for (const tab of matches) {
+                if (tab.status !== "complete") continue;
+                const results = await Promise.race([
+                    new Promise(resolve => {
+                        chrome.scripting.executeScript({ target: { tabId: tab.id }, func: captureRecoveryPage }, results => {
+                            if (chrome.runtime.lastError) resolve(null);
+                            else resolve(results);
+                        });
+                    }),
+                    abortableDelay(3000, signal).then(() => null)
+                ]);
+                const snapshot = results && results[0] && results[0].result;
+                if (!snapshot || sourceTabKey(snapshot.url) !== sourceTabKey(pending.url)) continue;
+                const html = snapshot.html;
+                if (!html) continue;
+                const original = payload.sources.find(source => sourceTabKey(source.url) === sourceTabKey(pending.url));
+                const captured = { url: pending.url, html };
+                if ((original && original.cookies) || pending.include_cookies) captured.cookies = await getCookiesForUrl(pending.url);
+                const captureController = new AbortController();
+                const abortCapture = () => captureController.abort();
+                if (signal) signal.addEventListener("abort", abortCapture, { once: true });
+                const captureTimer = setTimeout(abortCapture, 10000);
+                let response;
+                try {
+                    response = await fetch(`${serverUrl}/jobs/${job.job_id}/sources/${pending.recovery_id}/capture`, {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(captured), signal: captureController.signal
+                    });
+                } finally {
+                    clearTimeout(captureTimer);
+                    if (signal) signal.removeEventListener("abort", abortCapture);
+                }
+                if (response.ok || response.status === 409) {
+                    state.submitted = true;
+                    break;
+                }
+                if (response.status !== 422) console.warn("Bundle capture rejected:", response.status);
+            }
+        } catch (error) {
+            if (signal && signal.aborted) throw error;
+            console.warn("Could not capture pending bundle article; will retry:", error);
+        }
+    }
+}
+
 async function runServerJob(payload, signal) {
     if (!payload.request_token) {
         payload.request_token = createRequestToken();
@@ -1062,7 +1146,7 @@ async function runServerJob(payload, signal) {
     console.log(`Payload size: ${bodyStr.length} chars. Submitting job...`);
     const serverUrl = await getServerBaseUrl();
 
-    const submitted = await fetchJson(`${serverUrl}/jobs`, {
+    const submitted = payload.existing_job_id ? { job_id: payload.existing_job_id } : await fetchJson(`${serverUrl}/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: bodyStr,
@@ -1070,13 +1154,25 @@ async function runServerJob(payload, signal) {
     });
     currentJobId = submitted.job_id;
     let openedVerificationUrl = null;
+    const sourceRecoveries = new Map();
+    const recoveryController = new AbortController();
+    const abortRecovery = () => recoveryController.abort();
+    if (signal) signal.addEventListener("abort", abortRecovery, { once: true });
+    let recoveryTask = null;
 
+    try {
     while (true) {
         if (signal && signal.aborted) {
             throw new DOMException("Aborted", "AbortError");
         }
         const job = await fetchJson(`${serverUrl}/jobs/${currentJobId}`, { signal });
+        await browser.storage.local.set({ lastDalaJob: job });
         await rememberFailedSourcesFromJob(job);
+        if (!recoveryTask && job.status === "running" && (job.source_recoveries || []).some(item => !item.captured)) {
+            recoveryTask = recoverBundleSources(job, serverUrl, payload, sourceRecoveries, recoveryController.signal)
+                .catch(error => { if (error.name !== "AbortError") console.warn("Bundle recovery:", error); })
+                .finally(() => { recoveryTask = null; });
+        }
         if (job.status === "discovering") {
             browser.browserAction.setBadgeText({ text: "LOAD" });
             await abortableDelay(1000, signal);
@@ -1108,7 +1204,10 @@ async function runServerJob(payload, signal) {
             browser.browserAction.setBadgeText({ text: "TAB" });
             const openUrl = job.user_browser_url || job.verification_source_url || job.current_url;
             if (openUrl) {
-                await browser.tabs.create({ url: openUrl });
+                const tabs = await browser.tabs.query({});
+                const existing = tabs.find(tab => sourceTabKey(tab.url) === sourceTabKey(openUrl));
+                if (existing) await browser.tabs.update(existing.id, { active: true });
+                else await browser.tabs.create({ url: openUrl });
                 browser.notifications.create({
                     type: "basic",
                     iconUrl: "icon.png",
@@ -1127,6 +1226,9 @@ async function runServerJob(payload, signal) {
             response.failedSourceDetails = job.failed_source_details || [];
             return response;
         }
+        if (job.status === "interrupted") {
+            throw new Error(job.error || "Server restarted. Use Retry skipped to resume saved articles.");
+        }
         if (job.status === "failed") {
             const err = new Error(job.error || "Conversion failed.");
             err.failedSourceDetails = job.failed_source_details || [];
@@ -1136,6 +1238,11 @@ async function runServerJob(payload, signal) {
             throw new DOMException(job.error || "Job cancelled.", "AbortError");
         }
         await abortableDelay(1000, signal);
+    }
+    } finally {
+        abortRecovery();
+        if (signal) signal.removeEventListener("abort", abortRecovery);
+        if (recoveryTask) await recoveryTask;
     }
 }
 

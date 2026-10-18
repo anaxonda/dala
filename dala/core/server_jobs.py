@@ -1,11 +1,14 @@
 import asyncio
 import os
+import time
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from ..models import log
+from . import job_store
 
 
 JOB_RETENTION_SECONDS = int(os.getenv("DALA_JOB_RETENTION_SECONDS", str(2 * 60 * 60)))
@@ -22,6 +25,27 @@ def parse_utc(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+@dataclass
+class SourceRecovery:
+    recovery_id: str
+    url: str
+    expires_at: float
+    marker: str
+    future: asyncio.Future
+    captured: bool = False
+    include_cookies: bool = False
+
+    def to_public(self) -> Dict[str, Any]:
+        return {
+            "recovery_id": self.recovery_id,
+            "url": self.url,
+            "expires_at": self.expires_at,
+            "marker": self.marker,
+            "captured": self.captured,
+            "include_cookies": self.include_cookies,
+        }
 
 
 @dataclass
@@ -48,6 +72,11 @@ class JobRecord:
     user_browser_url: Optional[str] = None
     task: Optional[asyncio.Task] = None
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
+    source_recoveries: Dict[str, SourceRecovery] = field(default_factory=dict)
+    source_states: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    cached_books: Dict[str, Any] = field(default_factory=dict)
+    finish_event: asyncio.Event = field(default_factory=asyncio.Event)
+    persist_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def to_public(self) -> Dict[str, Any]:
         return {
@@ -70,6 +99,13 @@ class JobRecord:
             "verification_source_url": self.verification_source_url,
             "verification_marker": self.verification_marker,
             "user_browser_url": self.user_browser_url,
+            "source_recoveries": [item.to_public() for item in self.source_recoveries.values()],
+            "source_states": [{**item, "url": url, "elapsed_seconds": max(0, item.get("finished_at", time.time()) - item["started_at"])} for url, item in self.source_states.items()],
+            "successful_sources": len(self.cached_books),
+            "skipped_sources": len(self.failed_source_details),
+            "finish_requested": self.finish_event.is_set(),
+            "can_finish": self.status in {"running", "discovering"} and bool(self.cached_books),
+            "can_retry": self.status in {"completed", "failed", "cancelled", "interrupted"} and bool(self.request) and (self.status != "completed" or bool(self.failed_source_details) or len(self.cached_books) < self.total_sources),
         }
 
 
@@ -114,6 +150,50 @@ async def set_job_task(job_id: str, task: asyncio.Task) -> None:
     await update_job(job_id, task=task)
 
 
+async def persist_job(record: JobRecord) -> None:
+    if not record.request:
+        return
+    async with record.persist_lock:
+        request = record.request.model_dump(exclude={"llm_api_key"})
+        for source in request["sources"]:
+            for key in ("cookies", "html", "assets", "page_htmls", "asset_debug"):
+                source.pop(key, None)
+        state = record.to_public()
+        state.update(request=request, output_path=record.output_path)
+        try:
+            await asyncio.to_thread(job_store.write_json, job_store.job_dir(record.job_id) / 'manifest.json', state)
+        except OSError as exc:
+            log.warning(f'Could not persist job {record.job_id}: {exc}')
+
+
+async def restore_jobs(request_factory) -> None:
+    for manifest in job_store.root_dir().glob('*/manifest.json'):
+        try:
+            data = await asyncio.to_thread(lambda p=manifest: json.loads(p.read_text()))
+            job_id = data['job_id']
+            if job_id in JOBS:
+                continue
+            record = JobRecord(job_id=job_id, status=data['status'], created_at=data['created_at'], updated_at=data['updated_at'])
+            record.request = request_factory(data['request'])
+            record.cached_books = await asyncio.to_thread(job_store.load_books, job_id)
+            record.total_sources = len(record.request.sources)
+            record.processed_sources = data.get('processed_sources', len(record.cached_books))
+            record.failed_source_details = data.get('failed_source_details', [])
+            record.output_path = data.get('output_path')
+            record.output_filename = data.get('output_filename')
+            record.output_media_type = data.get('output_media_type', 'application/epub+zip')
+            record.server_saved = data.get('server_saved', False)
+            if record.status not in {'completed', 'failed', 'cancelled', 'user_browser_required'}:
+                record.status = 'interrupted'
+                record.error = 'Server restarted. Retry to continue from saved articles.'
+            if record.status == 'completed' and (not record.output_path or not os.path.isfile(record.output_path)):
+                record.status = 'interrupted'
+                record.error = 'Output file expired. Retry to rebuild from saved articles.'
+            JOBS[job_id] = record
+        except Exception as exc:
+            log.warning(f'Could not restore saved job {manifest.parent.name}: {exc}')
+
+
 def set_last_conversion_state(**fields: Any) -> None:
     global LAST_CONVERSION_STATE
     state = {
@@ -128,7 +208,7 @@ async def cleanup_finished_jobs(retention_seconds: int = JOB_RETENTION_SECONDS) 
     removed = 0
     async with JOBS_LOCK:
         for job_id, record in list(JOBS.items()):
-            if record.status not in {"completed", "failed", "cancelled", "user_browser_required"}:
+            if record.status not in {"completed", "failed", "cancelled", "user_browser_required", "interrupted"}:
                 continue
             try:
                 updated = parse_utc(record.updated_at).timestamp()
@@ -144,6 +224,7 @@ async def cleanup_finished_jobs(retention_seconds: int = JOB_RETENTION_SECONDS) 
                 except OSError as exc:
                     log.warning(f"Could not remove old job output {output_path}: {exc}")
             del JOBS[job_id]
+            await asyncio.to_thread(job_store.remove_job, job_id)
             removed += 1
     return removed
 

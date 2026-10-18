@@ -93,6 +93,7 @@ class ConversionOptions:
     browser_wait_until: str = "load"
     browser_settle_ms: int = 1000
     browser_challenge_action: str = "archive"
+    source_timeout_seconds: float = 180
 
     @property
     def date_range_active(self) -> bool:

@@ -1238,3 +1238,70 @@ async function safeDownloadBundle() {
         console.error(e);
     }
 }
+
+
+// Persistent progress uses the existing status area; no toast notifications.
+let jobProgressTimer = null;
+async function refreshJobProgress() {
+    const saved = await browser.storage.local.get("lastDalaJob");
+    if (!saved.lastDalaJob) return;
+    let job = saved.lastDalaJob;
+    try {
+        const serverUrl = await getServerBaseUrl();
+        const response = await fetch(`${serverUrl}/jobs/${job.job_id}`, { signal: AbortSignal.timeout(1500) });
+        if (response.ok) job = await response.json();
+    } catch (_) { }
+    const stages = {
+        waiting_browser: "Waiting for browser", fetching_browser: "Fetching in browser",
+        closing_browser: "Closing browser", waiting_processing: "Waiting to process",
+        waiting_verification: "Waiting for verification", processing_recovered: "Processing recovered page",
+        processing: "Processing", comments: "Fetching comments"
+    };
+    const active = (job.source_states || []).filter(item => !["completed", "skipped", "queued"].includes(item.stage));
+    active.sort((a, b) => Number(b.stage === "fetching_browser") - Number(a.stage === "fetching_browser"));
+    let text = `${job.successful_sources || 0} saved, ${job.skipped_sources || 0} skipped / ${job.total_sources || 0}`;
+    if (active.length && ["running", "discovering"].includes(job.status)) {
+        const source = active[0];
+        let host = source.url;
+        try { host = new URL(source.url).hostname; } catch (_) { }
+        text += ` — ${stages[source.stage] || source.stage}: ${host} (${Math.floor(source.elapsed_seconds || 0)}s)`;
+    } else {
+        text += ` — ${job.status}`;
+    }
+    document.getElementById("status-bar").textContent = text;
+    document.getElementById("btn-finish-available").hidden = !job.can_finish;
+    document.getElementById("btn-retry-saved").hidden = !job.can_retry;
+    return job;
+}
+
+async function finishAvailableArticles() {
+    const job = await refreshJobProgress();
+    if (!job) return;
+    const serverUrl = await getServerBaseUrl();
+    const response = await fetch(`${serverUrl}/jobs/${job.job_id}/finish`, { method: "POST" });
+    if (!response.ok) throw new Error(await response.text());
+    document.getElementById("status-bar").textContent = "Finishing with completed articles…";
+}
+
+async function retrySavedArticles() {
+    const job = await refreshJobProgress();
+    if (!job) return;
+    const serverUrl = await getServerBaseUrl();
+    const response = await fetch(`${serverUrl}/jobs/${job.job_id}/retry`, { method: "POST" });
+    if (!response.ok) throw new Error(await response.text());
+    const submitted = await response.json();
+    await browser.storage.local.set({ lastDalaJob: { ...job, job_id: submitted.job_id, status: "queued", can_retry: false } });
+    browser.runtime.sendMessage({ action: "download", isBundle: true, payload: {
+        existing_job_id: submitted.job_id, sources: [],
+        output_format: job.output_media_type === "application/pdf" ? "pdf" : "epub"
+    } }).catch(() => {});
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    const reportError = error => { document.getElementById("status-bar").textContent = error.message; };
+    document.getElementById("btn-finish-available").onclick = () => finishAvailableArticles().catch(reportError);
+    document.getElementById("btn-retry-saved").onclick = () => retrySavedArticles().catch(reportError);
+    refreshJobProgress().catch(() => {});
+    jobProgressTimer = setInterval(() => refreshJobProgress().catch(() => {}), 1000);
+});
+window.addEventListener("unload", () => clearInterval(jobProgressTimer));

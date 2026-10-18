@@ -5,7 +5,6 @@ This file tracks current work. Older items that are now implemented have been mo
 ## Current Priorities
 
 - Move remaining request preparation and download edge cases fully into extension background flows where practical, then simplify popup responsibilities to UI state and commands.
-- Persist server job metadata if restart-safe downloads become important. `/jobs` state and temporary download paths are currently process-local and disappear on restart.
 - Add a server-side cleanup policy for temporary files created by direct `/convert` responses.
 - Keep package and extension versions in sync. `pyproject.toml` currently reports the Python package version, while extension manifests carry their own version.
 - Expand automated regression coverage for image extraction and site-specific HTML:
@@ -28,6 +27,9 @@ This file tracks current work. Older items that are now implemented have been mo
 - Sign and publish extension builds through the normal browser-store/release process.
 
 ## Completed / Implemented
+
+- Restart-safe job and article checkpoints, partial bundle completion, and retry without re-extracting successful sources.
+- Separate browser queueing, bounded browser waits, source deadlines, and persistent popup progress without recovery notifications.
 
 - WordPress article and comment extraction.
 - Translation output with LLM/Google providers, underneath/side-by-side/popup-footnote displays, caption/list support, scopes, caching, and glossary term preservation.

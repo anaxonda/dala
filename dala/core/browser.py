@@ -1,4 +1,5 @@
 import asyncio
+import weakref
 import base64
 import importlib.util
 import os
@@ -8,6 +9,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, Optional
 from urllib.parse import urlparse
+from .runtime import browser_work, report_source_stage
+from ..models import log
+
+
+_BROWSER_LOCKS = weakref.WeakKeyDictionary()
+BROWSER_IMAGE_CAPTURE_SECONDS = 5
+BROWSER_CLOSE_SECONDS = 5
+BROWSER_LAUNCH_SECONDS = 30
 
 
 class BrowserFetchError(RuntimeError):
@@ -214,6 +223,28 @@ def _cookies_for_url(cookies: list, url: str) -> Dict[str, str]:
 
 async def fetch_rendered_source(url: str, options: BrowserFetchOptions) -> BrowserFetchResult:
     validate_browser_options(options)
+    loop = asyncio.get_running_loop()
+    lock = _BROWSER_LOCKS.setdefault(loop, asyncio.Lock())
+    async with browser_work():
+        await report_source_stage("waiting_browser")
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=max(120, options.timeout_ms / 1000 * 4))
+        except asyncio.TimeoutError as exc:
+            raise BrowserFetchError(f"Browser queue timed out for {url}") from exc
+        try:
+            await report_source_stage("fetching_browser")
+            return await asyncio.wait_for(
+                _fetch_rendered_source(url, options),
+                timeout=options.timeout_ms / 1000 + options.settle_ms / 1000 + 45,
+            )
+        except asyncio.TimeoutError as exc:
+            raise BrowserFetchError(f"Browser acquisition deadline exceeded for {url}") from exc
+        finally:
+            lock.release()
+
+
+async def _fetch_rendered_source(url: str, options: BrowserFetchOptions) -> BrowserFetchResult:
+    validate_browser_options(options)
 
     try:
         from playwright.async_api import Error as PlaywrightError
@@ -256,10 +287,13 @@ async def fetch_rendered_source(url: str, options: BrowserFetchOptions) -> Brows
             kwargs["executable_path"] = executable_path
         else:
             kwargs["channel"] = "chromium"
-        return await playwright.chromium.launch_persistent_context(user_data_dir, **kwargs)
+        return await asyncio.wait_for(
+            playwright.chromium.launch_persistent_context(user_data_dir, **kwargs), timeout=BROWSER_LAUNCH_SECONDS,
+        )
 
     try:
-        async with async_playwright() as p:
+        p = await asyncio.wait_for(async_playwright().start(), timeout=BROWSER_LAUNCH_SECONDS)
+        try:
             try:
                 context = await launch_context(p, options.executable_path)
             except PlaywrightError as exc:
@@ -282,6 +316,7 @@ async def fetch_rendered_source(url: str, options: BrowserFetchOptions) -> Brows
                         "install Chrome/Edge/Brave/Chromium, or pass --browser-executable with a working binary."
                     ) from exc
 
+            capture_tasks = []
             try:
                 await context.add_init_script(
                     """
@@ -330,18 +365,23 @@ async def fetch_rendered_source(url: str, options: BrowserFetchOptions) -> Brows
                     })
 
                 def on_response(response):
-                    capture_tasks.append(asyncio.create_task(capture_image_response(response)))
+                    if len(capture_tasks) < max_assets * 4:
+                        capture_tasks.append(asyncio.create_task(capture_image_response(response)))
 
                 page.on("response", on_response)
                 response = await page.goto(url, wait_until=options.wait_until, timeout=options.timeout_ms)
                 if options.settle_ms:
                     await page.wait_for_timeout(options.settle_ms)
-                if capture_tasks:
-                    await asyncio.gather(*capture_tasks, return_exceptions=True)
+                page.remove_listener("response", on_response)
                 html = await page.content()
                 challenge_marker = detect_browser_challenge(html)
                 if challenge_marker:
                     raise BrowserChallengeError(url, challenge_marker)
+                if capture_tasks:
+                    _, pending = await asyncio.wait(capture_tasks, timeout=BROWSER_IMAGE_CAPTURE_SECONDS)
+                    for task in pending:
+                        task.cancel()
+                    await asyncio.gather(*capture_tasks, return_exceptions=True)
                 if response and response.status >= 400:
                     raise BrowserFetchError(f"Browser navigation returned HTTP {response.status} for {url}")
                 final_url = page.url
@@ -350,7 +390,21 @@ async def fetch_rendered_source(url: str, options: BrowserFetchOptions) -> Brows
             except PlaywrightTimeoutError as exc:
                 raise BrowserFetchError(f"Browser navigation timed out after {options.timeout_ms}ms for {url}") from exc
             finally:
-                await context.close()
+                for task in capture_tasks:
+                    if not task.done():
+                        task.cancel()
+                if capture_tasks:
+                    await asyncio.gather(*capture_tasks, return_exceptions=True)
+                await report_source_stage("closing_browser")
+                try:
+                    await asyncio.wait_for(context.close(), timeout=BROWSER_CLOSE_SECONDS)
+                except (asyncio.TimeoutError, PlaywrightError) as exc:
+                    log.warning(f"Browser cleanup did not finish normally for {url}: {exc}")
+        finally:
+            try:
+                await asyncio.wait_for(p.stop(), timeout=BROWSER_CLOSE_SECONDS)
+            except (asyncio.TimeoutError, PlaywrightError) as exc:
+                log.warning(f"Playwright cleanup did not finish normally for {url}: {exc}")
     finally:
         if temp_profile:
             await asyncio.to_thread(temp_profile.cleanup)

@@ -260,9 +260,11 @@ class YouTubeDriver(BaseDriver):
                     generator = downloader.get_comments_from_url(url, sort_by=sort_val)
                     wanted_roots, roots_found, limit = set(), 0, options.youtube_max_comments
                     scan_limit, kept_comments = limit * 20, []
+                    scanned = 0
                     
                     for i, c in enumerate(generator):
                         if i >= scan_limit: break
+                        scanned += 1
                         
                         cid = c.get('cid')
                         is_reply = c.get('reply', False)
@@ -277,7 +279,7 @@ class YouTubeDriver(BaseDriver):
                             if parent_id in wanted_roots:
                                 kept_comments.append(c)
                     
-                    log.info(f"Scanned {i+1} items. Kept {len(kept_comments)} comments ({roots_found} roots).")
+                    log.info(f"Scanned {scanned} items. Kept {len(kept_comments)} comments ({roots_found} roots).")
                     
                     comment_map, roots = {}, []
                     for c in kept_comments:

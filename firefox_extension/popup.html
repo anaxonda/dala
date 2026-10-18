@@ -180,7 +180,11 @@
         <button id="btn-options" class="small-btn" title="Shortcuts, downloads, and LLM settings">Settings</button>
     </div>
 
-    <div id="status-bar"></div>
+    <div class="cancel-row">
+        <button id="btn-finish-available" class="small-btn" hidden title="Build the bundle from completed articles and skip unfinished sources.">Finish available</button>
+        <button id="btn-retry-saved" class="small-btn" hidden title="Retry unfinished sources while reusing saved articles.">Retry skipped</button>
+    </div>
+    <div id="status-bar" role="status" aria-live="polite"></div>
     <script src="shared-forum.js"></script><script src="popup.js"></script>
 </body>
 </html>

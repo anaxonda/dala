@@ -231,3 +231,83 @@ async def test_browser_fetches_are_serializable_under_asyncio(browser_fixture_se
         _skip_if_browser_unavailable(e)
 
     assert all("Rendered by JavaScript" in result.html for result in results)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('stalled_phase', ['image', 'close', 'launch', 'stop'])
+async def test_browser_capture_has_deadlines_for_non_navigation_waits(monkeypatch, stalled_phase):
+    from types import SimpleNamespace
+    import playwright.async_api
+    from dala.core import browser
+
+    monkeypatch.setattr(browser, 'BROWSER_IMAGE_CAPTURE_SECONDS', 0.01)
+    monkeypatch.setattr(browser, 'BROWSER_CLOSE_SECONDS', 0.01)
+    monkeypatch.setattr(browser, 'BROWSER_LAUNCH_SECONDS', 0.01)
+    cancelled = asyncio.Event()
+
+    async def stall():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    class Response:
+        url = 'https://example.com/slow.jpg'
+        headers = {'content-type': 'image/jpeg'}
+        request = SimpleNamespace(resource_type='image')
+
+        async def body(self):
+            if stalled_phase == 'image':
+                await stall()
+            return b'image-bytes'
+
+    class Page:
+        url = 'https://example.com/article'
+        def set_default_timeout(self, timeout):
+            pass
+        def on(self, event, callback):
+            self.callback = callback
+        def remove_listener(self, *args):
+            pass
+        async def goto(self, *args, **kwargs):
+            self.callback(Response())
+            return SimpleNamespace(status=200)
+        async def content(self):
+            return '<article>Readable article</article>'
+
+    class Context:
+        pages = [Page()]
+        async def add_init_script(self, script):
+            pass
+        async def cookies(self, url):
+            return []
+        async def close(self):
+            if stalled_phase == 'close':
+                await stall()
+
+    class Chromium:
+        async def launch_persistent_context(self, *args, **kwargs):
+            if stalled_phase == 'launch':
+                await stall()
+            return Context()
+
+    class Playwright:
+        chromium = Chromium()
+        async def stop(self):
+            if stalled_phase == 'stop':
+                await stall()
+
+    class Manager:
+        async def start(self):
+            return Playwright()
+
+    monkeypatch.setattr(playwright.async_api, 'async_playwright', Manager)
+    options = BrowserFetchOptions(settle_ms=0)
+    if stalled_phase == 'launch':
+        with pytest.raises(BrowserFetchError, match='deadline'):
+            await asyncio.wait_for(fetch_rendered_source('https://example.com/article', options), 0.5)
+    else:
+        result = await asyncio.wait_for(fetch_rendered_source('https://example.com/article', options), 0.5)
+        assert 'Readable article' in result.html
+        assert len(result.assets) == (0 if stalled_phase == 'image' else 1)
+    assert cancelled.is_set()

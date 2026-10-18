@@ -71,7 +71,7 @@ select { padding: 4px 6px; border: 1px solid #bbb; border-radius: 4px; backgroun
 label { cursor: pointer; display: flex; align-items: center; }
 input[type="checkbox"] { margin-right: 5px; }
 
-#status-bar { text-align: center; padding: 4px; font-size: 11px; color: #666; height: 15px; background: #eee;}
+#status-bar { text-align: center; padding: 4px; font-size: 11px; color: #666; min-height: 15px; height: auto; overflow-wrap: anywhere; background: #eee;}
 .cookie-opt { padding: 8px 15px 4px 15px; font-size: 11px; color: #444; }
 .advanced-opt { padding: 8px 15px 4px 15px; display: flex; flex-direction: column; gap: 6px; }
 .option-section { border: 1px solid #ccc; border-radius: 4px; background: #f8f8f8; overflow: visible; }

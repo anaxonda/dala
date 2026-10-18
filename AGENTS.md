@@ -32,7 +32,7 @@
 - **Shim:** `chrome-shim.js` polyfills `browser.*` APIs to `chrome.*` APIs, wrapping callbacks in Promises.
 
 ## Known Limitations
-- **Local Server State:** Async jobs are stored in process memory only. Server restart loses job status and temporary download paths.
+- **Local Server State:** Job metadata and completed articles are checkpointed under `~/.local/state/dala/jobs` (`DALA_JOB_STATE_DIR` overrides it) until the configured job retention expires. Interrupted jobs can be retried after restart. Cookies, captured HTML, and API keys are excluded from persisted request metadata; browser sessions and in-flight work are not restored.
 - **Browser Fallback Policy:** Server browser fallback auto-detects Chrome, Edge, Brave, Chromium, or Playwright's managed Chromium, and uses the dedicated Dala profile at `~/.local/share/dala/browser-profile` by default. Do not auto-use the user's real browser profile. Interactive bot challenges should default to archive fallback; the extension can optionally open the original URL in the user's browser. The screenshot-based warm browser remains an explicit `browser_challenge_action: "warm"` path only. BPC-style extensions can be installed in the user's normal headed browser for extension capture; server-side BPC under `config/bpc/` is an advanced local fallback/testing path.
 - **Server Trust Boundary:** CORS is open for extension use. Keep the server bound to `127.0.0.1` unless intentionally exposing it, and document remote/LAN server assumptions when changing extension server URL behavior.
 - **Driver Heuristics:** Generic, forum, and image extraction include site-specific heuristics and fallbacks. When touching them, add focused regression tests with representative HTML.

@@ -1,6 +1,7 @@
 import builtins
 import pytest
 from bs4 import BeautifulSoup
+from yarl import URL
 import dala.cli as main
 from dala.core.dispatcher import DriverDispatcher
 from dala.core.extractor import ArticleExtractor
@@ -417,6 +418,48 @@ async def test_process_urls_retries_generic_when_forced_forum_has_no_posts(monke
     assert len(books) == 1
     assert books[0].title == "Article"
     assert calls == {"forum": 1, "generic": 1}
+
+
+@pytest.mark.asyncio
+async def test_process_urls_ignores_reserved_cookie_names_in_aiohttp_jar(monkeypatch):
+    class CookieInspectingDriver:
+        async def prepare_book_data(self, context, source):
+            jar = context.session.cookie_jar.filter_cookies(URL(source.url))
+            assert "session" in jar
+            assert "version" not in jar
+            assert context.session._extra_cookies == {
+                "session": "valid",
+                "version": "browser-cookie",
+            }
+            return BookData(
+                title="Article",
+                author="Author",
+                uid="urn:article",
+                language="en",
+                description="",
+                source_url=source.url,
+                chapters=[Chapter(title="Article", filename="index.xhtml", content_html="<p>Body</p>", uid="article")],
+            )
+
+    monkeypatch.setattr(
+        DriverDispatcher,
+        "get_driver",
+        lambda source, profile: CookieInspectingDriver(),
+    )
+
+    books = await main.process_urls(
+        [
+            Source(
+                url="https://example.com/article",
+                cookies={"session": "valid", "version": "browser-cookie"},
+            )
+        ],
+        ConversionOptions(),
+        session=object(),
+    )
+
+    assert len(books) == 1
+    assert books[0].title == "Article"
 
 @pytest.mark.asyncio
 async def test_acquire_browser_sources_merges_rendered_html_and_cookies(monkeypatch):

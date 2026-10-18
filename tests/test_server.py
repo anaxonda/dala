@@ -185,7 +185,7 @@ async def test_date_range_job_reports_discovery_then_expanded_progress(monkeypat
             Source(url="https://example.com/2026/06/02/b", published_date="2026-06-02"),
         ]
 
-    async def fake_process(sources, options, session, progress_callback=None, source_timing_callback=None):
+    async def fake_process(sources, options, session, progress_callback=None, source_timing_callback=None, **kwargs):
         if progress_callback:
             await progress_callback(1, len(sources), sources[0].url)
         processing_started.set()

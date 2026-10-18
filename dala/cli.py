@@ -5,12 +5,13 @@ import asyncio
 import aiohttp
 import socket
 import time
+from http.cookies import CookieError, SimpleCookie
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from inspect import isawaitable
 from typing import Any, Callable, Dict, List, Optional
-from tqdm.asyncio import tqdm_asyncio
+from tqdm import tqdm
 from ebooklib import epub
 from dotenv import load_dotenv
 
@@ -28,8 +29,26 @@ from dala.core.browser import BrowserChallengeError, BrowserFetchError, BrowserF
 from dala.core.image_budget import ImageBudgetExceeded, assert_image_budget, prepare_books_for_bundle
 from dala.core.discovery import DiscoveryError, discover_posts_for_sources
 from dala.core.translation import TranslationCache, TranslationProcessor, TranslationError
+from dala.core.runtime import CURRENT_SOURCE, SourceRuntime
 
-BROWSER_FALLBACK_LOCK = asyncio.Lock()
+def _aiohttp_compatible_cookies(cookies: Dict[str, str]) -> Dict[str, str]:
+    """Return cookies that Python's SimpleCookie can place in an aiohttp jar.
+
+    Browser cookie stores permit names such as ``version`` that SimpleCookie
+    reserves for cookie attributes. Keep those cookies available to requests
+    fallbacks via ``_extra_cookies``, but do not let them abort the source (or
+    an entire bundle) while constructing an aiohttp session.
+    """
+    compatible = {}
+    for name, value in cookies.items():
+        try:
+            probe = SimpleCookie()
+            probe[name] = value
+        except (CookieError, TypeError, ValueError) as exc:
+            log.warning(f"Skipping browser cookie {name!r} in aiohttp cookie jar: {exc}")
+            continue
+        compatible[name] = value
+    return compatible
 
 
 def _dedupe_comment_chapter_identity(book: BookData, chapter) -> None:
@@ -99,11 +118,17 @@ async def process_urls(
     session,
     progress_callback: Optional[Callable[[int, int, Optional[str]], Any]] = None,
     source_timing_callback: Optional[Callable[[str, int, bool, Optional[str]], Any]] = None,
+    challenge_callback: Optional[Callable[[Source, BrowserChallengeError], Any]] = None,
+    source_state_callback: Optional[Callable[[str, str], Any]] = None,
+    book_callback: Optional[Callable[[Source, BookData], Any]] = None,
+    cached_books: Optional[Dict[str, BookData]] = None,
+    finish_event: Optional[asyncio.Event] = None,
 ) -> List[BookData]:
-    processed_books = []
+    completed_books = {}
     progress_lock = asyncio.Lock()
     completed = 0
     total = len(sources)
+    progress_bar = tqdm(total=total, desc="Processing URLs")
 
     async def emit_progress(processed: int, current_url: Optional[str]) -> None:
         if not progress_callback:
@@ -132,36 +157,31 @@ async def process_urls(
                 chapter.saved_at = chapter.saved_at or saved_at
                 return
 
-    async def safe_process(source):
-        nonlocal completed
-        started_at = time.perf_counter()
-        success = False
-        error_type = None
-        async with GLOBAL_SEMAPHORE:
+    async def process_source(source):
+        runtime = SourceRuntime(source.url, GLOBAL_SEMAPHORE, source_state_callback)
+        token = CURRENT_SOURCE.set(runtime)
+        try:
+            await runtime.acquire()
             profile = ProfileManager.get_instance().get_profile(source.url)
             driver = DriverDispatcher.get_driver(source, profile)
 
             local_session = session
-            if source.cookies:
-                connector = aiohttp.TCPConnector(
-                    resolver=aiohttp.resolver.ThreadedResolver(),
-                    ttl_dns_cache=300,
-                    family=socket.AF_INET
-                )
-                local_session = aiohttp.ClientSession(timeout=REQUEST_TIMEOUT, cookies=source.cookies, connector=connector)
-                setattr(local_session, "_extra_cookies", source.cookies)
-
             try:
+                if source.cookies:
+                    connector = aiohttp.TCPConnector(
+                        resolver=aiohttp.resolver.ThreadedResolver(),
+                        ttl_dns_cache=300,
+                        family=socket.AF_INET
+                    )
+                    local_session = aiohttp.ClientSession(
+                        timeout=REQUEST_TIMEOUT,
+                        cookies=_aiohttp_compatible_cookies(source.cookies),
+                        connector=connector,
+                    )
+                    setattr(local_session, "_extra_cookies", source.cookies)
+
                 context = ConversionContext(session=local_session, options=options, profile=profile)
-                if (
-                    getattr(options, "browser_fallback", False)
-                    and getattr(options, "browser_profile_dir", None)
-                    and not source.html
-                ):
-                    async with BROWSER_FALLBACK_LOCK:
-                        book = await driver.prepare_book_data(context, source)
-                else:
-                    book = await driver.prepare_book_data(context, source)
+                book = await driver.prepare_book_data(context, source)
                 if book is None and source.is_forum:
                     from dala.drivers.forum import ForumDriver
                     from dala.drivers.generic import GenericDriver
@@ -179,31 +199,102 @@ async def process_urls(
                             saved_at=source.saved_at,
                         )
                         book = await GenericDriver().prepare_book_data(context, generic_source)
-                success = book is not None
                 if book is not None:
+                    await runtime.report("comments")
                     await _append_hn_comments_if_available(context, source, book)
                 if book is not None and source.published_date:
                     book.extra_metadata["published_date"] = source.published_date
                 if book is not None and source.saved_at:
                     mark_book_saved_at(book, source.saved_at)
                 return book
-            except BrowserChallengeError:
-                raise
-            except Exception as e:
-                error_type = type(e).__name__
-                log.exception(f"Failed to process {source.url}: {e}")
-                return None
             finally:
                 if local_session is not session:
                     await local_session.close()
-                duration_ms = int((time.perf_counter() - started_at) * 1000)
-                await emit_source_timing(source.url, duration_ms, success, error_type)
-                async with progress_lock:
-                    completed += 1
-                    await emit_progress(completed, source.url)
+        finally:
+            runtime.release()
+            CURRENT_SOURCE.reset(token)
 
-    results = await tqdm_asyncio.gather(*[safe_process(s) for s in sources], desc="Processing URLs")
-    return [b for b in results if b]
+    async def safe_process(source):
+        nonlocal completed
+        started_at = time.perf_counter()
+        success = False
+        error_type = None
+        try:
+            try:
+                if cached_books and source.url in cached_books:
+                    book = cached_books[source.url]
+                else:
+                    book = await asyncio.wait_for(process_source(source), timeout=options.source_timeout_seconds)
+            except BrowserChallengeError as exc:
+                error_type = type(exc).__name__
+                if challenge_callback:
+                    # Recovery waits outside the source and browser semaphores.
+                    book = await challenge_callback(source, exc)
+                elif total > 1:
+                    log.warning(f"Skipping challenged bundle source {source.url}: {exc}")
+                    book = None
+                else:
+                    raise
+            success = book is not None
+            if success:
+                error_type = None
+                completed_books[source.url] = book
+                if book_callback:
+                    maybe = book_callback(source, book)
+                    if isawaitable(maybe):
+                        await maybe
+            else:
+                error_type = error_type or "NoContent"
+            return book
+        except asyncio.CancelledError:
+            error_type = "FinishedEarly" if finish_event and finish_event.is_set() else "CancelledError"
+            raise
+        except BrowserChallengeError as exc:
+            error_type = type(exc).__name__
+            if total == 1:
+                raise
+            log.warning(f"Skipping challenged bundle source {source.url}: {exc}")
+            return None
+        except Exception as exc:
+            success = False
+            error_type = type(exc).__name__
+            log.exception(f"Failed to process {source.url}: {exc}")
+            return None
+        finally:
+            if source_state_callback:
+                stage = "completed" if success else "skipped"
+                maybe = source_state_callback(source.url, stage)
+                if isawaitable(maybe):
+                    await maybe
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            await emit_source_timing(source.url, duration_ms, success, error_type)
+            async with progress_lock:
+                completed += 1
+                progress_bar.update(1)
+                await emit_progress(completed, source.url)
+
+    tasks = [asyncio.create_task(safe_process(source)) for source in sources]
+    async def finish_available():
+        await finish_event.wait()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+
+    finisher = asyncio.create_task(finish_available()) if finish_event else None
+    try:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if finisher:
+            finisher.cancel()
+            await asyncio.gather(finisher, return_exceptions=True)
+        progress_bar.close()
+    if total == 1 and isinstance(results[0], BrowserChallengeError):
+        raise results[0]
+    return [completed_books[source.url] for source in sources if source.url in completed_books]
 
 def create_bundle(books: List[BookData], title: str, author: str) -> BookData:
     master_uid = f"urn:bundle:{abs(hash(title))}"
@@ -323,6 +414,7 @@ def parse_args():
     parser.add_argument("--browser-executable", help="Chromium-compatible executable path for --browser")
     parser.add_argument("--headed", action="store_true", help="Show the browser window for --browser")
     parser.add_argument("--browser-timeout-ms", type=int, default=30000, help="Browser navigation timeout in milliseconds")
+    parser.add_argument("--source-timeout-seconds", type=float, default=180, help="Overall deadline for each source conversion")
     parser.add_argument(
         "--browser-wait-until",
         choices=["domcontentloaded", "load", "networkidle"],
@@ -499,6 +591,7 @@ async def async_main():
         max_discovery_pages=args.max_discovery_pages,
         max_discovered_posts=args.max_discovered_posts,
         browser_challenge_action=args.browser_challenge_action,
+        source_timeout_seconds=args.source_timeout_seconds,
     )
 
     cookie_entries = load_cookie_file(args.cookie_file) if args.cookie_file else []

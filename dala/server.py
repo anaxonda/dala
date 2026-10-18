@@ -29,7 +29,7 @@ import shutil
 import time
 import webbrowser
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -40,7 +40,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -70,6 +70,7 @@ from dala.core.browser import (
     resolve_browser_extension_path,
 )
 from dala.core import server_jobs as job_state
+from dala.core import job_store
 
 JobRecord = job_state.JobRecord
 JOBS = job_state.JOBS
@@ -86,6 +87,7 @@ _job_cleanup_loop = job_state.job_cleanup_loop
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await job_state.restore_jobs(ConversionRequest.model_validate)
     cleanup_task = asyncio.create_task(_job_cleanup_loop())
     try:
         yield
@@ -181,6 +183,8 @@ class ConversionRequest(BaseModel):
     browser_wait_until: str = "load"
     browser_settle_ms: int = 1000
     browser_challenge_action: str = "archive"
+    browser_recovery_timeout_seconds: float = Field(default=120, ge=0, le=600)
+    source_timeout_seconds: float = Field(default=180, gt=0, le=3600)
 
 class ScanRequest(BaseModel):
     html: str
@@ -586,6 +590,7 @@ def _build_options_and_sources(req: ConversionRequest) -> Tuple[ConversionOption
         browser_wait_until=req.browser_wait_until,
         browser_settle_ms=req.browser_settle_ms,
         browser_challenge_action=req.browser_challenge_action or "archive",
+        source_timeout_seconds=req.source_timeout_seconds,
     )
 
     core_sources = []
@@ -700,16 +705,45 @@ async def run_conversion_job(
     total_sources = len(core_sources)
     discovery_title = None
     source_timings: List[Tuple[str, int, bool, Optional[str]]] = []
+    record = await _get_job(job_id) if job_id else None
+
+    async def source_state_cb(url: str, stage: str) -> None:
+        if not record:
+            return
+        previous = record.source_states.get(url, {})
+        record.source_states[url] = {
+            "stage": stage, "started_at": previous.get("started_at", time.time()),
+            "stage_started_at": time.time(),
+        }
+        if stage in {"completed", "skipped"}:
+            record.source_states[url]["finished_at"] = time.time()
+        elif stage not in {"queued", "waiting_processing", "waiting_browser"}:
+            record.current_url = url
+        await job_state.persist_job(record)
+
+    async def checkpoint_book(source, book):
+        if not record:
+            return
+        record.cached_books[source.url] = book
+        try:
+            await asyncio.to_thread(job_store.save_book, record.job_id, source.url, book)
+            await job_state.persist_job(record)
+        except (OSError, TypeError, ValueError) as exc:
+            log.warning(f"Could not checkpoint article {source.url}: {exc}")
 
     _timing_log(
         run_id,
         "job_start",
         mode="jobs" if job_id else "convert",
         total_sources=total_sources,
+        browser_challenge_action=options.browser_challenge_action,
     )
 
     async def source_timing_cb(url: str, duration_ms: int, success: bool, error_type: Optional[str]) -> None:
         source_timings.append((url, duration_ms, success, error_type))
+        if record and not success:
+            record.failed_source_details.append({"url": url, "ms": duration_ms, "error_type": error_type or "NoContent"})
+            await job_state.persist_job(record)
         _timing_log(
             run_id,
             "source_done",
@@ -718,6 +752,44 @@ async def run_conversion_job(
             success=1 if success else 0,
             error_type=error_type,
         )
+
+    async def recover_source(source: Source, challenge: BrowserChallengeError):
+        if not record or req.browser_challenge_action != "user_browser" or not req.browser_recovery_timeout_seconds:
+            return None
+        recovery_id = uuid4().hex
+        recovery = job_state.SourceRecovery(
+            recovery_id=recovery_id,
+            url=source.url,
+            expires_at=time.time() + req.browser_recovery_timeout_seconds,
+            marker=challenge.marker,
+            future=asyncio.get_running_loop().create_future(),
+            include_cookies=bool(source.cookies),
+        )
+        record.source_recoveries[recovery_id] = recovery
+        await source_state_cb(source.url, "waiting_verification")
+        _timing_log(run_id, "source_recovery_wait", url=source.url, expires_at=recovery.expires_at)
+
+        try:
+            captured = await asyncio.wait_for(recovery.future, timeout=req.browser_recovery_timeout_seconds)
+            recovery.captured = True
+            await source_state_cb(source.url, "processing_recovered")
+            replacement_source = replace(
+                source, html=captured.html, cookies=captured.cookies or source.cookies,
+                assets=captured.assets or source.assets,
+            )
+            # Captured HTML comes from the user's tab; do not launch a second browser.
+            books = await core_main.process_urls(
+                [replacement_source], replace(options, browser_fallback=False), session,
+                source_state_callback=source_state_cb,
+            )
+            return books[0] if books else None
+        except asyncio.TimeoutError:
+            log.warning(f"Browser recovery timed out; skipping bundle source {source.url}")
+            return None
+        finally:
+            record.source_recoveries.pop(recovery_id, None)
+            if not recovery.future.done():
+                recovery.future.cancel()
 
     try:
         await _emit_progress(progress_callback, 0, total_sources, core_sources[0].url if core_sources else None)
@@ -733,6 +805,12 @@ async def run_conversion_job(
                         source.saved_at = discovery_saved_at
                 discovery_title = core_main.discovery_bundle_title(core_sources, options)
                 total_sources = len(core_sources)
+                if record:
+                    # Retry uses the discovered URLs, rather than crawling the listing again.
+                    record.request = req.model_copy(update={
+                        "sources": [SourceItem(**vars(source)) for source in core_sources],
+                        "start_date": None, "end_date": None,
+                    })
                 await _emit_progress(progress_callback, 0, total_sources, core_sources[0].url if core_sources else None)
                 _timing_log(
                     run_id,
@@ -742,12 +820,23 @@ async def run_conversion_job(
                     duration_ms=int((time.perf_counter() - stage_started_at) * 1000),
                 )
                 stage_started_at = time.perf_counter()
+            recovery_kwargs = {}
+            if record:
+                for source in core_sources:
+                    record.source_states[source.url] = {"stage": "queued", "started_at": time.time(), "stage_started_at": time.time()}
+                recovery_kwargs.update(
+                    source_state_callback=source_state_cb, book_callback=checkpoint_book,
+                    cached_books=record.cached_books, finish_event=record.finish_event,
+                )
+            if job_id and total_sources > 1 and options.browser_challenge_action == "user_browser":
+                recovery_kwargs["challenge_callback"] = recover_source
             processed_books = await core_main.process_urls(
                 core_sources,
                 options,
                 session,
                 progress_callback=progress_callback,
                 source_timing_callback=source_timing_cb,
+                **recovery_kwargs,
             )
         _timing_log(
             run_id,
@@ -1538,12 +1627,18 @@ async def _run_job_task(job_id: str, req: ConversionRequest) -> None:
         except Exception as e:
             log.exception(f"Job {job_id} failed: {e}")
             await _update_job(job_id, status="failed", current_url=None, error=str(e))
+        finally:
+            try:
+                await job_state.persist_job(record)
+            except OSError as exc:
+                log.warning(f"Could not save job state {job_id}: {exc}")
 
 
 @app.post("/jobs", response_model=JobSubmitResponse)
 async def create_job(req: ConversionRequest):
     job = await _create_job(total_sources=len(req.sources))
     job.request = req
+    await job_state.persist_job(job)
     task = asyncio.create_task(_run_job_task(job.job_id, req))
     await _set_job_task(job.job_id, task)
     return JobSubmitResponse(job_id=job.job_id, status=job.status)
@@ -1555,6 +1650,39 @@ async def get_job_status(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
     return job.to_public()
+
+
+@app.post("/jobs/{job_id}/finish")
+async def finish_job_available(job_id: str):
+    job = await _get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if job.status not in {"running", "discovering"} or not job.cached_books:
+        raise HTTPException(status_code=409, detail="No running job with completed articles is available.")
+    job.finish_event.set()
+    return job.to_public()
+
+
+@app.post("/jobs/{job_id}/retry", response_model=JobSubmitResponse)
+async def retry_job_sources(job_id: str):
+    old = await _get_job(job_id)
+    if not old:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    if old.status not in {"completed", "failed", "cancelled", "interrupted"} or not old.request:
+        raise HTTPException(status_code=409, detail="The job is still active or has no saved request.")
+    job = await _create_job(total_sources=len(old.request.sources))
+    job.request = old.request.model_copy(deep=True)
+    job.cached_books = dict(old.cached_books)
+    # Copy checkpoints before starting so a restart during retry retains prior successes.
+    for url, book in job.cached_books.items():
+        try:
+            await asyncio.to_thread(job_store.save_book, job.job_id, url, book)
+        except (OSError, TypeError, ValueError) as exc:
+            log.warning(f"Could not copy article checkpoint for {url}: {exc}")
+    await job_state.persist_job(job)
+    task = asyncio.create_task(_run_job_task(job.job_id, job.request))
+    await _set_job_task(job.job_id, task)
+    return JobSubmitResponse(job_id=job.job_id, status=job.status)
 
 
 @app.post("/jobs/{job_id}/cancel")
@@ -1573,6 +1701,31 @@ async def cancel_job(job_id: str):
         job.task.cancel()
     await _update_job(job_id, cancel_requested=True)
     return job.to_public()
+
+
+@app.post("/jobs/{job_id}/sources/{recovery_id}/capture")
+async def capture_recovered_source(job_id: str, recovery_id: str, captured: SourceItem):
+    job = await _get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    recovery = job.source_recoveries.get(recovery_id)
+    if (job.status not in {"running", "discovering"} or not recovery
+            or recovery.future.done() or time.time() >= recovery.expires_at):
+        raise HTTPException(status_code=409, detail="Source recovery is no longer waiting for a capture.")
+    if captured.url != recovery.url:
+        raise HTTPException(status_code=400, detail="Capture URL does not match the pending source.")
+    if not captured.html or detect_browser_challenge(captured.html):
+        raise HTTPException(status_code=422, detail="The page still needs verification or has no content.")
+    from dala.core.extractor import ArticleExtractor
+    extracted = await asyncio.to_thread(ArticleExtractor.extract_from_html, captured.html, captured.url)
+    if not extracted["success"] and not ArticleExtractor._paywall_fallback_has_content(extracted):
+        raise HTTPException(status_code=422, detail="The page does not yet contain readable article content.")
+    # Validation can overlap timeout, cancellation, or another capture.
+    if recovery.future.done() or time.time() >= recovery.expires_at or job.cancel_event.is_set():
+        raise HTTPException(status_code=409, detail="Source recovery has expired or was cancelled.")
+    recovery.future.set_result(captured)
+    recovery.captured = True
+    return {"accepted": True}
 
 
 @app.get("/jobs/{job_id}/download")

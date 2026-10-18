@@ -220,7 +220,11 @@ Only load extensions you trust, and only when running a local server you control
 
 </details>
 
-When a site serves an interactive bot challenge, Dala defaults to archive fallback. If **Open challenged pages in my browser** is enabled, the extension opens the original article URL and asks you to run Dala again from the readable tab.
+When a site serves an interactive bot challenge, Dala defaults to archive fallback. If **Open challenged pages in my browser** is enabled for a bundle, the extension checks existing tabs first and opens a new tab only if none matches. Resolve the challenge in that tab; Dala checks every three seconds for a readable capture for up to two minutes. An accepted capture gets a separate conversion deadline. Other sources continue processing, and unresolved or failed sources are skipped. Single-page downloads ask you to run Dala again from the readable tab. The server API can adjust verification time with `browser_recovery_timeout_seconds` (0–600; default 120, 0 skips recovery).
+
+The popup status area shows saved and skipped counts, the active stage and site, and elapsed time. **Finish available** builds a bundle from completed articles and stops unfinished work. **Retry skipped** reuses completed articles and retries the remaining sources. Browser queueing does not consume article processing slots. Browser image capture and cleanup have bounded waits; each source conversion has a 180-second overall deadline, configurable through `source_timeout_seconds` in the API or `--source-timeout-seconds` in the CLI.
+
+Completed articles and job metadata are checkpointed under `~/.local/state/dala/jobs` (override with `DALA_JOB_STATE_DIR`). After a server restart, interrupted jobs can be retried from these checkpoints. Browser cookies, captured page HTML, and API keys are not stored in job metadata; retries after restart may need a fresh browser capture or credentials from the environment. Extracted article content and images are stored privately until the job retention period expires (two hours by default). This does not change localhost binding or the existing CORS policy.
 
 ## Extension Options
 
