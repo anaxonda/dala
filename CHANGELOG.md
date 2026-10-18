@@ -1,5 +1,20 @@
 # Changelog
 
+## v2.4.6
+
+### Bundle reliability
+- Continue processing when individual sources fail or stall, with bounded source and browser recovery deadlines.
+- Reuse already-open challenge tabs and accept successful captures during the recovery window.
+- Checkpoint completed articles for retries after server restarts; expose progress, finish-available, and retry-skipped controls without additional toasts.
+
+### Figures and offline media
+- Preserve inline figures, captions, and figure anchors using explicit page relationships across publishers.
+- Reuse captured responsive and lazy-loaded image variants before network recovery, retaining distinct image identities.
+- Mark unavailable images only after recovery fails and report media warnings in the existing status area.
+
+### Release assets
+- Align Python and both browser extensions at 2.4.6; rebuild Chrome, AMO-signed Firefox, and installer assets.
+
 ## v2.4.2
 
 ### Android / Termux install
