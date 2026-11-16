@@ -1,5 +1,5 @@
 try {
-    importScripts('chrome-shim.js', 'shared-forum.js', 'debug-capture.js');
+    importScripts('chrome-shim.js', 'shared-forum.js');
 } catch (e) {
     console.log("Shim load skipped (not in SW?)");
 }
@@ -313,10 +313,6 @@ function validateResponseFormat(payload, filename, contentType) {
 
 // Message Listener
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === "debug-capture" && sender.url === browser.runtime.getURL("popup.html")) {
-        sendDebugCapture(message.tabId).then(sendResponse).catch(error => sendResponse({error: error.message}));
-        return true;
-    }
     if (message.action === "download") {
         processDownloadWithAssets(message.payload, message.isBundle);
         return true; 

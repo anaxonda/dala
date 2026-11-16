@@ -429,7 +429,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Download Actions
         document.getElementById('btn-download-single').onclick = safeDownloadSingle;
-        document.getElementById('btn-debug-capture').onclick = sendPageDebugCapture;
         document.getElementById('btn-download-bundle').onclick = safeDownloadBundle;
 
         // Queue Actions
@@ -1224,21 +1223,3 @@ document.addEventListener("DOMContentLoaded", () => {
     jobProgressTimer = setInterval(() => refreshJobProgress().catch(() => {}), 1000);
 });
 window.addEventListener("unload", () => clearInterval(jobProgressTimer));
-
-async function sendPageDebugCapture() {
-    const button = document.getElementById("btn-debug-capture");
-    const status = document.getElementById("debug-capture-status");
-    button.disabled = true;
-    status.textContent = "Sending debug capture to local Dala server…";
-    try {
-        const tab = (await browser.tabs.query({active: true, currentWindow: true}))[0];
-        if (!tab || !tab.id) throw new Error("Open the article tab first.");
-        const result = await browser.runtime.sendMessage({action: "debug-capture", tabId: tab.id});
-        if (!result || result.error) throw new Error(result?.error || "No response from background capture.");
-        status.textContent = `Debug capture saved: ${result.directory}`;
-    } catch (error) {
-        status.textContent = `Debug capture failed: ${error.message}`;
-    } finally {
-        button.disabled = false;
-    }
-}

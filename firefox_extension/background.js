@@ -338,9 +338,6 @@ if (browser.downloads && browser.downloads.onChanged) {
 
 // Message Listener (From Popup/Content)
 browser.runtime.onMessage.addListener((message, sender) => {
-    if (message.action === "debug-capture" && sender.url === browser.runtime.getURL("popup.html")) {
-        return sendDebugCapture(message.tabId).catch(error => ({error: error.message}));
-    }
     if (message.action === "download") {
         // Legacy/Direct download calls
         processDownloadWithAssets(message.payload, message.isBundle);

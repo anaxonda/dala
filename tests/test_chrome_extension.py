@@ -192,6 +192,7 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 await page.wait_for_selector("#server-status.online")
                 assert "Server Online" in (await page.locator("#server-status").get_attribute("title"))
                 await page.wait_for_selector("#btn-download-single")
+                assert await page.locator("#btn-debug-capture, #debug-capture-status").count() == 0
                 assert await page.locator("#pdf-options").evaluate("el => el.classList.contains('hidden')")
                 await page.select_option("#opt-output-format", "pdf")
                 assert not await page.locator("#pdf-options").evaluate("el => el.classList.contains('hidden')")
