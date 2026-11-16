@@ -2,7 +2,7 @@
 
 **dala** turns articles, comment threads, forum posts, Substack pages, and YouTube transcripts into clean EPUBs optimized for e-ink readers such as Kobo/KOReader. It works from a browser extension or CLI, can bundle many links into one anthology, and can preserve logged-in images or attachments when you explicitly share your browser session with the local backend. Translation support built in.
 
-It is built for the "57 tabs I'll read later" problem: make an book out of it.
+It is built for the "57 tabs I'll read later" problem: make a book out of them.
 
 > Everything mostly usable, i'm sure something doesn't work.
 
@@ -97,6 +97,24 @@ Headless browser support lets the Dala server control Chrome/Chromium in the bac
 | Images | Compact, Balanced, or Full presets; optional grayscale conversion |
 | Translation | LLM or Google Translate; underneath, side-by-side inspired by [Bitextual](https://github.com/wydengyre/bitextual), EPUB footnote, or replace modes |
 | Summaries | Optional LLM-generated summaries for long articles, discussions, forums, and transcripts |
+
+### Reading PDF sources
+
+Give Dala a PDF URL or a Hacker News story linking to one:
+
+```bash
+dala "https://example.com/paper.pdf"
+dala "https://news.ycombinator.com/item?id=50516245"
+```
+
+PDF input works with the base install. Generating PDF output requires optional headless browser support. Dala detects PDFs by response type or file signature, including redirects and download URLs without a `.pdf` suffix. HN comments remain included when enabled.
+
+- Prose reflows into paragraphs and headings with a contents list. Paragraphs split across pages are rejoined, and page-number footers are removed.
+- Photographs, vector charts, and tables are embedded in reading order. Captions and table notes remain beside their graphics; tables use images to retain columns and mathematical notation. Images respect the image preset, grayscale, and `--no-images` settings.
+- Page-bottom footnotes move to a Footnotes section, with links from the text and return links where references can be resolved. Numeric, Roman, alphabetic, and symbolic labels, column-local notes, and separate endnote sections are supported. Repeated numbering requires destination evidence to disambiguate it.
+- PDF annotations retain external links, author-year citations, and internal cross-references. Internal jumps follow PDF destinations and text positions. Links inside rasterized figures appear beside the image; rotated destinations fall back to a page-level jump.
+
+Layout extraction uses `pdfplumber` and PDFium. If it fails, Dala falls back to Poppler (`pdftotext`) when installed, then `pypdf`. Scanned pages can be included as images; OCR is not included. Password-protected or unreadable PDFs retain an explanatory source link. Layout and unannotated footnote detection are heuristic: complex columns, scans, and ambiguous references still need review. Unmatched or ambiguous numbered notes are reported in the conversion log.
 
 ## Headless Browser Support
 
@@ -230,7 +248,13 @@ Completed articles and job metadata are checkpointed under `~/.local/state/dala/
 
 ## Extension Options
 
+For extraction troubleshooting, **Send Debug Capture** in the Current Page tab sends the current DOM, visible text, article IDs, image URLs/dimensions/ancestors, frame URLs and open shadow-root HTML to `POST /helper/debug-capture`. The popup shows the saved directory. This explicit capture includes page content (which may contain private information), but does not read cookies or browser storage. It requires a localhost server and a loopback connection; remote/LAN servers cannot receive captures. Uploads use gzip when supported, with a 128 MiB decoded limit (32 MiB compressed); older extensions can still send uncompressed captures up to 128 MiB. Files are private and stored under the system temporary directory in `dala-debug-<user-id>/<capture-id>/` (`DALA_DEBUG_DIR` overrides the root). Captures remain until manually deleted or the temporary directory is cleaned. Reload an unpacked extension after updating its source.
+
 The extension has a compact popup for common choices and an Options page for server, diagnostics, and advanced behavior.
+
+The Queue tab uses tightly spaced rows with a compact page title and URL for each item. Select individual rows or use **All**, then **Delete selected** to remove a batch; each row also has a remove button. Titles are saved when adding current/selected/all tabs or using queue shortcuts/context menus. Older and pasted URLs use an open tab’s title when available, otherwise a readable URL label. **Paste or edit URLs** opens the automatic-saving raw URL editor; editing retained URLs preserves their saved title and timestamp. Queue selection only controls deletion; **Download Bundle** includes every remaining item.
+
+Right-click a page or link for **Add to Dala Queue**, **Add selected tabs to Dala Queue**, or **Download with Dala** (the browser may group these under Dala). These actions also appear over selected text, images, media, and editable fields. A link targets its destination; other contexts use the current page. Menu entries are restored when the browser or extension background starts.
 
 <details>
 <summary>Extension options reference</summary>

@@ -214,6 +214,8 @@ class HackerNewsDriver(BaseDriver):
                     raw_html=source.html if not article_url else None,
                     profile=context.profile,
                     browser_options=browser_options,
+                    include_pdf_images=not options.no_images,
+                    pdf_image_options=options,
                 )
                 if art_data['success']:
                     if art_data['title']: art_title = art_data['title']
@@ -226,8 +228,11 @@ class HackerNewsDriver(BaseDriver):
                         summary_html = await LLMHelper.generate_summary(txt, options.llm_model, options.llm_api_key, options.llm_provider)
 
                     if not options.no_images:
-                        base = art_data.get('archive_url') if art_data.get('was_archived') else article_url
-                        await ImageProcessor.process_images(session, body, base, assets, options=options)
+                        if art_data.get('input_format') == 'pdf':
+                            assets.extend(art_data.get('images') or [])
+                        else:
+                            base = art_data.get('archive_url') if art_data.get('was_archived') else article_url
+                            await ImageProcessor.process_images(session, body, base, assets, options=options)
                     art_html = body.prettify()
                     context_html = f"<p><strong>HN Source:</strong> <a href=\"{url}\">{title}</a></p>"
                     meta_html = ArticleExtractor.build_meta_block(article_url, art_data, context=context_html, summary_html=summary_html)

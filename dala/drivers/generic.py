@@ -246,6 +246,8 @@ class GenericDriver(BaseDriver):
             raw_html=source.html,
             profile=context.profile,
             browser_options=browser_options,
+            include_pdf_images=not options.no_images,
+            pdf_image_options=options,
         )
         if not data['success']:
             log.error(f"Failed to fetch content for {url}")
@@ -269,8 +271,8 @@ class GenericDriver(BaseDriver):
         base_for_links = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
         await self._append_linked_reference_tables(session, raw_html, body_soup, base_for_links)
 
-        assets = []
-        if not options.no_images:
+        assets = list(data.get('images') or []) if not options.no_images else []
+        if not options.no_images and data.get('input_format') != 'pdf':
             base = base_for_links
             seeded = self._seed_preloaded_assets(source, assets, options=options)
             if seeded:
@@ -316,6 +318,8 @@ class GenericDriver(BaseDriver):
                     force_archive=True,
                     profile=context.profile,
                     browser_options=browser_options,
+                    include_pdf_images=not options.no_images,
+                    pdf_image_options=options,
                 )
                 if archive_data.get("success"):
                     data = archive_data

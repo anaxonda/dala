@@ -28,6 +28,7 @@ import tempfile
 import shutil
 import time
 import webbrowser
+import zlib
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -71,6 +72,7 @@ from dala.core.browser import (
 )
 from dala.core import server_jobs as job_state
 from dala.core import job_store
+from dala.core.debug_capture import MAX_CAPTURE_BYTES, MAX_COMPRESSED_CAPTURE_BYTES, save_debug_capture
 
 JobRecord = job_state.JobRecord
 JOBS = job_state.JOBS
@@ -1180,6 +1182,39 @@ async def extract_links(req: ScanRequest):
         "next_page_url": next_page,
         "next_page_num": next_page_num
     }
+
+
+@app.post("/helper/debug-capture")
+async def debug_capture(request: Request):
+    if not request.client or request.client.host not in {"127.0.0.1", "::1"}:
+        raise HTTPException(status_code=403, detail="Debug captures require a local connection.")
+    encoding = request.headers.get("content-encoding", "identity").lower()
+    if encoding not in {"identity", "gzip"}:
+        raise HTTPException(status_code=415, detail="Unsupported capture encoding.")
+    decoder = zlib.decompressobj(16 + zlib.MAX_WBITS) if encoding == "gzip" else None
+    body = bytearray()
+    uploaded = 0
+    async for chunk in request.stream():
+        uploaded += len(chunk)
+        if decoder and uploaded > MAX_COMPRESSED_CAPTURE_BYTES:
+            raise HTTPException(status_code=413, detail="Compressed debug capture exceeds 32 MiB.")
+        try:
+            body.extend(decoder.decompress(chunk, MAX_CAPTURE_BYTES - len(body) + 1) if decoder else chunk)
+        except zlib.error as exc:
+            raise HTTPException(status_code=400, detail="Invalid gzip capture.") from exc
+        if len(body) > MAX_CAPTURE_BYTES:
+            raise HTTPException(status_code=413, detail="Debug capture exceeds 128 MiB after decoding.")
+    if decoder and (not decoder.eof or decoder.unused_data):
+        raise HTTPException(status_code=400, detail="Incomplete or trailing gzip capture data.")
+    try:
+        payload = json.loads(body)
+        if not isinstance(payload, dict):
+            raise ValueError("Expected a JSON object.")
+        saved = await asyncio.to_thread(save_debug_capture, payload)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log.info("Saved browser debug capture %s to %s", saved["capture_id"], saved["directory"])
+    return saved
 
 
 @app.get("/helper/last-conversion")

@@ -80,7 +80,9 @@ class BaseImageProcessor:
     def _image_filename_base(url_or_name: str, fallback_seed: str = "image") -> str:
         parsed_path = urlparse(url_or_name or "").path
         raw_name = os.path.splitext(os.path.basename(parsed_path or url_or_name or ""))[0]
-        base = sanitize_filename(raw_name)
+        # Percent escapes in ZIP member names are decoded by EPUB readers when
+        # resolving hrefs. Keep filenames literal and URL-safe instead.
+        base = sanitize_filename(raw_name).replace('%', '_').replace('#', '_')
         if len(base) < 3:
             base = "image"
         if BaseImageProcessor._is_generic_image_filename(base):
@@ -1397,6 +1399,9 @@ class ImageProcessor(BaseImageProcessor):
         for pic in soup.find_all('picture'):
             img = pic.find('img')
             if img:
+                # Some HTML parsers nest img under source (a void HTML tag).
+                # Detach it before deleting the source elements.
+                img.extract()
                 source_srcsets = [
                     source.get("srcset") or source.get("data-srcset")
                     for source in pic.find_all("source")
@@ -1450,12 +1455,12 @@ class ImageProcessor(BaseImageProcessor):
 
             # Brightspot/Forum Communications uses an empty inline SVG in `src`
             # while placing the real photograph URLs in `srcset`.
-            inline_svg_placeholder = bool(
+            inline_image_placeholder = bool(
                 src
-                and src.startswith("data:image/svg+xml")
+                and src.startswith("data:image/")
                 and candidates
             )
-            if src and src.startswith("data:image/") and not inline_svg_placeholder:
+            if src and src.startswith("data:image/") and not inline_image_placeholder:
                 final_src = src
             elif (
                 src

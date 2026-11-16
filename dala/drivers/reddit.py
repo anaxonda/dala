@@ -87,6 +87,8 @@ class RedditDriver(BaseDriver):
                     force_archive=options.archive,
                     profile=context.profile,
                     browser_options=browser_options,
+                    include_pdf_images=not options.no_images,
+                    pdf_image_options=options,
                 )
                 if art_data['success']:
                     chapter_title = art_data.get('title') or chapter_title
@@ -98,8 +100,11 @@ class RedditDriver(BaseDriver):
                         summary_html = await LLMHelper.generate_summary(body.get_text(separator=" ", strip=True), options.llm_model, options.llm_api_key, options.llm_provider)
 
                     if not options.no_images:
-                        base = art_data.get('archive_url') if art_data.get('was_archived') else link_url
-                        await ImageProcessor.process_images(session, body, base, assets, options=options)
+                        if art_data.get('input_format') == 'pdf':
+                            assets.extend(art_data.get('images') or [])
+                        else:
+                            base = art_data.get('archive_url') if art_data.get('was_archived') else link_url
+                            await ImageProcessor.process_images(session, body, base, assets, options=options)
                     article_html = body.prettify()
                     context_html = f"<p><strong>Reddit Link:</strong> <a href=\"{source.url}\">{source.url}</a></p>"
                     meta_html = ArticleExtractor.build_meta_block(link_url, art_data, context=context_html, summary_html=summary_html)

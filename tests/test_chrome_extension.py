@@ -63,7 +63,7 @@ def test_forum_mode_forces_cookie_backed_extension_enrichment():
         assert "downloadFromShortcut(tab.url, html, tab.id)" in source
         assert "downloadFromShortcut(target, message.html || null, tabId || lastShortcutTabId)" in source
         assert "const shouldScrapeArticleAssets = !!tabId && !is_forum;" in source
-        assert "downloadSingleFromContext(url, tabIdForAssets)" in source
+        assert "downloadSingleFromContext(target.url, tabIdForAssets)" in source
         assert "fetch_assets: is_forum" in source
         assert 'browser_executable: (savedOpts.browser_executable || "").trim() || null' in source
         assert "Forum mode enabled: using browser cookies automatically." in source
@@ -175,6 +175,15 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 workers = context.service_workers
                 service_worker = workers[0] if workers else await context.wait_for_event("serviceworker")
                 extension_id = service_worker.url.split("/")[2]
+
+                assert await service_worker.evaluate("ensureContextMenus()") is True
+                assert await service_worker.evaluate("ensureContextMenus()") is True
+                # Native updates reject if registration silently failed or an ID is missing.
+                await service_worker.evaluate("""async () => {
+                    for (const id of ['add-to-queue', 'add-selected-to-queue', 'download-page']) {
+                        await menusApi.update(id, {enabled: true});
+                    }
+                }""")
 
                 page = await context.new_page()
                 await page.goto("http://example.com/test-article")
@@ -325,6 +334,7 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 assert await page.locator("#date-options").evaluate("el => el.classList.contains('hidden')")
                 assert await page.locator("#forum-options").evaluate("el => el.classList.contains('hidden')")
 
+                await page.locator('.queue-editor-panel summary').click()
                 await page.fill("#queue-editor", "https://example.com/a\nhttps://example.com/a\nnot-a-url\nhttps://example.com/b")
                 await page.wait_for_timeout(500)
 
@@ -332,6 +342,28 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 assert [item["url"] for item in queue["urlQueue"]] == ["https://example.com/a", "https://example.com/b"]
                 assert all(item["saved_at"] for item in queue["urlQueue"])
                 assert await page.locator("#queue-count").inner_text() == "(2)"
+                retained = queue['urlQueue'][1]
+                await page.evaluate("currentTab = {url: 'https://example.com/titled', title: 'A compact saved article title'}")
+                await page.click('#btn-add-tab')
+                await page.wait_for_function("document.querySelectorAll('.queue-item').length === 3")
+                assert await page.locator('.queue-item-title').last.inner_text() == 'A compact saved article title'
+                stored = await page.evaluate("browser.storage.local.get('urlQueue')")
+                assert stored['urlQueue'][-1]['title'] == 'A compact saved article title'
+                before_selection = await page.evaluate("browser.storage.local.get('savedOptions')")
+                await page.check('#queue-select-all')
+                await page.locator('.queue-item input').nth(1).uncheck()
+                assert await page.locator('#queue-select-all').evaluate('el => el.indeterminate')
+                await page.click('#btn-delete-selected')
+                await page.wait_for_function("document.querySelectorAll('.queue-item').length === 1")
+                assert (await page.evaluate("browser.storage.local.get('urlQueue')"))['urlQueue'] == [retained]
+                assert await page.evaluate("browser.storage.local.get('savedOptions')") == before_selection
+                normalized = await service_worker.evaluate("normalizeQueueEntry({url: 'https://example.com/title', title: ' A   saved title ', saved_at: '2026-11-16T12:00:00Z'})")
+                assert normalized['title'] == 'A saved title'
+                assert normalized['saved_at'] == '2026-11-16T12:00:00Z'
+                await page.evaluate("browser.runtime.sendMessage = async message => { window.queueSubmission = message; }")
+                await page.click('#btn-download-bundle')
+                await page.wait_for_function('window.queueSubmission?.action === "init_download"')
+                assert (await page.evaluate('window.queueSubmission'))['urls'] == [retained]
             finally:
                 await context.close()
     except Exception as exc:

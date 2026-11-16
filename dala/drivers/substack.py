@@ -34,6 +34,8 @@ class SubstackDriver(BaseDriver):
             raw_html=source.html,
             profile=context.profile,
             browser_options=browser_options,
+            include_pdf_images=not options.no_images,
+            pdf_image_options=options,
         )
         if not data['success']:
             log.error(f"Failed to fetch Substack content: {url}")
@@ -57,8 +59,8 @@ class SubstackDriver(BaseDriver):
             log.info(f"Targeting Post ID: {post_id} (Pub ID: {pub_id}, Subdomain: {subdomain})")
 
         body_soup = soup.body if soup.body else soup
-        assets = []
-        if not options.no_images:
+        assets = list(data.get('images') or []) if not options.no_images else []
+        if not options.no_images and data.get('input_format') != 'pdf':
             base = data.get('archive_url') if data.get('was_archived') else data.get('source_url', url)
             await ImageProcessor.process_images(session, body_soup, base, assets, options=options)
 

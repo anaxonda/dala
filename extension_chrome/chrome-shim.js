@@ -22,9 +22,11 @@ if (!globalThis.browser) {
         browser.runtime = {
             sendMessage: wrapAsync(chrome.runtime.sendMessage, chrome.runtime),
             getURL: (path) => chrome.runtime.getURL(path),
+            getManifest: () => chrome.runtime.getManifest(),
             openOptionsPage: wrapAsync(chrome.runtime.openOptionsPage, chrome.runtime),
             onMessage: chrome.runtime.onMessage,
-            onInstalled: chrome.runtime.onInstalled
+            onInstalled: chrome.runtime.onInstalled,
+            onStartup: chrome.runtime.onStartup
         };
     }
 
@@ -32,6 +34,7 @@ if (!globalThis.browser) {
     if (chrome.tabs) {
         browser.tabs = {
             query: wrapAsync(chrome.tabs.query, chrome.tabs),
+            get: wrapAsync(chrome.tabs.get, chrome.tabs),
             create: wrapAsync(chrome.tabs.create, chrome.tabs),
             sendMessage: wrapAsync(chrome.tabs.sendMessage, chrome.tabs),
             onUpdated: chrome.tabs.onUpdated,
@@ -74,7 +77,8 @@ if (!globalThis.browser) {
     // menus (was contextMenus or menus)
     if (chrome.contextMenus) {
         browser.menus = {
-            create: (props) => chrome.contextMenus.create(props),
+            create: (props, callback) => chrome.contextMenus.create(props, callback),
+            update: wrapAsync(chrome.contextMenus.update, chrome.contextMenus),
             onClicked: chrome.contextMenus.onClicked,
             removeAll: wrapAsync(chrome.contextMenus.removeAll, chrome.contextMenus)
         };

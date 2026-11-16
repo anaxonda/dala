@@ -15,6 +15,7 @@ from ..models import log, ARCHIVE_ORG_API_BASE, SiteProfile
 from .browser import DEFAULT_BROWSER_PROFILE_DIR, BrowserChallengeError, BrowserFetchError, BrowserFetchOptions, detect_browser_challenge, fetch_rendered_source, resolve_browser_extension_path
 from .session import fetch_with_retry
 from .image_layout import normalize_image_layout
+from .pdf_input import extract_pdf_article, is_pdf_response
 
 class ArticleExtractor:
     VISIBLE_AUTHOR_SELECTORS = [
@@ -251,6 +252,8 @@ class ArticleExtractor:
                 return requests.get(url, headers=headers, cookies=cookie_dict, timeout=20, allow_redirects=True)
             
             resp = await loop.run_in_executor(None, _do_req)
+            if resp.status_code == 200 and is_pdf_response(resp.content, resp.headers.get('Content-Type', '')):
+                return resp.content, resp.url
             if resp.status_code == 200 and resp.text:
                 return resp.text, resp.url
         except Exception as e:
@@ -260,8 +263,51 @@ class ArticleExtractor:
     @staticmethod
     def extract_from_html(html_content, url, profile: Optional[SiteProfile] = None):
         try:
-            metadata = trafilatura.extract_metadata(html_content)
+            challenge_marker = detect_browser_challenge(html_content)
+            if challenge_marker:
+                return {'success': False, 'html': None, 'error': f'Browser challenge detected: {challenge_marker}'}
             soup = BeautifulSoup(html_content, 'lxml')
+            if urlparse(url).hostname == "app.ft.com":
+                article_id = urlparse(url).path.rstrip('/').split('/')[-1]
+                app_articles = soup.select('article[data-content-id]')
+                if app_articles:
+                    selected = next(
+                        (article for article in app_articles if article.get('data-content-id') == article_id),
+                        None,
+                    )
+                    if selected is None:
+                        return {'success': False, 'html': None, 'error': 'Requested FT article is missing from captured HTML'}
+                    # The app keeps adjacent stories in the DOM. Their metadata,
+                    # related links and images must not replace the requested one.
+                    soup = BeautifulSoup(str(selected), 'lxml')
+                    for element in soup.select('.o-topper__read-next, .article--rail, .article--footer, dialog'):
+                        element.decompose()
+                    # App components retain duplicate mounting placeholders and
+                    # load-error UI. Preserve one online link per actual chart.
+                    for element in soup.select('[data-component="flourish"]'):
+                        if element.find('iframe'):
+                            element.unwrap()
+                        else:
+                            element.decompose()
+                    for element in soup.select('custom-code-component'):
+                        element.decompose()
+                    for frame in soup.select('.flourish-embed iframe[src]'):
+                        link = soup.new_tag('a', href=frame['src'])
+                        link.string = 'Interactive chart: view online'
+                        frame.replace_with(link)
+                    headline = soup.select_one('h1')
+                    if headline:
+                        head = soup.new_tag('head')
+                        title = soup.new_tag('title')
+                        title.string = headline.get_text(' ', strip=True)
+                        head.append(title)
+                        soup.html.insert(0, head)
+                # These remain in the DOM even after the app renders. They are
+                # startup UI, never article content (including in captures).
+                for element in soup.select('#jserror, #splash, noscript'):
+                    element.decompose()
+                html_content = str(soup)
+            metadata = trafilatura.extract_metadata(html_content)
             author = ArticleExtractor._best_author(metadata.author if metadata else None, soup)
             
             # Use profile-specific remove selectors if provided
@@ -469,7 +515,7 @@ class ArticleExtractor:
             "[class*='videoenhancement' i]",
             ".jwplayer",
             "[class*='advertisement' i]",
-            "[class*='ad-' i]",
+            "[class^='ad-' i], [class*=' ad-' i]",
         ]:
             try:
                 for tag in list(soup.select(selector)):
@@ -500,6 +546,11 @@ class ArticleExtractor:
         ArticleExtractor._remove_publisher_boilerplate(soup)
         ArticleExtractor._merge_figure_credits(soup)
         ArticleExtractor._convert_injected_svg_images(soup)
+        # Zoom controls can wrap the article photograph. Remove the control
+        # while retaining its media and caption at their original position.
+        for button in list(soup.find_all('button')):
+            if button.find(['img', 'picture', 'figure']):
+                button.unwrap()
         # FIX: Removed 'header' from the kill list. NYTimes puts the main image inside a <header> within the <article>.
         for tag in soup(['script', 'style', 'noscript', 'iframe', 'footer', 'nav', 'aside', 'form', 'button', 'svg']):
             tag.decompose()
@@ -690,9 +741,16 @@ class ArticleExtractor:
         raw_html=None,
         profile: Optional[SiteProfile] = None,
         browser_options: Optional[BrowserFetchOptions] = None,
+        include_pdf_images: bool = True,
+        pdf_image_options=None,
     ):
         result = {'success': False, 'html': None, 'title': None, 'author': None, 'date': None, 'sitename': None, 'was_archived': False, 'archive_url': None}
         loop = asyncio.get_running_loop()
+
+        # Browser PDF viewers expose a shell rather than the document text.
+        if urlparse(url).path.lower().endswith('.pdf'):
+            raw_html = None
+            browser_options = None
 
         if raw_html:
             challenge_marker = detect_browser_challenge(raw_html)
@@ -715,12 +773,25 @@ class ArticleExtractor:
                 result['source_url'] = url
                 return result
 
+        # FT app content URLs serve a JavaScript-only shell over HTTP. Keep
+        # valid browser captures above, but fetch/archive the matching web URL
+        # when no usable captured article is available.
+        parsed_url = urlparse(url)
+        if parsed_url.hostname == "app.ft.com" and re.fullmatch(
+            r"/content/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/?", parsed_url.path
+        ):
+            url = parsed_url._replace(scheme="https", netloc="www.ft.com", fragment="").geturl()
+            log.info(f"Using FT web article URL: {url}")
+
         if force_archive:
             snap_url = await ArticleExtractor.get_wayback_url(session, url)
             if snap_url:
-                raw_html, final_url = await fetch_with_retry(session, snap_url, 'text')
+                raw_html, final_url = await fetch_with_retry(session, snap_url, 'article')
                 if raw_html:
-                    extracted = await loop.run_in_executor(None, ArticleExtractor.extract_from_html, raw_html, url, profile)
+                    if isinstance(raw_html, bytes):
+                        extracted = await loop.run_in_executor(None, extract_pdf_article, raw_html, url, include_pdf_images, pdf_image_options)
+                    else:
+                        extracted = await loop.run_in_executor(None, ArticleExtractor.extract_from_html, raw_html, url, profile)
                     result.update(extracted)
                     result['was_archived'] = True
                     result['archive_url'] = final_url
@@ -729,7 +800,14 @@ class ArticleExtractor:
 
         browser_attempted = False
         fallback_extracted = None
+        article_response = None
         if browser_options and not raw_html:
+            # An extensionless URL may redirect to a PDF. Sniff the response
+            # before attempting a browser viewer; reuse HTML if rendering fails.
+            article_response = await fetch_with_retry(session, url, 'article', non_retry_statuses={403}, max_retries=1)
+            article_body, article_url = article_response
+            if isinstance(article_body, bytes):
+                return await loop.run_in_executor(None, extract_pdf_article, article_body, article_url or url, include_pdf_images, pdf_image_options)
             browser_attempted = True
             try:
                 log.info(f"Fetching rendered source with browser for {url}")
@@ -759,7 +837,9 @@ class ArticleExtractor:
                 log.warning(f"Browser fetch failed for {url}: {e}")
 
         # Treat 403 as non-retryable to fast-fail to archive fallback
-        raw_html, final_url = await fetch_with_retry(session, url, 'text', non_retry_statuses={403}, max_retries=1)
+        if article_response is None:
+            article_response = await fetch_with_retry(session, url, 'article', non_retry_statuses={403}, max_retries=1)
+        raw_html, final_url = article_response
 
         if not raw_html:
              log.warning(f"aiohttp failed for {url}, trying requests fallback...")
@@ -767,6 +847,9 @@ class ArticleExtractor:
              if req_html:
                  raw_html = req_html
                  final_url = req_url
+
+        if isinstance(raw_html, bytes):
+            return await loop.run_in_executor(None, extract_pdf_article, raw_html, final_url or url, include_pdf_images, pdf_image_options)
 
         if raw_html:
              challenge_marker = detect_browser_challenge(raw_html)
@@ -778,6 +861,7 @@ class ArticleExtractor:
              if extracted['success']:
                  result.update(extracted)
                  result['raw_html_for_metadata'] = raw_html
+                 result['source_url'] = final_url or url
                  return result
              
              if extracted.get('is_paywall'):
@@ -819,7 +903,7 @@ class ArticleExtractor:
                 log.warning(f"Browser fallback failed for {url}: {e}")
 
         log.warning(f"Live fetch failed. Trying archive...")
-        archive_result = await ArticleExtractor.get_article_content(session, url, force_archive=True, profile=profile)
+        archive_result = await ArticleExtractor.get_article_content(session, url, force_archive=True, profile=profile, include_pdf_images=include_pdf_images, pdf_image_options=pdf_image_options)
 
         if archive_result['success']:
             return archive_result

@@ -83,6 +83,13 @@ async def fetch_with_retry(
 
                 if response_type == 'json': return await response.json(), final_url
                 elif response_type == 'bytes': return await response.read(), final_url
+                elif response_type == 'article':
+                    # Preserve PDF bytes rather than decoding binary streams as HTML.
+                    body = await response.read()
+                    from .pdf_input import is_pdf_response
+                    if is_pdf_response(body, response.headers.get('Content-Type', '')):
+                        return body, final_url
+                    return body.decode('utf-8', errors='replace'), final_url
                 elif response_type == 'text': return await response.text(encoding='utf-8', errors='replace'), final_url
                 elif response_type == 'headers': return response.headers, final_url
                 else: return response, final_url

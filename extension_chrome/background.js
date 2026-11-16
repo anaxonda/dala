@@ -1,5 +1,5 @@
 try {
-    importScripts('chrome-shim.js', 'shared-forum.js');
+    importScripts('chrome-shim.js', 'shared-forum.js', 'debug-capture.js');
 } catch (e) {
     console.log("Shim load skipped (not in SW?)");
 }
@@ -18,7 +18,8 @@ function normalizeQueueEntry(entry, fallbackSavedAt = null) {
     const url = queueEntryUrl(entry).trim();
     if (!url || !url.startsWith("http")) return null;
     const saved_at = entry && typeof entry === "object" && entry.saved_at ? entry.saved_at : fallbackSavedAt || savedAtNow();
-    return { url, saved_at };
+    const title = typeof entry?.title === 'string' ? entry.title.replace(/\s+/g, ' ').trim().slice(0, 500) : '';
+    return title ? { url, saved_at, title } : { url, saved_at };
 }
 
 function normalizeQueueItems(rawQueue, fallbackSavedAt = null) {
@@ -66,74 +67,87 @@ browser.runtime.onInstalled.addListener(() => {
         updateBadge();
     });
 
-    const menus = browser.menus;
-    if (menus) {
-        try {
-            chrome.contextMenus.removeAll(() => {
-                menus.create({
-                    id: "add-to-queue",
-                    title: "Add to Dala Queue",
-                    contexts: ["page", "link"]
-                });
-                menus.create({
-                    id: "add-selected-to-queue",
-                    title: "Add selected tabs to Dala Queue",
-                    contexts: ["page"]
-                });
-                menus.create({
-                    id: "download-page",
-                    title: "Download Page with Dala",
-                    contexts: ["page", "link"]
-                });
-            });
-        } catch(e) {
-            menus.create({
-                id: "add-to-queue",
-                title: "Add to Dala Queue",
-                contexts: ["page", "link"]
-            });
-            menus.create({
-                id: "add-selected-to-queue",
-                title: "Add selected tabs to Dala Queue",
-                contexts: ["page"]
-            });
-            menus.create({
-                id: "download-page",
-                title: "Download Page with Dala",
-                contexts: ["page", "link"]
-            });
-        }
-    }
+    ensureContextMenus();
 });
 
-// Context Menu Action
-const menusApi = browser.menus;
-if (menusApi && menusApi.onClicked) {
-    menusApi.onClicked.addListener(async (info, tab) => {
-        if (info.menuItemId === "add-to-queue") {
-            const url = info.linkUrl || tab.url;
-            await addToQueue(url);
-        } else if (info.menuItemId === "add-selected-to-queue") {
-            try {
-                const tabs = await browser.tabs.query({currentWindow: true, highlighted: true});
-                let count = 0;
-                for (let t of tabs) {
-                    if (t.url && t.url.startsWith("http")) {
-                        await addToQueue(t.url);
-                        count++;
-                    }
-                }
-                console.log(`Added ${count} selected tabs to queue via context menu`);
-            } catch (e) {
-                console.error("Failed to add selected tabs to queue", e);
-            }
-        } else if (info.menuItemId === "download-page") {
-            const url = info.linkUrl || tab.url;
-            const tabIdForAssets = tab && tab.url === url ? tab.id : null;
-            await downloadSingleFromContext(url, tabIdForAssets);
-        }
+// Keep existing IDs and update in place: worker wakeups must not remove open menus.
+const menusApi = browser.menus || browser.contextMenus || globalThis.chrome?.contextMenus;
+let contextMenuRegistration = null;
+const DALA_MENU_CONTEXTS = ["page", "link", "selection", "image", "video", "audio", "frame", "editable"];
+
+function createContextMenu(properties) {
+    return new Promise((resolve, reject) => {
+        const result = menusApi.create(properties, () => {
+            const error = browser.runtime.lastError || globalThis.chrome?.runtime?.lastError;
+            if (error) reject(new Error(error.message));
+            else resolve();
+        });
+        if (result && typeof result.then === 'function') result.then(resolve, reject);
     });
 }
+
+function ensureContextMenus() {
+    if (!menusApi) return Promise.resolve(false);
+    if (contextMenuRegistration) return contextMenuRegistration;
+    contextMenuRegistration = (async () => {
+        const items = [
+            {id: "add-to-queue", title: "Add to Dala Queue", contexts: DALA_MENU_CONTEXTS},
+            {id: "add-selected-to-queue", title: "Add selected tabs to Dala Queue", contexts: DALA_MENU_CONTEXTS},
+            {id: "download-page", title: "Download with Dala", contexts: DALA_MENU_CONTEXTS}
+        ];
+        for (const {id, ...properties} of items) {
+            try {
+                await menusApi.update(id, properties);
+            } catch (_) {
+                await createContextMenu({id, ...properties});
+            }
+        }
+        return true;
+    })().catch(error => {
+        console.warn("Could not register Dala context menus", error);
+        return false;
+    }).finally(() => { contextMenuRegistration = null; });
+    return contextMenuRegistration;
+}
+
+function contextMenuTarget(info, tab) {
+    const url = info.linkUrl || tab?.url || info.pageUrl;
+    try {
+        if (!['http:', 'https:'].includes(new URL(url).protocol)) return null;
+    } catch (_) { return null; }
+    return {url, title: info.linkUrl && info.linkUrl !== tab?.url ? info.linkText || "" : tab?.title || ""};
+}
+
+async function handleContextMenuClick(info, tab) {
+    if (info.menuItemId === "add-selected-to-queue") {
+        const tabs = await browser.tabs.query({currentWindow: true, highlighted: true});
+        for (const selected of tabs) {
+            const target = contextMenuTarget({}, selected);
+            if (target) await addToQueue(target.url, target.title);
+        }
+        return;
+    }
+    const target = contextMenuTarget(info, tab);
+    if (!target) return;
+    if (info.menuItemId === "add-to-queue") {
+        await addToQueue(target.url, target.title);
+    } else if (info.menuItemId === "download-page") {
+        // A link may target a different document; never attach the current
+        // page's captured HTML or session assets to that other URL.
+        const tabIdForAssets = tab?.url === target.url ? tab.id : null;
+        await downloadSingleFromContext(target.url, tabIdForAssets);
+    }
+}
+
+if (menusApi?.onClicked) {
+    menusApi.onClicked.addListener((info, tab) => {
+        return handleContextMenuClick(info, tab).catch(error => console.error("Dala context-menu action failed", error));
+    });
+}
+browser.runtime.onStartup?.addListener(ensureContextMenus);
+// Firefox persistent backgrounds lose their menus on restart; Chrome's
+// persistent IDs are simply updated on worker startup without duplication.
+ensureContextMenus();
 
 // Command Listener (Native Shortcuts)
 if (browser.commands && browser.commands.onCommand) {
@@ -178,7 +192,7 @@ if (browser.commands && browser.commands.onCommand) {
             } catch (e) { /* fallback */ }
             downloadFromShortcut(tab.url, html, tab.id);
         } else if (command === "add-to-queue") {
-            await addToQueue(tab.url);
+            await addToQueue(tab.url, tab.title);
             showNativeToast(tab.id, "Added to Dala queue");
         }
     });
@@ -299,6 +313,10 @@ function validateResponseFormat(payload, filename, contentType) {
 
 // Message Listener
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === "debug-capture" && sender.url === browser.runtime.getURL("popup.html")) {
+        sendDebugCapture(message.tabId).then(sendResponse).catch(error => sendResponse({error: error.message}));
+        return true;
+    }
     if (message.action === "download") {
         processDownloadWithAssets(message.payload, message.isBundle);
         return true; 
@@ -344,7 +362,7 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         const target = message.url;
         if (target && target.startsWith("http")) {
-            addToQueue(target).then(() => sendResponse({added: true}));
+            addToQueue(target, sender?.tab?.title || "").then(() => sendResponse({added: true}));
         } else {
             sendResponse({added: false});
         }
@@ -865,14 +883,18 @@ async function downloadFromShortcut(url, html, tabId = null) {
     await processDownloadWithAssets(payload, false);
 }
 
-async function addToQueue(url) {
+async function addToQueue(url, title = '') {
     const res = await browser.storage.local.get("urlQueue");
     const queue = normalizeQueueItems(res.urlQueue || []);
-    if (!queue.some(item => item.url === url)) {
-        queue.push({ url, saved_at: savedAtNow() });
-        await browser.storage.local.set({ urlQueue: queue });
-        updateBadge();
-    }
+    const normalizedTitle = typeof title === 'string' ? title.replace(/\s+/g, ' ').trim().slice(0, 500) : '';
+    const existing = queue.find(item => item.url === url);
+    if (!existing) {
+        queue.push(normalizeQueueEntry({ url, title: normalizedTitle }));
+    } else if (normalizedTitle) {
+        existing.title = normalizedTitle;
+    } else return;
+    await browser.storage.local.set({ urlQueue: queue });
+    updateBadge();
 }
 
 function parsePageSpecInput(spec) {

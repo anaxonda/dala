@@ -395,7 +395,12 @@ def _remove_duplicate_article_title_and_meta(soup: BeautifulSoup, chapter_title:
         if wrapper_title is not None and tag is wrapper_title:
             continue
         if _titles_equivalent(tag.get_text(" ", strip=True), chapter_title or ""):
-            tag.decompose()
+            if tag.get('id'):
+                # PDF section contents may link to an appendix title that is
+                # visually redundant with the document title. Keep its target.
+                tag.replace_with(soup.new_tag('a', id=tag['id']))
+            else:
+                tag.decompose()
 
     for tag in list(body.select(".entry-meta, .post-meta, .posted-on, .byline, .post-date, .post-author")):
         if tag.parent is body and "post-meta" in (tag.get("class") or []):
@@ -447,7 +452,8 @@ def _normalize_caption_markup(soup: BeautifulSoup) -> None:
             tag.name = "p"
         classes = [cls for cls in (tag.get("class") or []) if cls not in CAPTION_CLASSES]
         tag["class"] = ["image-caption", *classes]
-        tag.string = text
+        if not tag.find(['a', 'sup']):
+            tag.string = text
         for attr in ["style", "align", "width", "height"]:
             if tag.has_attr(attr):
                 del tag[attr]
@@ -461,6 +467,10 @@ def _normalize_caption_markup(soup: BeautifulSoup) -> None:
 
 
 def _cleanup_output_html(soup: BeautifulSoup, chapter_title: Optional[str] = None) -> None:
+    if soup.body:
+        existing_pdf_document = soup.body.find('div', class_='pdf-document', recursive=False)
+        if existing_pdf_document:
+            existing_pdf_document.unwrap()
     _remove_navigation_boilerplate(soup)
     _remove_social_boilerplate(soup)
     _remove_subscription_boilerplate(soup)
@@ -472,6 +482,15 @@ def _cleanup_output_html(soup: BeautifulSoup, chapter_title: Optional[str] = Non
     for tag in list(soup.find_all(["b", "strong", "em", "i", "span"])):
         if not tag.get_text(strip=True) and not tag.find(["img", "table", "blockquote", "pre", "code"]):
             tag.decompose()
+
+    if soup.body and soup.select_one('section[id^="pdf-page-"]'):
+        # EbookLib copies body children rather than body attributes. Keep
+        # PDF-specific reading styles on a container that survives packaging.
+        if not soup.body.find('div', class_='pdf-document', recursive=False):
+            document = soup.new_tag('div', attrs={'class': 'pdf-document'})
+            for child in list(soup.body.contents):
+                document.append(child.extract())
+            soup.body.append(document)
 
 
 def format_saved_metadata(value: Optional[str]) -> str:
@@ -564,6 +583,13 @@ def shared_reading_css() -> str:
             h2 { font-size: 1.2em; line-height: 1.22; margin: 1.05em 0 0.45em; }
             h3, h4 { line-height: 1.25; margin: 0.9em 0 0.35em; }
             p { margin-top: 0; margin-bottom: 0.7em; }
+            .pdf-footnote, .pdf-small-text { font-size: 0.85em; line-height: 1.3; word-wrap: break-word; }
+            .pdf-document { word-wrap: break-word; }
+            .pdf-figure-links { font-size: 0.85em; margin-top: 0.35em; }
+            .pdf-footnotes { border-top: 1px solid #bbb; margin-top: 1.5em; }
+            .pdf-note-ref { font-size: 0.75em; vertical-align: super; }
+            .pdf-note-backref { text-decoration: none; }
+            .pdf-contents { margin: 1em 0 1.5em; }
             ul, ol { margin-top: 0.25em; margin-bottom: 0.85em; padding-left: 1.35em; }
             li { margin-bottom: 0.28em; }
             hr { border: 0; border-top: 1px solid #d6d6d6; margin: 1em 0; }
@@ -675,7 +701,7 @@ class EpubWriter:
         book.add_item(epub.EpubNav())
         book.spine = ['nav'] + epub_chapters
 
-        epub.write_epub(output_path, book)
+        epub.write_epub(output_path, book, options={"raise_exceptions": True})
         log.info(f"Wrote EPUB: {output_path}")
 
 

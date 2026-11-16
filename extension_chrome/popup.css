@@ -39,7 +39,7 @@ select { padding: 4px 6px; border: 1px solid #bbb; border-radius: 4px; backgroun
 .section-label { font-size: 12px; color: #444; font-weight: 700; margin-top: 4px; }
 
 /* QUEUE LIST */
-.queue-actions { display: flex; gap: 5px; margin-bottom: 10px; flex-wrap: wrap; }
+.queue-actions { display: flex; gap: 5px; margin-bottom: 6px; flex-wrap: wrap; }
 .group-right { display: flex; gap: 5px; margin-left: auto; }
 
 .queue-editor {
@@ -103,3 +103,26 @@ input[type="checkbox"] { margin-right: 5px; }
 .inline-check { font-size: 11px; color: #444; margin-bottom: 8px; }
 .translation-actions { display: flex; gap: 6px; justify-content: flex-end; }
 .cancel-row { padding: 4px 15px 8px 15px; text-align: right; }
+
+/* Compact, keyboard-accessible queue checklist. */
+.queue-selection-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; color: #666; }
+.queue-select-label { color: #333; white-space: nowrap; }
+#btn-delete-selected { margin-left: auto; white-space: nowrap; }
+.small-btn:disabled { color: #888; opacity: 0.6; cursor: default; }
+.queue-list { list-style: none; padding: 0; margin: 0 0 6px; max-height: 260px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px; background: #fff; }
+.queue-item { display: flex; align-items: center; min-width: 0; border-bottom: 1px solid #eee; }
+.queue-item:last-child { border-bottom: 0; }
+.queue-item.selected { background: #fff0ed; }
+.queue-item-label { display: flex; gap: 4px; align-items: center; padding: 4px 6px; flex: 1; min-width: 0; }
+.queue-item-label input { flex-shrink: 0; margin: 0 3px 0 0; }
+.queue-item-text { display: block; min-width: 0; flex: 1; }
+.queue-item-title, .queue-item-url { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.queue-item-title { font-size: 12px; font-weight: 600; color: #333; line-height: 1.2; }
+.queue-item-url { font-size: 10px; color: #777; line-height: 1.2; }
+.queue-item-remove { flex: 0 0 26px; align-self: stretch; border: 0; background: transparent; color: #888; cursor: pointer; font-size: 18px; }
+.queue-item-remove:hover { background: #fee; color: #b22; }
+.queue-item:focus-within { outline: 2px solid #e85a4f; outline-offset: -2px; }
+.queue-empty { padding: 18px 12px; border: 1px dashed #ccc; border-radius: 5px; text-align: center; font-size: 12px; color: #777; margin-bottom: 10px; }
+.queue-editor-panel { margin-bottom: 14px; font-size: 11px; color: #555; }
+.queue-editor-panel summary { cursor: pointer; padding: 5px 0; }
+.queue-editor-panel .queue-editor { margin-top: 5px; font-size: 11px; height: 120px; }

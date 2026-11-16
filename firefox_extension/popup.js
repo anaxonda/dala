@@ -114,7 +114,9 @@ const TRANSLATION_LANGUAGE_SUGGESTIONS = [
 ];
 
 function isValidUrl(url) {
-    return url && url.startsWith("http") && !url.includes("localhost");
+    if (typeof url !== 'string' || url.includes('localhost')) return false;
+    try { return ['http:', 'https:'].includes(new URL(url).protocol); }
+    catch (_) { return false; }
 }
 
 function normalizeServerUrl(value) {
@@ -427,24 +429,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Download Actions
         document.getElementById('btn-download-single').onclick = safeDownloadSingle;
+        document.getElementById('btn-debug-capture').onclick = sendPageDebugCapture;
         document.getElementById('btn-download-bundle').onclick = safeDownloadBundle;
 
         // Queue Actions
         document.getElementById('btn-add-tab').onclick = async () => {
             if (!currentTab) currentTab = (await browser.tabs.query({active: true, currentWindow: true}))[0];
-            if (currentTab && isValidUrl(currentTab.url)) addToQueue(currentTab.url);
+            if (currentTab && isValidUrl(currentTab.url)) await addToQueue(currentTab.url, currentTab.title);
         };
         document.getElementById('btn-clear').onclick = clearQueue;
-        const queueEditor = document.getElementById('queue-editor');
-        if (queueEditor) {
-            queueEditor.addEventListener('input', debounce(saveQueueFromEditor, 300));
-        }
+        initializeQueueUI();
 
         // Bulk Actions
         document.getElementById('btn-add-selected').onclick = importSelectedTabs;
         document.getElementById('btn-add-all').onclick = importAllTabs;
         // Options
-        document.querySelectorAll('input[type="checkbox"]').forEach(box => {
+        document.querySelectorAll('input[type="checkbox"][id^="opt-"]').forEach(box => {
             box.onchange = saveOptions;
         });
         const cookieBox = document.getElementById('opt-cookies');
@@ -953,7 +953,7 @@ async function importSelectedTabs() {
         let count = 0;
         for (let tab of tabs) {
             if (tab.highlighted && isValidUrl(tab.url)) {
-                await addToQueue(tab.url);
+                await addToQueue(tab.url, tab.title);
                 count++;
             }
         }
@@ -969,7 +969,7 @@ async function importAllTabs() {
         let count = 0;
         for (let tab of tabs) {
             if (isValidUrl(tab.url)) {
-                await addToQueue(tab.url);
+                await addToQueue(tab.url, tab.title);
                 count++;
             }
         }
@@ -977,83 +977,6 @@ async function importAllTabs() {
     } catch (e) {
         showStatus("Error: " + e.message);
     }
-}
-
-// --- QUEUE MANAGEMENT ---
-function queueSavedAtNow() {
-    return new Date().toISOString();
-}
-
-function normalizeQueueEntry(entry, fallbackSavedAt = null) {
-    if (typeof entry === "string") {
-        const url = entry.trim();
-        return isValidUrl(url) ? { url, saved_at: fallbackSavedAt || queueSavedAtNow() } : null;
-    }
-    if (entry && typeof entry === "object") {
-        const url = (entry.url || "").trim();
-        if (!isValidUrl(url)) return null;
-        return { url, saved_at: entry.saved_at || fallbackSavedAt || queueSavedAtNow() };
-    }
-    return null;
-}
-
-function normalizeQueueItems(rawQueue, fallbackSavedAt = null) {
-    const seen = new Set();
-    const items = [];
-    for (const raw of Array.isArray(rawQueue) ? rawQueue : []) {
-        const item = normalizeQueueEntry(raw, fallbackSavedAt);
-        if (item && !seen.has(item.url)) {
-            seen.add(item.url);
-            items.push(item);
-        }
-    }
-    return items;
-}
-
-async function refreshQueue() {
-    const res = await browser.storage.local.get("urlQueue");
-    const queue = normalizeQueueItems(res.urlQueue || []);
-    if (JSON.stringify(queue) !== JSON.stringify(res.urlQueue || [])) {
-        await browser.storage.local.set({ urlQueue: queue });
-    }
-    const editor = document.getElementById('queue-editor');
-    if(document.getElementById('queue-count')) {
-        document.getElementById('queue-count').textContent = `(${queue.length})`;
-    }
-    if (editor) {
-        editor.value = queue.map(item => item.url).join("\n");
-    }
-    await updateBadgeCount(queue.length);
-}
-
-async function addToQueue(url) {
-    const res = await browser.storage.local.get("urlQueue");
-    const queue = normalizeQueueItems(res.urlQueue || []);
-    if (!queue.some(item => item.url === url)) {
-        queue.push({ url, saved_at: queueSavedAtNow() });
-        await browser.storage.local.set({ urlQueue: queue });
-        refreshQueue();
-    }
-}
-
-async function clearQueue() {
-    await browser.storage.local.set({ urlQueue: [] });
-    refreshQueue();
-}
-
-async function saveQueueFromEditor() {
-    const editor = document.getElementById('queue-editor');
-    if (!editor) return;
-    const lines = editor.value.split('\n').map(l => l.trim()).filter(l => l);
-    const uniq = Array.from(new Set(lines.filter(isValidUrl)));
-    const res = await browser.storage.local.get("urlQueue");
-    const existing = new Map(normalizeQueueItems(res.urlQueue || []).map(item => [item.url, item]));
-    const queue = uniq.map(url => existing.get(url) || { url, saved_at: queueSavedAtNow() });
-    await browser.storage.local.set({ urlQueue: queue });
-    if(document.getElementById('queue-count')) {
-        document.getElementById('queue-count').textContent = `(${queue.length})`;
-    }
-    await updateBadgeCount(queue.length);
 }
 
 async function retryFailedSources() {
@@ -1301,3 +1224,21 @@ document.addEventListener("DOMContentLoaded", () => {
     jobProgressTimer = setInterval(() => refreshJobProgress().catch(() => {}), 1000);
 });
 window.addEventListener("unload", () => clearInterval(jobProgressTimer));
+
+async function sendPageDebugCapture() {
+    const button = document.getElementById("btn-debug-capture");
+    const status = document.getElementById("debug-capture-status");
+    button.disabled = true;
+    status.textContent = "Sending debug capture to local Dala server…";
+    try {
+        const tab = (await browser.tabs.query({active: true, currentWindow: true}))[0];
+        if (!tab || !tab.id) throw new Error("Open the article tab first.");
+        const result = await browser.runtime.sendMessage({action: "debug-capture", tabId: tab.id});
+        if (!result || result.error) throw new Error(result?.error || "No response from background capture.");
+        status.textContent = `Debug capture saved: ${result.directory}`;
+    } catch (error) {
+        status.textContent = `Debug capture failed: ${error.message}`;
+    } finally {
+        button.disabled = false;
+    }
+}

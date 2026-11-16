@@ -1,5 +1,25 @@
 # Changelog
 
+## v2.4.7
+
+### PDF sources
+- Convert direct PDF URLs and PDFs linked from Hacker News, including redirects and extensionless download URLs.
+- Reflow paragraphs and headings, embed photographs, vector figures and tables, and retain captions and image settings.
+- Move page-bottom footnotes out of running prose; preserve resolvable references and return links across numeric, Roman, alphabetic, symbolic, column-local and endnote structures.
+- Preserve annotated citations, internal cross-references and external links, including links associated with rasterized figures.
+- Fall back to plain text when layout extraction fails; scans remain image-based without OCR.
+
+### Browser extensions
+- Show saved page titles in compact queue rows, with individual selection, select-all and bulk deletion. Retain titles when editing URLs and keep concurrent queue additions.
+- Restore right-click queue and download actions on background/browser startup, supporting page, link, selection, image, media and editable contexts across Firefox and Chromium menu APIs.
+- Add explicit localhost-only debug captures for extraction troubleshooting, with bounded uploads and private local files.
+
+### Extraction and packaging
+- Improve Financial Times web/app capture cleanup and preserve photographs inside image controls, responsive picture elements and inline placeholders.
+- Keep PDF anchors and caption links during ebook cleanup; use URL-safe image filenames and surface EPUB writing errors.
+- Add `pdfplumber` and its PDFium renderer to the base dependencies for PDF input. PDF output still requires optional browser support.
+- Align the Python package and both extensions at 2.4.7; rebuild Chrome, Firefox and installer assets. Firefox release assets require AMO signing.
+
 ## v2.4.6
 
 ### Bundle reliability

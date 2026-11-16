@@ -18,6 +18,9 @@
             <input type="text" id="single-title" placeholder="Page Title">
         </div>
         <button id="btn-download-single" class="action-btn" title="Download the current browser tab with the selected options.">Download Page</button>
+        <button id="btn-debug-capture" class="small-btn" title="Send this page’s HTML, visible text and image layout details to your local Dala server for debugging.">Send Debug Capture</button>
+        <div class="helper-text">Saves page content locally for debugging. No cookies or browser storage.</div>
+        <div id="debug-capture-status" class="helper-text" role="status" aria-live="polite" style="overflow-wrap:anywhere"></div>
     </div>
 
     <!-- TAB 2: QUEUE -->
@@ -25,17 +28,24 @@
         <div class="queue-actions">
             <button id="btn-add-tab" class="small-btn" title="Add the current tab URL to the queue.">+ Current</button>
             <div class="group-right">
-                <button id="btn-add-selected" class="small-btn" title="Add Selected Tabs">+ Selected</button>
-                <button id="btn-add-all" class="small-btn" title="Add All Tabs">+ All</button>
+                <button id="btn-add-selected" class="small-btn" title="Add Selected Tabs">+ Selected tabs</button>
+                <button id="btn-add-all" class="small-btn" title="Add All Tabs">+ All tabs</button>
                 <button id="btn-clear" class="small-btn text-red" title="Clear all queued URLs.">Clear</button>
             </div>
         </div>
 
-        <div class="input-group">
-            <label>Queue (one URL per line)</label>
-            <textarea id="queue-editor" class="queue-editor" placeholder="Paste or edit URLs..."></textarea>
-            <div class="helper-text">Queue persists; edits update bundle queue.</div>
+        <div class="queue-selection-bar">
+            <label class="queue-select-label"><input type="checkbox" id="queue-select-all" aria-label="Select all queued URLs"> All</label>
+            <span id="queue-selection-count" role="status" aria-live="polite">0 selected</span>
+            <button id="btn-delete-selected" class="small-btn text-red" disabled>Delete selected</button>
         </div>
+        <ul id="queue-list" class="queue-list" aria-label="Queued pages"></ul>
+        <div id="queue-empty" class="queue-empty">Your queue is empty. Add tabs above or paste URLs below.</div>
+        <details class="queue-editor-panel">
+            <summary>Paste or edit URLs</summary>
+            <label for="queue-editor" class="helper-text">One URL per line. Changes save automatically.</label>
+            <textarea id="queue-editor" class="queue-editor" placeholder="https://example.com/article"></textarea>
+        </details>
 
         <div class="input-group">
             <label>Bundle Title</label>
@@ -185,6 +195,6 @@
         <button id="btn-retry-saved" class="small-btn" hidden title="Retry unfinished sources while reusing saved articles.">Retry skipped</button>
     </div>
     <div id="status-bar" role="status" aria-live="polite"></div>
-    <script src="shared-forum.js"></script><script src="popup.js"></script>
+    <script src="shared-forum.js"></script><script src="queue-ui.js"></script><script src="popup.js"></script>
 </body>
 </html>
