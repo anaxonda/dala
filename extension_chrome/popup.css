@@ -114,9 +114,9 @@ input[type="checkbox"] { margin-right: 5px; }
 .queue-item { display: flex; align-items: center; min-width: 0; border-bottom: 1px solid #eee; }
 .queue-item:last-child { border-bottom: 0; }
 .queue-item.selected { background: #fff0ed; }
-.queue-item-label { display: flex; gap: 4px; align-items: center; padding: 4px 6px; flex: 1; min-width: 0; }
-.queue-item-label input { flex-shrink: 0; margin: 0 3px 0 0; }
-.queue-item-text { display: block; min-width: 0; flex: 1; }
+.queue-item > input { flex-shrink: 0; margin: 0 7px 0 6px; }
+.queue-item-text { display: block; min-width: 0; flex: 1; padding: 4px 6px 4px 0; text-decoration: none; }
+.queue-item-text:hover .queue-item-title, .queue-item-text:focus-visible .queue-item-title { text-decoration: underline; }
 .queue-item-title, .queue-item-url { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .queue-item-title { font-size: 12px; font-weight: 600; color: #333; line-height: 1.2; }
 .queue-item-url { font-size: 10px; color: #777; line-height: 1.2; }

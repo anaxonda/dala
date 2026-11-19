@@ -11,7 +11,8 @@
 ### Browser extensions
 
 - Stop the popup from scrolling into blank space beyond its top and bottom edges in Chromium and Firefox.
-- Align the Python package and both extensions at 2.4.10. Release assets include the Chrome ZIP, AMO-signed Firefox XPI, and installer bundle.
+- Click a queued item's title or URL to open it in a new tab. Use its checkbox to select it.
+- The v2.4.10 GitHub release pairs the v2.4.10 Python package and installer bundle with the v2.4.11 Chrome ZIP and AMO-signed Firefox XPI.
 
 ## v2.4.9
 

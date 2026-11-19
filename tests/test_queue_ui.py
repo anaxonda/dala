@@ -114,6 +114,17 @@ async def test_queue_titles_bulk_delete_and_pending_editor_updates(tmp_path, dir
             await page.locator('.queue-item input').nth(2).check()
             assert await page.locator('#queue-select-all').evaluate('el => el.indeterminate')
             assert await page.locator('#queue-selection-count').inner_text() == '2 selected'
+            await context.route('https://example.com/old-article', lambda route: route.fulfill(body='Saved article'))
+            row = page.locator('.queue-item').nth(1)
+            for link_text in ('.queue-item-title', '.queue-item-url'):
+                async with context.expect_page() as opened:
+                    await row.locator(link_text).click()
+                article = await opened.value
+                await article.wait_for_url('https://example.com/old-article')
+                assert await article.evaluate('() => window.opener === null')
+                await article.close()
+            assert not await row.get_by_role('checkbox').is_checked()
+            assert await page.locator('#queue-selection-count').inner_text() == '2 selected'
             await page.locator('#view-queue').screenshot(path=str(tmp_path / f'{directory}-queue.png'))
 
             # A pending raw edit and another browser context's addition must

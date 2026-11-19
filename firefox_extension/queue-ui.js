@@ -65,8 +65,6 @@ function renderQueue(queue) {
         const row = document.createElement('li');
         row.className = 'queue-item';
         row.dataset.url = item.url;
-        const label = document.createElement('label');
-        label.className = 'queue-item-label';
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.setAttribute('aria-label', `Select ${title}`);
@@ -75,8 +73,11 @@ function renderQueue(queue) {
             else selectedQueueUrls.delete(item.url);
             syncQueueSelection();
         });
-        const text = document.createElement('span');
+        const text = document.createElement('a');
         text.className = 'queue-item-text';
+        text.href = item.url;
+        text.target = '_blank';
+        text.rel = 'noopener noreferrer';
         const heading = document.createElement('span');
         heading.className = 'queue-item-title';
         heading.textContent = title;
@@ -86,7 +87,6 @@ function renderQueue(queue) {
         address.textContent = item.url.replace(/^https?:\/\//, '');
         address.title = item.url;
         text.append(heading, address);
-        label.append(checkbox, text);
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'queue-item-remove';
@@ -94,7 +94,7 @@ function renderQueue(queue) {
         remove.title = `Remove ${title}`;
         remove.setAttribute('aria-label', `Remove ${title}`);
         remove.addEventListener('click', () => deleteQueueUrls(new Set([item.url])).catch(queueError));
-        row.append(label, remove);
+        row.append(checkbox, text, remove);
         fragment.append(row);
     }
     const list = document.getElementById('queue-list');
