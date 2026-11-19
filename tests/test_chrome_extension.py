@@ -250,7 +250,7 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 }""")
                 assert abs(await page.locator("#status-bar").evaluate("el => el.getBoundingClientRect().bottom - innerHeight")) < 1
                 await page.mouse.wheel(0, -5000)
-                await page.wait_for_function("window.scrollY === 0")
+                await page.wait_for_function("() => window.scrollY === 0")
                 await page.set_viewport_size(original_viewport)
                 assert await page.locator("#btn-debug-capture, #debug-capture-status").count() == 0
                 assert await page.locator("#pdf-options").evaluate("el => el.classList.contains('hidden')")
