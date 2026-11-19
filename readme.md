@@ -386,6 +386,7 @@ uv run dala --translate es --test-translation-provider "Hello world"
 | `--test-translation-provider TEXT` | Translate a short text and print the result without downloading. |
 | `--yt-lang en,es` | Preferred YouTube transcript languages. |
 | `--yt-auto` | Prefer auto-generated YouTube captions. |
+| `--yt-timestamps` | Link the first caption in each minute to its position on YouTube. In the browser extension, enable **Link Transcript Timestamps** under **YouTube Settings**. |
 | `--thumbnails` | Embed periodic YouTube thumbnails. |
 | `--yt-max-comments N` | Maximum YouTube comments. |
 | `--yt-sort top\|new` | YouTube comment sort order. |

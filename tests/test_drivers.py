@@ -5,7 +5,7 @@ import pytest
 import aiohttp
 from PIL import Image
 from io import BytesIO
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 from aioresponses import aioresponses
 from bs4 import BeautifulSoup
 from dala.core.browser import BrowserChallengeError, BrowserFetchOptions, BrowserFetchResult
@@ -58,6 +58,10 @@ class FakeFetchedTranscript:
         ("https://youtu.be/abc123", "abc123"),
         ("https://www.youtube-nocookie.com/embed/abc123?rel=0", "abc123"),
         ("https://youtube.com/v/abc123/more", "abc123"),
+        ("https://www.youtube.com/live/zWeT91uH7LI", "zWeT91uH7LI"),
+        ("https://m.youtube.com/live/zWeT91uH7LI/?si=example", "zWeT91uH7LI"),
+        ("https://www.youtube.com/shorts/zWeT91uH7LI?si=example", "zWeT91uH7LI"),
+        ("https://www.youtube.com/live/", None),
     ],
 )
 def test_youtube_extract_video_id_accepts_common_hosts(url, video_id):
@@ -95,7 +99,9 @@ class FakeYouTubeTranscriptApi:
         return list(self.transcripts)
 
 
-async def prepare_fake_youtube_book(monkeypatch, transcripts, options):
+async def prepare_fake_youtube_book(
+    monkeypatch, transcripts, options, url="https://www.youtube.com/watch?v=abc123"
+):
     FakeYouTubeTranscriptApi.transcripts = transcripts
 
     async def fake_fetch_with_retry(session, target_url, response_type="json", **kwargs):
@@ -113,8 +119,75 @@ async def prepare_fake_youtube_book(monkeypatch, transcripts, options):
     async with aiohttp.ClientSession() as session:
         return await YouTubeDriver().prepare_book_data(
             ConversionContext(session=session, options=options),
-            Source(url="https://www.youtube.com/watch?v=abc123"),
+            Source(url=url),
         )
+
+
+@pytest.mark.asyncio
+async def test_youtube_live_url_fetches_transcript(monkeypatch):
+    video_ids = []
+    original_list = FakeYouTubeTranscriptApi.list
+
+    def list_transcripts(self, video_id):
+        video_ids.append(video_id)
+        return original_list(self, video_id)
+
+    monkeypatch.setattr(FakeYouTubeTranscriptApi, "list", list_transcripts)
+    book = await prepare_fake_youtube_book(
+        monkeypatch,
+        [FakeYouTubeTranscript("en", "Livestream transcript.")],
+        ConversionOptions(no_images=True, no_comments=True),
+        url="https://www.youtube.com/live/zWeT91uH7LI",
+    )
+
+    assert video_ids == ["zWeT91uH7LI"]
+    assert book is not None
+    assert "Livestream transcript." in book.chapters[0].content_html
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("formatter", ["off", "plain", "preserved", "missing", "unavailable"])
+async def test_youtube_transcript_timestamp_links(monkeypatch, formatter):
+    class TimedTranscript(FakeYouTubeTranscript):
+        def fetch(self):
+            return FakeFetchedTranscript([
+                {"text": "First caption.", "start": 2.8, "duration": 2},
+                {"text": "Same minute.", "start": 5, "duration": 2},
+                {"text": "Next minute.", "start": 62.1, "duration": 2},
+                {"text": "Past an hour.", "start": 3667.9, "duration": 1},
+            ])
+
+    if formatter == "preserved":
+        mock = AsyncMock(return_value=(
+            "<p>[[TIMESTAMP_0]] First caption. Same minute.</p>"
+            "<p>[[TIMESTAMP_2]] Next minute.</p><p>[[TIMESTAMP_3]] Past an hour.</p>"
+        ))
+    elif formatter == "unavailable":
+        mock = AsyncMock(side_effect=lambda text, *args: text)
+    else:
+        mock = AsyncMock(return_value="<p>[[TIMESTAMP_0]] Partial transcript.</p>")
+    monkeypatch.setattr("dala.drivers.youtube.LLMHelper.format_transcript", mock)
+    book = await prepare_fake_youtube_book(
+        monkeypatch,
+        [TimedTranscript("en", "First caption.")],
+        ConversionOptions(
+            no_images=True, no_comments=True,
+            youtube_timestamps=formatter != "off",
+            llm_format=formatter in {"preserved", "missing", "unavailable"},
+        ),
+        url="https://youtu.be/abc123?si=example",
+    )
+
+    body = BeautifulSoup(book.chapters[0].content_html, "html.parser")
+    links = [(a.get_text(), a["href"]) for a in body.select("a.youtube-timestamp")]
+    expected = [] if formatter == "off" else [
+        ("0:02", "https://www.youtube.com/watch?v=abc123&t=2s"),
+        ("1:02", "https://www.youtube.com/watch?v=abc123&t=62s"),
+        ("1:01:07", "https://www.youtube.com/watch?v=abc123&t=3667s"),
+    ]
+    assert links == expected
+    assert "Next minute." in body.get_text()
+    assert "TIMESTAMP" not in body.get_text()
 
 
 @pytest.mark.asyncio
@@ -705,9 +778,7 @@ async def test_generic_driver_switches_to_forum():
     """
     
     with aioresponses() as m:
-        # 1. GenericDriver fetch
-        m.get(url, status=200, body=forum_html)
-        # 2. ForumDriver fetch (it starts over)
+        # The forum driver reuses the HTML fetched by the generic driver.
         m.get(url, status=200, body=forum_html)
         
         async with aiohttp.ClientSession() as session:

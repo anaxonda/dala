@@ -1,5 +1,23 @@
 # Changelog
 
+## v2.4.9
+
+### YouTube
+
+- Convert YouTube Shorts and livestream links directly.
+- Add optional timestamp links to the first caption in each minute in EPUB and PDF exports. Enable them with `--yt-timestamps` or **Link Transcript Timestamps** under **YouTube Settings**.
+
+### Extraction and browser extensions
+
+- Resolve Reddit share links and preserve thread query parameters when requesting JSON. Reddit may still block unauthenticated JSON requests.
+- Follow advertised forum pagination URLs and keep browser captures on their original page numbers.
+- Improve driver selection, recover comments from custom-domain WordPress posts and redirected Substack posts, and apply linked-site profiles to Hacker News articles.
+- Fix Chrome download preparation on newer Chromium builds and keep saved forum settings from changing YouTube and Hacker News downloads.
+
+### Release assets
+
+- Align the Python package and both browser extensions at 2.4.9. Release assets include the Chrome ZIP, AMO-signed Firefox XPI, and installer bundle.
+
 ## v2.4.7
 
 ### PDF sources

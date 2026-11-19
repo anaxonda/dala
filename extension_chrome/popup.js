@@ -1005,12 +1005,12 @@ async function retryFailedSources() {
 async function updateBadgeCount(count) {
     const res = await browser.storage.local.get("downloadActive");
     if (res.downloadActive) {
-        browser.browserAction.setBadgeText({ text: "..." });
-        browser.browserAction.setBadgeBackgroundColor({ color: "#FFA500" });
+        chrome.action?.setBadgeText({ text: "..." });
+        chrome.action?.setBadgeBackgroundColor({ color: "#FFA500" });
         return;
     }
-    browser.browserAction.setBadgeText({ text: count > 0 ? count.toString() : "" });
-    browser.browserAction.setBadgeBackgroundColor({ color: "#e85a4f" });
+    chrome.action?.setBadgeText({ text: count > 0 ? count.toString() : "" });
+    chrome.action?.setBadgeBackgroundColor({ color: "#e85a4f" });
 }
 
 function debounce(fn, delay) {

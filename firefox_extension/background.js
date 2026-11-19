@@ -455,6 +455,7 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
         ...dateOptionsFromSaved(savedOpts),
         youtube_lang: (savedOpts.youtube_lang || "").trim() || "en",
         youtube_prefer_auto: !!savedOpts.youtube_prefer_auto,
+        youtube_timestamps: !!savedOpts.youtube_timestamps,
         youtube_max_comments: savedOpts.youtube_max_comments || 25,
         youtube_comment_sort: savedOpts.youtube_comment_sort || "top",
         include_cookies: includeCookiesForSavedOptions(savedOpts),
@@ -468,7 +469,6 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
     const page_spec = parsePageSpecInput(options.pages);
     const max_pages = options.max_pages;
     const forceForum = options.forum;
-    const shouldFetchAssets = forceForum || sourceItems.some(item => isLikelyForumUrl(item.url));
     if (forceForum && !options.include_cookies) {
         console.log("Forum mode enabled: using browser cookies automatically.");
     }
@@ -513,7 +513,7 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
             }
         }
         
-        const is_forum = forceForum || isLikelyForumUrl(url) || isLikelyForumHtml(html);
+        const is_forum = shouldCaptureForum(url, forceForum, html);
         const include_cookies = options.include_cookies || is_forum;
         if (is_forum && !forceForum) {
             console.log(`Forum auto-detected for ${url}`);
@@ -567,12 +567,13 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
         include_undated: options.include_undated,
         youtube_lang: options.youtube_lang,
         youtube_prefer_auto: options.youtube_prefer_auto,
+        youtube_timestamps: options.youtube_timestamps,
         youtube_max_comments: options.youtube_max_comments,
         youtube_comment_sort: options.youtube_comment_sort,
         max_pages: max_pages,
         page_spec: page_spec && page_spec.length ? page_spec : null,
         ...browserFallbackOptionsFromSaved(savedOpts),
-        fetch_assets: shouldFetchAssets,
+        fetch_assets: sources.some(source => source.is_forum),
         server_save_dir: (savedOpts.save_folder || savedOpts.server_save_dir || savedOpts.termux_copy_dir || "").trim() || null,
         archive_server: !!savedOpts.archive_server,
         termux_copy_dir: (savedOpts.termux_copy_dir || "").trim() || null,
@@ -833,7 +834,7 @@ async function downloadFromShortcut(url, html, tabId = null) {
     const opts = optsRes.savedOptions || {};
     const page_spec = parsePageSpecInput(opts.pages);
     const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
-    const is_forum = !!opts.forum || isLikelyForumUrl(url) || isLikelyForumHtml(html);
+    const is_forum = shouldCaptureForum(url, !!opts.forum, html);
     const server_save_dir = (opts.save_folder || opts.server_save_dir || opts.termux_copy_dir || "").trim() || null;
     
     const include_cookies = includeCookiesForSavedOptions(opts) || is_forum;
@@ -865,6 +866,7 @@ async function downloadFromShortcut(url, html, tabId = null) {
         ...dateOptionsFromSaved(opts),
         youtube_lang: (opts.youtube_lang || "").trim() || "en",
         youtube_prefer_auto: !!opts.youtube_prefer_auto,
+        youtube_timestamps: !!opts.youtube_timestamps,
         youtube_max_comments: opts.youtube_max_comments || 25,
         youtube_comment_sort: opts.youtube_comment_sort || "top",
         max_pages,
@@ -923,7 +925,7 @@ async function downloadSingleFromContext(url, tabId = null) {
     const opts = optsRes.savedOptions || {};
     const page_spec = parsePageSpecInput(opts.pages);
     const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
-    const is_forum = !!opts.forum || isLikelyForumUrl(url);
+    const is_forum = shouldCaptureForum(url, !!opts.forum);
     const server_save_dir = (opts.save_folder || opts.server_save_dir || opts.termux_copy_dir || "").trim() || null;
     
     const include_cookies = includeCookiesForSavedOptions(opts) || is_forum;
@@ -955,6 +957,7 @@ async function downloadSingleFromContext(url, tabId = null) {
         ...dateOptionsFromSaved(opts),
         youtube_lang: (opts.youtube_lang || "").trim() || "en",
         youtube_prefer_auto: !!opts.youtube_prefer_auto,
+        youtube_timestamps: !!opts.youtube_timestamps,
         youtube_max_comments: opts.youtube_max_comments || 25,
         youtube_comment_sort: opts.youtube_comment_sort || "top",
         max_pages,
@@ -1342,10 +1345,6 @@ async function processDownloadWithAssets(payload, isBundle) {
                 }
                 if (res && Array.isArray(res.page_htmls) && res.page_htmls.length) {
                     src.page_htmls = res.page_htmls;
-                    if (!src.html) {
-                        const firstPage = res.page_htmls.find(p => p && p.page === 1);
-                        if (firstPage && firstPage.html) src.html = firstPage.html;
-                    }
                     console.log(`✓ Fetched ${res.page_htmls.length} forum page HTML snapshots in background`);
                 }
             } catch (err) {
@@ -1616,10 +1615,6 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
     const assets = [];
     const page_htmls = [];
     try {
-        const normBase = threadUrl.replace(/#.*$/, "").replace(/\/page-\d+/i, "").replace(/([?&])page=\d+/i, "$1").replace(/[?&]$/, "");
-        console.log("📍 Normalized base URL:", normBase);
-        const currentPageMatch = threadUrl.match(/page-(\d+)/i) || threadUrl.match(/[?&]page=(\d+)/i);
-        const currentPage = currentPageMatch ? parseInt(currentPageMatch[1], 10) : 1;
         const hasExplicitPages = page_spec && page_spec.length;
         const pages = hasExplicitPages ? page_spec : [1];
         const uniquePages = Array.from(new Set(pages.filter(p => p && p > 0))).sort((a, b) => a - b);
@@ -1627,11 +1622,11 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
         const pagesToFetch = limiter(uniquePages, max_pages || uniquePages.length);
         let debugViewerLogged = false;
         const seenPageKeys = new Set();
-        const queue = pagesToFetch.map(page => ({ page, url: buildForumPageUrl(normBase, page) }));
+        const queue = pagesToFetch.map(page => ({ page, url: buildForumPageUrl(threadUrl, page) }));
 
         while (queue.length) {
             const item = queue.shift();
-            const url = item.url || buildForumPageUrl(normBase, item.page);
+            const url = item.url || buildForumPageUrl(threadUrl, item.page);
             const page = item.page || forumPageNumberFromUrl(url) || 1;
             const key = url.replace(/#.*$/, "");
             if (seenPageKeys.has(key)) continue;
@@ -1705,7 +1700,7 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
                 if (nextPage && nextPage.url && (!max_pages || !nextPage.page || nextPage.page <= max_pages) && !seenPageKeys.has(nextPage.url.replace(/#.*$/, ""))) {
                     queue.push(nextPage);
                 } else if (nextPage && nextPage.page && (!max_pages || nextPage.page <= max_pages)) {
-                    const fallbackUrl = buildForumPageUrl(normBase, nextPage.page);
+                    const fallbackUrl = buildForumPageUrl(threadUrl, nextPage.page);
                     if (!seenPageKeys.has(fallbackUrl.replace(/#.*$/, ""))) {
                         queue.push({ page: nextPage.page, url: fallbackUrl });
                     }
@@ -1716,12 +1711,6 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
         console.warn("fetchAssetsForPage error", e);
     }
     return { assets, page_htmls };
-}
-
-function forumPageNumberFromUrl(url) {
-    if (!url) return null;
-    const match = url.match(/page-(\d+)/i) || url.match(/[?&]page=(\d+)/i) || url.match(/\/page\/(\d+)/i);
-    return match ? parseInt(match[1], 10) : null;
 }
 
 async function mapWithConcurrency(tasks, limit) {
@@ -1735,17 +1724,6 @@ async function mapWithConcurrency(tasks, limit) {
     });
     await Promise.all(workers);
     return results;
-}
-
-function buildForumPageUrl(base, page) {
-    if (page <= 1) return base;
-    if (base.includes("page-")) {
-        return base.replace(/page-\d+/, `page-${page}`);
-    }
-    if (base.includes("?")) {
-        return `${base}&page=${page}`;
-    }
-    return `${base.replace(/\/?$/, "/")}page-${page}`;
 }
 
 async function fetchWithCookies(url, referer) {

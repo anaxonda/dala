@@ -11,6 +11,7 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from dala.core.browser import BrowserFetchOptions
 from dala.core.extractor import ArticleExtractor
+from dala.core.dispatcher import DriverDispatcher
 from dala.core.pdf_input import extract_pdf_article
 from dala.drivers.generic import GenericDriver
 from dala.drivers.hn import HackerNewsDriver
@@ -148,11 +149,12 @@ async def test_generic_pdf_input():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('is_forum', [False, True])
 @pytest.mark.parametrize('body, expected', [
     (make_pdf(), 'Second page findings'),
     (make_pdf(texts=('',)), 'OCR'),
 ])
-async def test_hn_pdf_article_and_comments(body, expected):
+async def test_hn_pdf_article_and_comments(body, expected, is_forum):
     url = 'https://example.org/paper.pdf'
     with aioresponses() as mock:
         mock.get(f'{HN_API_BASE_URL}item/42.json', payload={
@@ -163,13 +165,21 @@ async def test_hn_pdf_article_and_comments(body, expected):
             'id': 43, 'text': 'Discussion of the paper', 'by': 'reader', 'time': 1,
         })
         async with aiohttp.ClientSession() as session:
-            book = await HackerNewsDriver().prepare_book_data(
+            source = Source(
+                url='https://news.ycombinator.com/item?id=42', is_forum=is_forum,
+                html='<html><body>Captured HN discussion, not the PDF article</body></html>',
+            )
+            driver = DriverDispatcher.get_driver(source)
+            assert isinstance(driver, HackerNewsDriver)
+            book = await driver.prepare_book_data(
                 ConversionContext(session=session, options=ConversionOptions()),
-                Source(url='https://news.ycombinator.com/item?id=42'),
+                source,
             )
     assert book.title == 'HN PDF story'
     assert expected in book.chapters[0].content_html
     assert book.chapters[0].is_article
+    assert 'Captured HN discussion' not in book.chapters[0].content_html
+    assert 'Discussion of the paper' not in book.chapters[0].content_html
     assert book.chapters[1].is_comments
     assert 'Discussion of the paper' in book.chapters[1].content_html
 

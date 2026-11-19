@@ -69,6 +69,7 @@ class ConversionOptions:
     thumbnails: bool = False
     youtube_lang: str = "en"
     youtube_prefer_auto: bool = False
+    youtube_timestamps: bool = False
     youtube_max_comments: int = 25
     youtube_comment_sort: str = "top"
     image_preset: str = "balanced"

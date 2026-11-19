@@ -22,6 +22,7 @@ const llmModelStatus = document.getElementById("llm-model-status");
 const llmApiKeyInput = document.getElementById("llm-api-key");
 const ytLangInput = document.getElementById("yt-lang");
 const ytAutoBox = document.getElementById("yt-auto");
+const ytTimestampsBox = document.getElementById("yt-timestamps");
 const ytMaxCommentsInput = document.getElementById("yt-max-comments");
 const ytCommentSortSelect = document.getElementById("yt-comment-sort");
 
@@ -123,6 +124,7 @@ async function loadSettings() {
   llmApiKeyInput.value = (savedOpts.llm_api_key || "").trim();
   ytLangInput.value = (savedOpts.youtube_lang || "").trim();
   ytAutoBox.checked = Boolean(savedOpts.youtube_prefer_auto);
+  ytTimestampsBox.checked = Boolean(savedOpts.youtube_timestamps);
   ytMaxCommentsInput.value = savedOpts.youtube_max_comments !== undefined ? savedOpts.youtube_max_comments : "";
   ytCommentSortSelect.value = savedOpts.youtube_comment_sort || "top";
   syncLlmModelOptions();
@@ -175,6 +177,7 @@ async function saveSettings() {
       llm_api_key: llmApiKey,
       youtube_lang: ytLang,
       youtube_prefer_auto: ytAuto,
+      youtube_timestamps: ytTimestampsBox.checked,
       youtube_max_comments: isNaN(ytMaxComments) ? 25 : ytMaxComments,
       youtube_comment_sort: ytCommentSort
     }
@@ -354,6 +357,7 @@ llmModelInput.addEventListener("change", saveSettings);
 llmApiKeyInput.addEventListener("change", saveSettings);
 ytLangInput.addEventListener("change", saveSettings);
 ytAutoBox.addEventListener("change", saveSettings);
+ytTimestampsBox.addEventListener("change", saveSettings);
 ytMaxCommentsInput.addEventListener("change", saveSettings);
 ytCommentSortSelect.addEventListener("change", saveSettings);
 

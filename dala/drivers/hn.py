@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from html import escape
 from urllib.parse import parse_qsl, urlencode, urlparse, parse_qs, unquote
 from bs4 import BeautifulSoup
@@ -41,7 +42,7 @@ class HackerNewsDriver(BaseDriver):
 
     @staticmethod
     async def find_story_for_url(session, url: str) -> Optional[Dict[str, Any]]:
-        if not url or "news.ycombinator.com" in urlparse(url).netloc:
+        if not url or urlparse(url).hostname == "news.ycombinator.com":
             return None
 
         params = urlencode({
@@ -141,11 +142,10 @@ class HackerNewsDriver(BaseDriver):
         session = context.session
         options = context.options
         url = source.url
-        try:
-            q = parse_qs(urlparse(url).query)
-            item_id = q['id'][0]
-        except:
-            log.error("Invalid HN URL"); return None
+        item_id = parse_qs(urlparse(url).query).get("id", [""])[0]
+        if not item_id.isascii() or not item_id.isdecimal():
+            log.error("Invalid HN item ID")
+            return None
 
         log.info(f"Fetching HN Item {item_id}")
         api_url = f"{HN_API_BASE_URL}item/{item_id}.json"
@@ -170,6 +170,7 @@ class HackerNewsDriver(BaseDriver):
             
             sub_book = None
             if article_url and not options.no_article:
+                temp_profile = ProfileManager.get_instance().get_profile(article_url)
                 try:
                     # Circular import avoidance: we'll need a way to get the dispatcher or drivers here.
                     # For now, let's assume we can import GenericDriver here to check.
@@ -177,14 +178,13 @@ class HackerNewsDriver(BaseDriver):
                     from ..core.dispatcher import DriverDispatcher
                     
                     temp_source = Source(url=article_url, cookies=source.cookies) 
-                    temp_profile = ProfileManager.get_instance().get_profile(article_url)
                     temp_driver = DriverDispatcher.get_driver(temp_source, temp_profile)
                     
                     # If it's not Generic and not HN (recursive), use it
                     if not isinstance(temp_driver, (GenericDriver, HackerNewsDriver)):
                         site_label = temp_driver.__class__.__name__.replace("Driver", "")
                         log.info(f"Delegating linked article to {temp_driver.__class__.__name__} (Site: {site_label})")
-                        sub_book = await temp_driver.prepare_book_data(context, temp_source)
+                        sub_book = await temp_driver.prepare_book_data(replace(context, profile=temp_profile), temp_source)
                 except Exception as e:
                     log.warning(f"Failed to delegate to specialized driver: {e}")
 
@@ -211,8 +211,7 @@ class HackerNewsDriver(BaseDriver):
                     session,
                     article_url,
                     force_archive=options.archive,
-                    raw_html=source.html if not article_url else None,
-                    profile=context.profile,
+                    profile=temp_profile,
                     browser_options=browser_options,
                     include_pdf_images=not options.no_images,
                     pdf_image_options=options,

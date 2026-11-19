@@ -3,7 +3,7 @@ import re
 import hashlib
 import mimetypes
 import os
-from urllib.parse import urlparse
+from urllib.parse import urldefrag, urljoin, urlparse
 from itertools import islice
 from bs4 import BeautifulSoup
 from ebooklib import epub
@@ -30,14 +30,16 @@ class ForumDriver(BaseDriver):
         title = None
 
         target_pages = options.page_spec or []
-        pages_sequence = list(target_pages) if target_pages else []
+        pages_sequence = list(dict.fromkeys(target_pages))
         max_pages = options.max_pages
         max_posts = options.max_posts
 
         page = 1
-        seen_pages = set()
         seen_urls = set()
         browser_pages = self._browser_page_map(source)
+        captured_page = self._extract_page_number(source.url) or 1
+        page_urls = {}
+        pagination_reference = source.url
 
         # Seed preloaded assets once so they are available for every page
         if source.assets:
@@ -92,17 +94,13 @@ class ForumDriver(BaseDriver):
                 if max_pages and page > max_pages:
                     break
 
-            if page in seen_pages:
-                page += 1
-                continue
-
-            page_url = self._build_page_url(base_url, page)
+            page_url = page_urls.get(page) or self._build_page_url(base_url, page, pagination_reference)
             if page in browser_pages:
                 page_info = browser_pages[page]
                 html_content = page_info.get("html") or ""
                 final_url = page_info.get("url") or page_url
                 log.info(f"Using browser-fetched forum HTML for page {page}.")
-            elif page == 1 and source.html:
+            elif page == captured_page and source.html:
                 html_content = source.html
                 final_url = source.url
                 log.info("Using pre-fetched forum HTML content.")
@@ -114,10 +112,12 @@ class ForumDriver(BaseDriver):
                     continue
                 else:
                     break
-            if final_url in seen_urls:
+            final_url = final_url or page_url
+            page_key = urldefrag(final_url).url
+            if page_key in seen_urls:
                 log.info(f"Final URL for page {page} already seen. Stopping to avoid loop: {final_url}")
                 break
-            seen_urls.add(final_url)
+            seen_urls.add(page_key)
 
             soup = BeautifulSoup(html_content, 'lxml')
             if not title:
@@ -143,7 +143,11 @@ class ForumDriver(BaseDriver):
             if max_posts and sum(len(b[1]) for b in page_blocks) >= max_posts:
                 break
 
-            seen_pages.add(page)
+            has_next, next_url = self._next_page(soup, page, final_url)
+            if next_url:
+                next_page = self._extract_page_number(next_url) or page + 1
+                page_urls[next_page] = next_url
+                pagination_reference = next_url
             if target_pages:
                 continue
 
@@ -152,7 +156,6 @@ class ForumDriver(BaseDriver):
                 page = next_browser_page
                 continue
 
-            has_next = self._has_next_page(soup, page, final_url)
             if not has_next:
                 break
             page += 1
@@ -207,34 +210,30 @@ class ForumDriver(BaseDriver):
         )
 
     def _normalize_url(self, url: str) -> str:
-        cleaned = url.rstrip('/')
-        if "page-" in cleaned:
-            cleaned = re.sub(r'/page-\d+', '', cleaned)
-        cleaned = re.sub(r'([?&])page=\d+', r'\1', cleaned)
-        cleaned = cleaned.rstrip('?&')
-        return cleaned
+        parsed = urlparse(url)
+        path = re.sub(r'/page[-/]\d+/?$', '', parsed.path.rstrip('/'), flags=re.IGNORECASE)
+        query_parts = parsed.query.split('&')
+        if query_parts[0].startswith('threads/'):
+            query_parts[0] = re.sub(r'/page-\d+/?$', '', query_parts[0].rstrip('/'), flags=re.IGNORECASE)
+        query = '&'.join(part for part in query_parts if part and not re.fullmatch(r'page=\d+', part, re.IGNORECASE))
+        return parsed._replace(path=path, query=query, fragment='').geturl()
 
-    def _build_page_url(self, base_url: str, page: int) -> str:
+    def _build_page_url(self, base_url: str, page: int, reference_url: str = "") -> str:
         if page <= 1:
             return base_url
         parsed = urlparse(base_url)
         path = parsed.path or ""
         query = parsed.query or ""
-        if query and query.startswith("threads/"):
-            q = query
-            if re.search(r'page-\d+', q):
-                q = re.sub(r'page-\d+', f"page-{page}", q)
-            else:
-                q = q.rstrip('/') + f"/page-{page}"
-            return parsed._replace(query=q).geturl()
-        if re.search(r'page-\d+', path):
-            new_path = re.sub(r'page-\d+', f"page-{page}", path)
-        elif path.endswith('/'):
-            new_path = f"{path}page-{page}"
-        else:
-            new_path = f"{path}/page-{page}"
-        rebuilt = parsed._replace(path=new_path)
-        return rebuilt.geturl()
+        reference = urlparse(reference_url)
+        if re.search(r'(?:^|&)page=\d+(?:&|$)', reference.query, re.IGNORECASE) or (
+            path.endswith('/showthread.php') and query
+        ):
+            return parsed._replace(query=f"{query}&page={page}" if query else f"page={page}").geturl()
+        if query.startswith("threads/"):
+            route, separator, params = query.partition("&")
+            return parsed._replace(query=f"{route.rstrip('/')}/page-{page}{separator}{params}").geturl()
+        separator = "/page/" if re.search(r'/page/\d+/?$', reference.path, re.IGNORECASE) else "/page-"
+        return parsed._replace(path=f"{path.rstrip('/')}{separator}{page}").geturl()
 
     def _browser_page_map(self, source: Source) -> Dict[int, Dict[str, str]]:
         pages: Dict[int, Dict[str, str]] = {}
@@ -245,13 +244,13 @@ class ForumDriver(BaseDriver):
             if not isinstance(html_value, str) or not html_value.strip():
                 continue
             page_value = item.get("page")
+            url_value = item.get("url") if isinstance(item.get("url"), str) else ""
             try:
-                page_num = int(page_value)
-            except Exception:
-                page_num = self._extract_page_number(item.get("url") or "") or 1
+                page_num = self._extract_page_number(url_value) or int(page_value)
+            except (TypeError, ValueError):
+                page_num = 1
             if page_num < 1 or page_num in pages:
                 continue
-            url_value = item.get("url") if isinstance(item.get("url"), str) else source.url
             pages[page_num] = {"html": html_value, "url": url_value}
         if pages:
             log.info(f"Browser-fetched forum pages available: {sorted(pages.keys())}")
@@ -317,48 +316,34 @@ class ForumDriver(BaseDriver):
         return posts
 
     def _extract_page_number(self, href: str) -> Optional[int]:
-        if not href: return None
-        m = re.search(r'page[-=](\d+)', href, re.IGNORECASE)
-        if m:
-            try:
-                return int(m.group(1))
-            except Exception:
-                return None
-        return None
+        parsed = urlparse(href)
+        match = re.search(r'(?:^|&)page=(\d+)(?:&|$)', parsed.query, re.IGNORECASE)
+        if not match:
+            route = parsed.query.split('&', 1)[0] if parsed.query.startswith("threads/") else parsed.path
+            match = re.search(r'/page[-/](\d+)/?$', route, re.IGNORECASE)
+        return int(match.group(1)) if match else None
 
-    def _has_next_page(self, soup, current_page: int, current_url: str) -> bool:
+    def _next_page(self, soup, current_page: int, current_url: str) -> tuple[bool, Optional[str]]:
         if current_page > 500:
-            return False
-        link = soup.find("link", rel="next")
-        if link and link.get("href"):
-            maybe = self._extract_page_number(link.get("href"))
-            if maybe and maybe <= current_page:
-                return False
-            return True
-        numeric_pages = []
-        for el in soup.select("li.pageNav-page, a.pageNav-page"):
-            try:
-                val = int(el.get_text(strip=True))
-                numeric_pages.append(val)
-            except Exception:
+            return False, None
+        links = soup.select("link[rel~='next'][href], a[rel~='next'][href], a.pageNav-jump--next[href], a.pageNavSimple-el--next[href]")
+        next_labels = {"next", "next >", "next>", str(current_page + 1)}
+        links.extend(a for a in soup.select("a[href]") if a.get_text(strip=True).lower() in next_labels)
+        current_url = urldefrag(current_url).url
+        current_host = urlparse(current_url).netloc
+        for link in links:
+            href = urldefrag(urljoin(current_url, link["href"])).url
+            parsed = urlparse(href)
+            if parsed.scheme not in {"http", "https"} or parsed.netloc != current_host:
                 continue
-        max_num = max(numeric_pages) if numeric_pages else None
-        if max_num and current_page < max_num:
-            return True
-        jump_next = soup.select_one("a.pageNav-jump--next, a.pageNavSimple-el--next, a[rel='next']")
-        if jump_next and jump_next.get("href"):
-            maybe = self._extract_page_number(jump_next.get("href"))
-            if maybe and maybe <= current_page:
-                return False
-            return True
-        anchors = soup.find_all("a")
-        for a in anchors:
-            txt = a.get_text(strip=True).lower()
-            if txt in ("next", "next >", "next>"):
-                return True
-            if txt == str(current_page + 1):
-                return True
-        return False
+            number = self._extract_page_number(href)
+            if href != current_url and (number is None or number == current_page + 1):
+                return True, href
+        for link in soup.select("li.pageNav-page, a.pageNav-page"):
+            label = link.get_text(strip=True)
+            if label.isdecimal() and int(label) > current_page:
+                return True, None
+        return False, None
 
     def _render_thread_html(self, title, url, page_blocks: List[Tuple[int, List[Dict[str, Any]]]], summary_html: Optional[str] = None):
         anchor_map: Dict[str, str] = {}

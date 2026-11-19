@@ -3,7 +3,7 @@ import asyncio
 import json
 import re
 from itertools import islice
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode
 from bs4 import BeautifulSoup
 from ebooklib import epub
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
@@ -31,6 +31,11 @@ from ..utils.formatting import _enrich_comment_tree, format_comment_html
 from pygments.formatters import HtmlFormatter
 
 class YouTubeDriver(BaseDriver):
+    HOSTS = {
+        "youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com",
+        "youtube-nocookie.com", "www.youtube-nocookie.com", "youtu.be",
+    }
+
     async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
         session = context.session
         options = context.options
@@ -42,10 +47,11 @@ class YouTubeDriver(BaseDriver):
         if not video_id:
             log.error("Could not extract video ID")
             return None
+        watch_url = f"https://www.youtube.com/watch?{urlencode({'v': video_id})}"
 
         # 1. Fetch Page for Metadata (Title, Author, Thumbnail)
         try:
-            html_content, _ = await fetch_with_retry(session, url, 'text')
+            html_content, _ = await fetch_with_retry(session, watch_url, 'text')
             soup = BeautifulSoup(html_content, 'html.parser')
             title = soup.find("meta", property="og:title")
             title = title["content"] if title else f"YouTube Video {video_id}"
@@ -184,17 +190,22 @@ class YouTubeDriver(BaseDriver):
                 except Exception as e:
                     log.warning(f"Failed to fetch periodic thumbnail {i}: {e}")
 
+        timestamp_links = self._timestamp_links(transcript_list, watch_url) if options.youtube_timestamps else {}
+
         # 3. Process Text
+        final_text = None
         if options.llm_format:
             marked_transcript = []
             pending_thumbs = sorted(thumbnail_map.keys()) if thumbnail_map else []
-            for item in transcript_list:
+            for index, item in enumerate(transcript_list):
                 start = item['start']
                 if pending_thumbs and total_duration > 0:
                     current_ratio = start / total_duration
                     if current_ratio >= pending_thumbs[0]:
                         ratio = pending_thumbs.pop(0)
                         marked_transcript.append(f"\n\n[[IMAGE_MARKER_{ratio}]]\n\n")
+                if index in timestamp_links:
+                    marked_transcript.append(f"\n\n[[TIMESTAMP_{index}]]\n\n")
                 marked_transcript.append(item['text'])
             full_text = " ".join(marked_transcript)
             full_text = html.unescape(full_text)
@@ -204,7 +215,11 @@ class YouTubeDriver(BaseDriver):
                 "These represent where images should be placed. DO NOT REMOVE THEM. "
                 "Ensure they remain on their own line between paragraphs."
             )
-            final_text = await LLMHelper.format_transcript(f"{llm_instruction}\n\n{full_text}", options.llm_model, options.llm_api_key, options.llm_provider)
+            if timestamp_links:
+                llm_instruction += " Preserve the TIMESTAMP markers exactly and in order on their own lines."
+            llm_input = f"{llm_instruction}\n\n{full_text}"
+            final_text = await LLMHelper.format_transcript(llm_input, options.llm_model, options.llm_api_key, options.llm_provider)
+            unformatted = final_text == llm_input
             if "<p>" not in final_text:
                 final_text = "".join(f"<p>{p.strip()}</p>" for p in final_text.split('\n\n') if p.strip())
             if thumbnail_map:
@@ -215,8 +230,17 @@ class YouTubeDriver(BaseDriver):
                         final_text = final_text.replace(f"{marker}", f"</p>{img_html}<p>")
                     else:
                         final_text = final_text.replace(marker.strip("[]"), f"</p>{img_html}<p>")
-        else:
-            final_text = self._basic_transcript_cleanup(transcript_list, thumbnail_map, total_duration, is_generated)
+            if timestamp_links:
+                if final_text and not unformatted:
+                    final_text = self._restore_timestamp_links(final_text, timestamp_links)
+                else:
+                    final_text = None
+                if final_text is None:
+                    log.warning("Formatted transcript lost timestamp markers. Using timed captions.")
+        if final_text is None:
+            final_text = self._basic_transcript_cleanup(
+                transcript_list, thumbnail_map, total_duration, is_generated, timestamp_links,
+            )
 
         # 4. Build Chapter
         cover_image_html = ""
@@ -257,7 +281,7 @@ class YouTubeDriver(BaseDriver):
                 downloader = YoutubeCommentDownloader()
                 sort_val = SORT_BY_RECENT if options.youtube_comment_sort == "new" else SORT_BY_POPULAR
                 try:
-                    generator = downloader.get_comments_from_url(url, sort_by=sort_val)
+                    generator = downloader.get_comments_from_url(watch_url, sort_by=sort_val)
                     wanted_roots, roots_found, limit = set(), 0, options.youtube_max_comments
                     scan_limit, kept_comments = limit * 20, []
                     scanned = 0
@@ -330,15 +354,54 @@ class YouTubeDriver(BaseDriver):
 
         return BookData(title=title, author=author, uid=f"urn:youtube:{video_id}", language='en', description=description, source_url=url, chapters=chapters, images=assets, toc_structure=toc_structure)
 
-    def _basic_transcript_cleanup(self, transcript_list: List[Dict], thumbnails: Dict[float, str] = None, total_duration: float = 0, is_auto: bool = False) -> str:
+    @staticmethod
+    def _timestamp_links(transcript, watch_url: str) -> dict[int, str]:
+        links = {}
+        previous_minute = -1
+        for index, item in enumerate(transcript):
+            seconds = int(item["start"])
+            minute = seconds // 60
+            if minute <= previous_minute or not item["text"].strip():
+                continue
+            previous_minute = minute
+            hours, minutes = divmod(minute, 60)
+            label = f"{minutes}:{seconds % 60:02d}"
+            if hours:
+                label = f"{hours}:{minutes:02d}:{seconds % 60:02d}"
+            href = html.escape(f"{watch_url}&t={seconds}s", quote=True)
+            links[index] = f'<a class="youtube-timestamp" href="{href}">{label}</a>'
+        return links
+
+    @staticmethod
+    def _restore_timestamp_links(formatted: str, links: dict[int, str]) -> Optional[str]:
+        pattern = re.compile(r"(\[\[TIMESTAMP_(\d+)\]\])")
+        soup = BeautifulSoup(formatted, "html.parser")
+        text_nodes = soup.find_all(string=pattern)
+        markers = [int(match[2]) for node in text_nodes for match in pattern.finditer(node)]
+        if markers != list(links) or any(node.find_parent(["a", "script", "style"]) for node in text_nodes):
+            return None
+        for node in text_nodes:
+            parts = pattern.split(node)
+            node.insert_before(parts[0])
+            for _, index, tail in zip(parts[1::3], parts[2::3], parts[3::3]):
+                node.insert_before(BeautifulSoup(links[int(index)], "html.parser").a)
+                node.insert_before(tail)
+            node.extract()
+        return str(soup)
+
+    def _basic_transcript_cleanup(
+        self, transcript_list: List[Dict], thumbnails: Dict[float, str] = None,
+        total_duration: float = 0, is_auto: bool = False, timestamp_links: Optional[dict[int, str]] = None,
+    ) -> str:
         paragraphs, current_para, last_end = [], [], 0
         current_len = 0
+        paragraph_timestamp = ""
         pending_thumbs = sorted(thumbnails.keys()) if thumbnails else []
         
         SENTENCE_STARTERS = {"i", "we", "the", "it", "so", "but", "and", "they", "this", "there", "you", "my", "our"}
 
         def flush_para():
-            nonlocal current_para, current_len
+            nonlocal current_para, current_len, paragraph_timestamp
             if current_para:
                 text = " ".join(current_para)
                 # Clean up whitespace
@@ -352,11 +415,12 @@ class YouTubeDriver(BaseDriver):
                     if is_auto and text[-1] not in {'.', '!', '?', ':'}:
                         text += "."
                     
-                    paragraphs.append(f"<p>{text}</p>")
+                    paragraphs.append(f"<p>{paragraph_timestamp}{text}</p>")
                 current_para = []
                 current_len = 0
+                paragraph_timestamp = ""
 
-        for item in transcript_list:
+        for index, item in enumerate(transcript_list):
             text = html.unescape(item['text']).replace('\n', ' ').strip()
             if not text: continue
             
@@ -400,6 +464,9 @@ class YouTubeDriver(BaseDriver):
 
             if should_split:
                 flush_para()
+            if timestamp_links and index in timestamp_links:
+                flush_para()
+                paragraph_timestamp = f"{timestamp_links[index]} "
 
             # Handle mid-item speaker changes
             if ">>" in text and not text.startswith(">>"):
@@ -421,17 +488,13 @@ class YouTubeDriver(BaseDriver):
 
     def _extract_video_id(self, url):
         parsed = urlparse(url)
-        host = (parsed.hostname or parsed.netloc or "").lower()
-        if host == "youtu.be": return parsed.path.strip("/") or None
-        if host in (
-            "www.youtube.com",
-            "youtube.com",
-            "m.youtube.com",
-            "music.youtube.com",
-            "youtube-nocookie.com",
-            "www.youtube-nocookie.com",
-        ):
-            if "/watch" in parsed.path: return parse_qs(parsed.query).get("v", [None])[0]
-            if "/embed/" in parsed.path: return parsed.path.split("/embed/")[1].split("/")[0]
-            if "/v/" in parsed.path: return parsed.path.split("/v/")[1].split("/")[0]
+        if parsed.hostname not in self.HOSTS:
+            return None
+        route, _, remainder = parsed.path.removeprefix("/").partition("/")
+        if parsed.hostname == "youtu.be":
+            return route or None
+        if route == "watch":
+            return parse_qs(parsed.query).get("v", [None])[0]
+        if route in {"embed", "v", "live", "shorts"}:
+            return remainder.partition("/")[0] or None
         return None

@@ -1,6 +1,7 @@
 import base64
 import mimetypes
 import re
+from dataclasses import replace
 from urllib.parse import urljoin, urlparse, urldefrag
 
 from bs4 import BeautifulSoup
@@ -254,16 +255,17 @@ class GenericDriver(BaseDriver):
             return None
 
         raw_html = data.get('raw_html_for_metadata') or data.get('html', '')
-        
-        if 'substack:post_id' in raw_html:
-             log.info("Detected Substack metadata after fetch. Switching to SubstackDriver.")
-             from .substack import SubstackDriver
-             return await SubstackDriver().prepare_book_data(context, source)
 
-        if 'data-template="thread_view"' in raw_html or 'xenforo' in raw_html.lower():
-             log.info("Detected Forum metadata after fetch. Switching to ForumDriver.")
-             from .forum import ForumDriver
-             return await ForumDriver().prepare_book_data(context, source)
+        from ..core.dispatcher import DriverDispatcher
+        from .forum import ForumDriver
+
+        driver_type = DriverDispatcher.detect_html_driver(raw_html)
+        if driver_type is ForumDriver:
+            forum_book = await ForumDriver().prepare_book_data(context, replace(source, html=raw_html))
+            if forum_book is not None:
+                return forum_book
+        elif driver_type:
+            return await driver_type().prepare_book_data(context, source, article_data=data)
 
         title = data['title'] or "Untitled Webpage"
         soup = BeautifulSoup(data['html'], 'html.parser')

@@ -161,6 +161,7 @@ class ConversionRequest(BaseModel):
     thumbnails: bool = False
     youtube_lang: Optional[str] = "en"
     youtube_prefer_auto: bool = False
+    youtube_timestamps: bool = False
     youtube_max_comments: int = 25
     youtube_comment_sort: str = "top"
     image_preset: str = "balanced"
@@ -568,6 +569,7 @@ def _build_options_and_sources(req: ConversionRequest) -> Tuple[ConversionOption
         thumbnails=req.thumbnails,
         youtube_lang=req.youtube_lang or "en",
         youtube_prefer_auto=req.youtube_prefer_auto,
+        youtube_timestamps=req.youtube_timestamps,
         youtube_max_comments=req.youtube_max_comments,
         youtube_comment_sort=req.youtube_comment_sort,
         image_preset=normalize_image_preset(req.image_preset),

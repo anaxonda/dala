@@ -36,8 +36,8 @@ function normalizeQueueItems(rawQueue, fallbackSavedAt = null) {
 }
 
 function setDownloadBadge(text = "...") {
-    browser.browserAction.setBadgeText({ text });
-    browser.browserAction.setBadgeBackgroundColor({ color: "#FFA500" });
+    chrome.action?.setBadgeText({ text });
+    chrome.action?.setBadgeBackgroundColor({ color: "#FFA500" });
 }
 
 async function setDownloadActive(active) {
@@ -330,8 +330,8 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
                     title: "Preparation Failed",
                     message: e.message
                 });
-                browser.browserAction.setBadgeText({ text: "ERR" });
-                browser.browserAction.setBadgeBackgroundColor({ color: "red" });
+                chrome.action?.setBadgeText({ text: "ERR" });
+                chrome.action?.setBadgeBackgroundColor({ color: "red" });
             });
         return true;
     } else if (message.action === "cancel-download") {
@@ -412,8 +412,8 @@ async function clearSavedDateOptions() {
 }
 
 async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
-    browser.browserAction.setBadgeText({ text: "PREP" });
-    browser.browserAction.setBadgeBackgroundColor({ color: "#FFA500" });
+    chrome.action?.setBadgeText({ text: "PREP" });
+    chrome.action?.setBadgeBackgroundColor({ color: "#FFA500" });
 
     const savedOpts = (await browser.storage.local.get("savedOptions")).savedOptions || {};
     
@@ -434,6 +434,7 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
         ...dateOptionsFromSaved(savedOpts),
         youtube_lang: (savedOpts.youtube_lang || "").trim() || "en",
         youtube_prefer_auto: !!savedOpts.youtube_prefer_auto,
+        youtube_timestamps: !!savedOpts.youtube_timestamps,
         youtube_max_comments: savedOpts.youtube_max_comments || 25,
         youtube_comment_sort: savedOpts.youtube_comment_sort || "top",
         include_cookies: includeCookiesForSavedOptions(savedOpts),
@@ -447,7 +448,6 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
     const page_spec = parsePageSpecInput(options.pages);
     const max_pages = options.max_pages;
     const forceForum = options.forum;
-    const shouldFetchAssets = forceForum || sourceItems.some(item => isLikelyForumUrl(item.url));
     if (forceForum && !options.include_cookies) {
         console.log("Forum mode enabled: using browser cookies automatically.");
     }
@@ -493,7 +493,7 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
             }
         }
         
-        const is_forum = forceForum || isLikelyForumUrl(url) || isLikelyForumHtml(html);
+        const is_forum = shouldCaptureForum(url, forceForum, html);
         const include_cookies = options.include_cookies || is_forum;
         if (is_forum && !forceForum) {
             console.log(`Forum auto-detected for ${url}`);
@@ -547,12 +547,13 @@ async function preparePayloadFromBackground(urls, bundleTitle, isBundle) {
         include_undated: options.include_undated,
         youtube_lang: options.youtube_lang,
         youtube_prefer_auto: options.youtube_prefer_auto,
+        youtube_timestamps: options.youtube_timestamps,
         youtube_max_comments: options.youtube_max_comments,
         youtube_comment_sort: options.youtube_comment_sort,
         max_pages: max_pages,
         page_spec: page_spec && page_spec.length ? page_spec : null,
         ...browserFallbackOptionsFromSaved(savedOpts),
-        fetch_assets: shouldFetchAssets,
+        fetch_assets: sources.some(source => source.is_forum),
         server_save_dir: (savedOpts.server_save_dir || savedOpts.termux_copy_dir || "").trim() || null,
         archive_server: !!savedOpts.archive_server,
         termux_copy_dir: (savedOpts.termux_copy_dir || "").trim() || null,
@@ -830,7 +831,7 @@ async function downloadFromShortcut(url, html, tabId = null) {
     const opts = optsRes.savedOptions || {};
     const page_spec = parsePageSpecInput(opts.pages);
     const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
-    const is_forum = !!opts.forum || isLikelyForumUrl(url) || isLikelyForumHtml(html);
+    const is_forum = shouldCaptureForum(url, !!opts.forum, html);
     const server_save_dir = (opts.server_save_dir || opts.termux_copy_dir || "").trim() || null;
     
     const include_cookies = includeCookiesForSavedOptions(opts) || is_forum;
@@ -862,6 +863,7 @@ async function downloadFromShortcut(url, html, tabId = null) {
         ...dateOptionsFromSaved(opts),
         youtube_lang: (opts.youtube_lang || "").trim() || "en",
         youtube_prefer_auto: !!opts.youtube_prefer_auto,
+        youtube_timestamps: !!opts.youtube_timestamps,
         youtube_max_comments: opts.youtube_max_comments || 25,
         youtube_comment_sort: opts.youtube_comment_sort || "top",
         max_pages,
@@ -920,7 +922,7 @@ async function downloadSingleFromContext(url, tabId = null) {
     const opts = optsRes.savedOptions || {};
     const page_spec = parsePageSpecInput(opts.pages);
     const max_pages = opts.max_pages ? parseInt(opts.max_pages, 10) || null : null;
-    const is_forum = !!opts.forum || isLikelyForumUrl(url);
+    const is_forum = shouldCaptureForum(url, !!opts.forum);
     const server_save_dir = (opts.server_save_dir || opts.termux_copy_dir || "").trim() || null;
     
     const include_cookies = includeCookiesForSavedOptions(opts) || is_forum;
@@ -952,6 +954,7 @@ async function downloadSingleFromContext(url, tabId = null) {
         ...dateOptionsFromSaved(opts),
         youtube_lang: (opts.youtube_lang || "").trim() || "en",
         youtube_prefer_auto: !!opts.youtube_prefer_auto,
+        youtube_timestamps: !!opts.youtube_timestamps,
         youtube_max_comments: opts.youtube_max_comments || 25,
         youtube_comment_sort: opts.youtube_comment_sort || "top",
         max_pages,
@@ -976,8 +979,8 @@ async function updateBadge() {
             return;
         }
         const count = res.urlQueue ? res.urlQueue.length : 0;
-        browser.browserAction.setBadgeText({ text: count > 0 ? count.toString() : "" });
-        browser.browserAction.setBadgeBackgroundColor({ color: "#e85a4f" });
+        chrome.action?.setBadgeText({ text: count > 0 ? count.toString() : "" });
+        chrome.action?.setBadgeBackgroundColor({ color: "#e85a4f" });
     });
 }
 
@@ -1041,10 +1044,6 @@ async function processDownloadWithAssets(payload, isBundle) {
                 }
                 if (res && Array.isArray(res.page_htmls) && res.page_htmls.length) {
                     src.page_htmls = res.page_htmls;
-                    if (!src.html) {
-                        const firstPage = res.page_htmls.find(p => p && p.page === 1);
-                        if (firstPage && firstPage.html) src.html = firstPage.html;
-                    }
                     console.log(`✓ Fetched ${res.page_htmls.length} forum page HTML snapshots in background`);
                 }
             } catch (err) {
@@ -1215,18 +1214,18 @@ async function runServerJob(payload, signal) {
                 .finally(() => { recoveryTask = null; });
         }
         if (job.status === "discovering") {
-            browser.browserAction.setBadgeText({ text: "LOAD" });
+            chrome.action?.setBadgeText({ text: "LOAD" });
             await abortableDelay(1000, signal);
             continue;
         }
         if (job.total_sources) {
-            browser.browserAction.setBadgeText({ text: `${job.processed_sources || 0}/${job.total_sources}` });
+            chrome.action?.setBadgeText({ text: `${job.processed_sources || 0}/${job.total_sources}` });
         }
         if (job.status === "verification_starting") {
-            browser.browserAction.setBadgeText({ text: "OPEN" });
+            chrome.action?.setBadgeText({ text: "OPEN" });
         }
         if (job.status === "verification_required") {
-            browser.browserAction.setBadgeText({ text: "WARM" });
+            chrome.action?.setBadgeText({ text: "WARM" });
             if (job.verification_url && job.verification_url !== openedVerificationUrl) {
                 openedVerificationUrl = job.verification_url;
                 const warmUrl = new URL(job.verification_url, `${serverUrl}/`).toString();
@@ -1242,7 +1241,7 @@ async function runServerJob(payload, signal) {
             continue;
         }
         if (job.status === "user_browser_required") {
-            browser.browserAction.setBadgeText({ text: "TAB" });
+            chrome.action?.setBadgeText({ text: "TAB" });
             const openUrl = job.user_browser_url || job.verification_source_url || job.current_url;
             if (openUrl) {
                 const tabs = await browser.tabs.query({});
@@ -1431,8 +1430,8 @@ async function processDownloadCore(payload, isBundle) {
             setTimeout(() => URL.revokeObjectURL(downloadUrl), 30000);
         }
 
-        browser.browserAction.setBadgeText({ text: "OK" });
-        browser.browserAction.setBadgeBackgroundColor({ color: "green" });
+        chrome.action?.setBadgeText({ text: "OK" });
+        chrome.action?.setBadgeBackgroundColor({ color: "green" });
 
         try {
             const targetTabId = lastShortcutTabId;
@@ -1501,12 +1500,12 @@ async function processDownloadCore(payload, isBundle) {
     } catch (error) {
         await setDownloadActive(false);
         if (error.name === 'AbortError') {
-            browser.browserAction.setBadgeText({ text: "" });
-            browser.browserAction.setBadgeBackgroundColor({ color: "#e85a4f" });
+            chrome.action?.setBadgeText({ text: "" });
+            chrome.action?.setBadgeBackgroundColor({ color: "#e85a4f" });
         } else {
             console.error("Download Failed:", error);
-            browser.browserAction.setBadgeText({ text: "ERR" });
-            browser.browserAction.setBadgeBackgroundColor({ color: "red" });
+            chrome.action?.setBadgeText({ text: "ERR" });
+            chrome.action?.setBadgeBackgroundColor({ color: "red" });
 
             browser.notifications.create({
                 type: "basic",
@@ -1567,30 +1566,21 @@ async function parseHtmlOnServer(html, url) {
     return { assets: [], externals: [], next_page_url: null, next_page_num: null };
 }
 
-function forumPageNumberFromUrl(url) {
-    if (!url) return null;
-    const match = url.match(/page-(\d+)/i) || url.match(/[?&]page=(\d+)/i) || url.match(/\/page\/(\d+)/i);
-    return match ? parseInt(match[1], 10) : null;
-}
-
 async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
     const assets = [];
     const page_htmls = [];
     try {
-        const normBase = threadUrl.replace(/#.*$/, "").replace(/\/page-\d+/i, "").replace(/([?&])page=\d+/i, "$1").replace(/[?&]$/, "");
-        const currentPageMatch = threadUrl.match(/page-(\d+)/i) || threadUrl.match(/[?&]page=(\d+)/i);
-        const currentPage = currentPageMatch ? parseInt(currentPageMatch[1], 10) : 1;
         const hasExplicitPages = page_spec && page_spec.length;
         const pages = hasExplicitPages ? page_spec : [1];
         const uniquePages = Array.from(new Set(pages.filter(p => p && p > 0))).sort((a, b) => a - b);
         const limiter = (arr, n) => arr.slice(0, n || arr.length);
         const pagesToFetch = limiter(uniquePages, max_pages || uniquePages.length);
         const seenPageKeys = new Set();
-        const queue = pagesToFetch.map(page => ({ page, url: buildForumPageUrl(normBase, page) }));
+        const queue = pagesToFetch.map(page => ({ page, url: buildForumPageUrl(threadUrl, page) }));
 
         while (queue.length) {
             const item = queue.shift();
-            const url = item.url || buildForumPageUrl(normBase, item.page);
+            const url = item.url || buildForumPageUrl(threadUrl, item.page);
             const page = item.page || forumPageNumberFromUrl(url) || 1;
             const key = url.replace(/#.*$/, "");
             if (seenPageKeys.has(key)) continue;
@@ -1658,7 +1648,7 @@ async function fetchAssetsForPage(threadUrl, page_spec, max_pages) {
                 if (nextPageUrl && (!max_pages || !resolvedNextNum || resolvedNextNum <= max_pages) && !seenPageKeys.has(nextPageUrl.replace(/#.*$/, ""))) {
                     queue.push({ page: resolvedNextNum || page + 1, url: nextPageUrl });
                 } else if (nextPageNum && (!max_pages || nextPageNum <= max_pages)) {
-                    const fallbackUrl = buildForumPageUrl(normBase, nextPageNum);
+                    const fallbackUrl = buildForumPageUrl(threadUrl, nextPageNum);
                     if (!seenPageKeys.has(fallbackUrl.replace(/#.*$/, ""))) {
                         queue.push({ page: nextPageNum, url: fallbackUrl });
                     }
@@ -1682,17 +1672,6 @@ async function mapWithConcurrency(tasks, limit) {
     });
     await Promise.all(workers);
     return results;
-}
-
-function buildForumPageUrl(base, page) {
-    if (page <= 1) return base;
-    if (base.includes("page-")) {
-        return base.replace(/page-\d+/, `page-${page}`);
-    }
-    if (base.includes("?")) {
-        return `${base}&page=${page}`;
-    }
-    return `${base.replace(/\/?$/, "/")}page-${page}`;
 }
 
 async function fetchWithCookies(url, referer) {

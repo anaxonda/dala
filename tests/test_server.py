@@ -148,6 +148,17 @@ def test_build_options_preserves_source_saved_at():
     assert sources[0].saved_at == "2026-06-25T12:34:56+00:00"
 
 
+def test_build_options_propagates_youtube_timestamps():
+    req = server.ConversionRequest(
+        sources=[server.SourceItem(url="https://youtu.be/abc123")],
+        youtube_timestamps=True,
+    )
+
+    options, _ = server._build_options_and_sources(req)
+
+    assert options.youtube_timestamps is True
+
+
 @pytest.mark.asyncio
 async def test_cleanup_finished_jobs_removes_old_output(tmp_path):
     output = tmp_path / "old.epub"

@@ -1,7 +1,8 @@
 from urllib.parse import urlparse
 from typing import Optional
+from bs4 import BeautifulSoup
 
-from ..models import Source, SiteProfile
+from ..models import Source, SiteProfile, log
 from ..drivers.base import BaseDriver
 from ..drivers.forum import ForumDriver
 from ..drivers.wordpress import WordPressDriver
@@ -24,42 +25,47 @@ class DriverDispatcher:
             if alias == "youtube": return YouTubeDriver()
             if alias == "generic": return GenericDriver()
 
-        url = source.url
-        parsed = urlparse(url)
-        
-        # 1. Explicit Flags
+        parsed = urlparse(source.url)
+        host = parsed.hostname or ""
+        if host == "news.ycombinator.com" and parsed.path.rstrip("/") == "/item":
+            if source.is_forum:
+                log.info(f"Ignoring forum flag for HN source: {source.url}")
+            return HackerNewsDriver()
+        if host in YouTubeDriver.HOSTS:
+            if source.is_forum:
+                log.info(f"Ignoring forum flag for YouTube source: {source.url}")
+            return YouTubeDriver()
+
         if source.is_forum:
             return ForumDriver()
-            
-        # 2. Domain Matching
-        if "news.ycombinator.com" in url:
-            return HackerNewsDriver()
-        if "reddit.com" in parsed.netloc or parsed.netloc.endswith("redd.it"):
+
+        if RedditDriver.is_post_host(host):
             return RedditDriver()
-        if "substack.com" in url or "/p/" in parsed.path:
+        if host == "substack.com" or host.endswith(".substack.com"):
             return SubstackDriver()
-        if "wordpress.com" in url:
+        if host == "wordpress.com" or host.endswith(".wordpress.com"):
             return WordPressDriver()
-        host = (parsed.hostname or parsed.netloc or "").lower()
-        youtube_hosts = {
-            "youtube.com",
-            "www.youtube.com",
-            "m.youtube.com",
-            "music.youtube.com",
-            "youtube-nocookie.com",
-            "www.youtube-nocookie.com",
-            "youtu.be",
-        }
-        if host in youtube_hosts:
-            return YouTubeDriver()
-            
-        # 3. Content Sniffing
-        if source.html:
-            if 'substack:post_id' in source.html:
-                 return SubstackDriver()
-            if 'data-template="thread_view"' in source.html or 'xenforo' in source.html.lower():
-                 return ForumDriver()
-            if 'name="generator" content="WordPress"' in source.html or 'class="comment-list"' in source.html:
-                 return WordPressDriver()
-                 
-        return GenericDriver()
+
+        driver_type = DriverDispatcher.detect_html_driver(source.html)
+        return driver_type() if driver_type else GenericDriver()
+
+    @staticmethod
+    def detect_html_driver(raw_html: Optional[str]) -> Optional[type[BaseDriver]]:
+        if not raw_html:
+            return None
+        lower_html = raw_html.lower()
+        if not any(marker in lower_html for marker in (
+            "substack:post_id", "window._preloads", "thread_view", "message--post", "messagecontent",
+            "wordpress", "comment-list", "commentlist",
+        )):
+            return None
+        soup = BeautifulSoup(raw_html, "lxml")
+        if soup.select_one('meta[name="substack:post_id"], meta[property="substack:post_id"]'):
+            return SubstackDriver
+        if "window._preloads" in lower_html and SubstackDriver()._extract_all_metadata(soup, raw_html)[0]:
+            return SubstackDriver
+        if soup.select_one('[data-template="thread_view"], article.message--post, li.message .messageContent'):
+            return ForumDriver
+        if soup.select_one('meta[name="generator" i][content^="WordPress" i], ol.comment-list, ul.comment-list, .commentlist'):
+            return WordPressDriver
+        return None

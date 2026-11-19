@@ -325,7 +325,9 @@ def _remove_publisher_widget_boilerplate(soup: BeautifulSoup) -> None:
             continue
         if PUBLISHER_WIDGET_HEADING_RE.match(text):
             _remove_boilerplate_block(tag)
-        elif PUBLISHER_WIDGET_SHORT_TEXT_RE.match(text):
+        elif PUBLISHER_WIDGET_SHORT_TEXT_RE.match(text) and not (
+            "youtube-timestamp" in (tag.get("class") or []) or tag.select_one("a.youtube-timestamp")
+        ):
             tag.decompose()
 
     for marker in list(soup.find_all(string=lambda value: isinstance(value, str) and "This audio was generated" in value)):

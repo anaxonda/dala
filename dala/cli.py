@@ -408,6 +408,7 @@ def parse_args():
     parser.add_argument("--compact-comments", action="store_true", help="Use compact comment layout")
     parser.add_argument("--yt-lang", default="en", help="Languages for YouTube transcripts (comma-separated, default: en)")
     parser.add_argument("--yt-auto", action="store_true", help="Prefer auto-generated YouTube captions")
+    parser.add_argument("--yt-timestamps", action="store_true", help="Link the transcript to the first caption in each video minute")
     parser.add_argument("--thumbnails", action="store_true", help="Embed periodic thumbnails (YouTube only)")
     parser.add_argument("--yt-max-comments", type=int, default=25, help="Max YouTube comments to fetch")
     parser.add_argument("--yt-sort", choices=["top", "new"], default="top", help="YouTube comment sort order")
@@ -576,6 +577,7 @@ async def async_main():
         translation_cache=not args.no_translation_cache,
         youtube_lang=args.yt_lang,
         youtube_prefer_auto=args.yt_auto,
+        youtube_timestamps=args.yt_timestamps,
         thumbnails=args.thumbnails,
         youtube_max_comments=args.yt_max_comments,
         youtube_comment_sort=args.yt_sort,

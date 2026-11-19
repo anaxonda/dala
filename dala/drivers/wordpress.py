@@ -67,23 +67,24 @@ class WordPressDriver(BaseDriver):
         article = body_soup.select_one("article, .hentry, .post, [id^='post-']")
         return article or body_soup
 
-    async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
+    async def prepare_book_data(self, context: ConversionContext, source: Source, *, article_data=None) -> Optional[BookData]:
         session = context.session
         options = context.options
         url = source.url
         log.info(f"WordPress Driver processing: {url}")
 
-        browser_options = ArticleExtractor.browser_options_from_conversion_options(options)
-        data = await ArticleExtractor.get_article_content(
-            session,
-            url,
-            force_archive=options.archive,
-            raw_html=source.html,
-            profile=context.profile,
-            browser_options=browser_options,
-            include_pdf_images=not options.no_images,
-            pdf_image_options=options,
-        )
+        data = article_data
+        if data is None:
+            data = await ArticleExtractor.get_article_content(
+                session,
+                url,
+                force_archive=options.archive,
+                raw_html=source.html,
+                profile=context.profile,
+                browser_options=ArticleExtractor.browser_options_from_conversion_options(options),
+                include_pdf_images=not options.no_images,
+                pdf_image_options=options,
+            )
         if not data['success']:
             log.error(f"Failed to fetch content: {url}")
             return None

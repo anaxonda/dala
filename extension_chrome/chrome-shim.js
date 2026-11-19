@@ -66,14 +66,6 @@ if (!globalThis.browser) {
         };
     }
 
-    // action (was browserAction)
-    if (chrome.action) {
-        browser.browserAction = {
-            setBadgeText: (details) => chrome.action.setBadgeText(details),
-            setBadgeBackgroundColor: (details) => chrome.action.setBadgeBackgroundColor(details)
-        };
-    }
-
     // menus (was contextMenus or menus)
     if (chrome.contextMenus) {
         browser.menus = {

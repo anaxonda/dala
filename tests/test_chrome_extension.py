@@ -53,7 +53,7 @@ def test_forum_mode_forces_cookie_backed_extension_enrichment():
 
     for source in (chrome_bg, firefox_bg):
         assert "const include_cookies = options.include_cookies || is_forum;" in source
-        assert "const shouldFetchAssets = forceForum || sourceItems.some(item => isLikelyForumUrl(item.url));" in source
+        assert "fetch_assets: sources.some(source => source.is_forum)" in source
         assert "function includeCookiesForSavedOptions(opts)" in source
         assert "return isLocalServerUrl(saved.server_url);" in source
         assert "const include_cookies = includeCookiesForSavedOptions(opts) || is_forum;" in source
@@ -138,6 +138,18 @@ def test_extension_payload_preserves_hn_comments_option():
         assert "hn_comments: !!opts.hn_comments" in source
 
 
+def test_extensions_send_the_saved_youtube_timestamps_option():
+    root = Path(__file__).resolve().parents[1]
+    for name in ("extension_chrome", "firefox_extension"):
+        extension = root / name
+        assert 'id="yt-timestamps"' in (extension / "options.html").read_text()
+        assert "youtube_timestamps: ytTimestampsBox.checked" in (extension / "options.js").read_text()
+        background = (extension / "background.js").read_text()
+        assert "youtube_timestamps: !!savedOpts.youtube_timestamps" in background
+        assert "youtube_timestamps: options.youtube_timestamps" in background
+        assert background.count("youtube_timestamps: !!opts.youtube_timestamps") == 2
+
+
 def _skip_if_playwright_unavailable(exc: Exception):
     message = str(exc)
     if "playwright" in message.lower() or "executable doesn't exist" in message.lower():
@@ -184,6 +196,29 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                         await menusApi.update(id, {enabled: true});
                     }
                 }""")
+
+                options_page = await context.new_page()
+                await options_page.goto(f"chrome-extension://{extension_id}/options.html")
+                await options_page.wait_for_function("document.querySelector('#opt-server-url').value.length > 0")
+                assert not await options_page.locator("#yt-timestamps").is_checked()
+                await options_page.check("#yt-timestamps")
+                await options_page.wait_for_function("""async () =>
+                    (await browser.storage.local.get('savedOptions')).savedOptions?.youtube_timestamps === true
+                """)
+                payload = await service_worker.evaluate("""async () => {
+                    const {savedOptions} = await browser.storage.local.get('savedOptions');
+                    await browser.storage.local.set({savedOptions: {...savedOptions, forum: true}});
+                    try {
+                        return await preparePayloadFromBackground(
+                            ['https://www.youtube.com/shorts/abc123'], '', false);
+                    } finally {
+                        await browser.storage.local.set({savedOptions});
+                    }
+                }""")
+                assert payload["youtube_timestamps"]
+                assert not payload["sources"][0]["is_forum"]
+                assert not payload["fetch_assets"]
+                await options_page.close()
 
                 page = await context.new_page()
                 await page.goto("http://example.com/test-article")

@@ -1,6 +1,6 @@
 import html
 import re
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse
 from bs4 import BeautifulSoup
 from ebooklib import epub
 from pygments.formatters import HtmlFormatter
@@ -17,10 +17,24 @@ from ..utils.llm import LLMHelper
 from ..utils.formatting import _enrich_comment_tree, format_comment_html
 
 class RedditDriver(BaseDriver):
+    @staticmethod
+    def is_post_host(host: str) -> bool:
+        return host in {"reddit.com", "redd.it"} or host.endswith(".reddit.com")
+
     async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
         session = context.session
         options = context.options
-        api_url = self._build_api_url(source.url)
+        post_url = source.url
+        if re.fullmatch(r"/(?:(?:r|user)/[^/]+/)?s/[^/]+/?", urlparse(post_url).path):
+            headers, post_url = await fetch_with_retry(session, post_url, "headers")
+            parsed = urlparse(post_url)
+            if headers is None or not self.is_post_host(parsed.hostname or "") or not re.match(
+                r"/(?:(?:r|user)/[^/]+/)?comments/[^/]+", parsed.path
+            ):
+                log.error(f"Could not resolve Reddit share link: {source.url}")
+                return None
+
+        api_url = self._build_api_url(post_url)
         log.info(f"Reddit Driver processing: {api_url}")
 
         payload, final_url = await fetch_with_retry(session, api_url, 'json')
@@ -79,7 +93,7 @@ class RedditDriver(BaseDriver):
                 context_html = f"<p><strong>Reddit Link:</strong> <a href=\"{source.url}\">{source.url}</a></p>"
                 meta_html = ArticleExtractor.build_meta_block(link_url, {"author": None, "date": None, "sitename": urlparse(link_url).netloc}, context=context_html)
                 article_html = f"{meta_html}<hr/>{article_html}"
-            elif link_url and not link_url.startswith(("https://www.reddit.com", "https://old.reddit.com", "https://redd.it")):
+            elif link_url and not self.is_post_host(urlparse(link_url).hostname or ""):
                 browser_options = ArticleExtractor.browser_options_from_conversion_options(options)
                 art_data = await ArticleExtractor.get_article_content(
                     session,
@@ -167,13 +181,16 @@ class RedditDriver(BaseDriver):
         return BookData(title=title, author=author, uid=f"urn:reddit:{post_id}", language='en', description=desc, source_url=source.url, chapters=chapters, images=assets, toc_structure=toc_links)
 
     def _build_api_url(self, url: str) -> str:
-        cleaned = url.rstrip('/')
-        if cleaned.endswith(".json"):
-            if "raw_json=1" in cleaned: return cleaned
-            joiner = "&" if "?" in cleaned else "?"
-            return f"{cleaned}{joiner}raw_json=1"
-        joiner = "&" if "?" in cleaned else "?"
-        return f"{cleaned}.json{joiner}raw_json=1"
+        parsed = urlparse(url)
+        path = parsed.path.rstrip("/")
+        if parsed.hostname == "redd.it":
+            parsed = parsed._replace(scheme="https", netloc="www.reddit.com")
+            path = f"/comments{path}"
+        elif re.fullmatch(r"/gallery/[^/]+", path):
+            path = path.replace("/gallery/", "/comments/", 1)
+        params = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key != "raw_json"]
+        params.append(("raw_json", "1"))
+        return parsed._replace(path=path.removesuffix(".json") + ".json", query=urlencode(params), fragment="").geturl()
 
     def _normalize_comments(self, children, max_depth, depth=0):
         if not children: return []

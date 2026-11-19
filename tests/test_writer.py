@@ -46,6 +46,22 @@ def test_article_html_wrapper_escapes_title_and_language():
     assert "Body" in soup.get_text(" ", strip=True)
 
 
+def test_epub_export_preserves_zero_timestamp_but_removes_player_boilerplate(tmp_path):
+    chapter = make_chapter(
+        content_html='<div class="transcript-body"><p>0:00</p>'
+                     '<p><a class="youtube-timestamp" href="https://www.youtube.com/watch?v=abc123&amp;t=0s">0:00</a></p>'
+                     '<p>First caption.</p></div>',
+    )
+    book = prepare_book_for_output(make_book(chapters=[chapter]))
+    output = tmp_path / "transcript.epub"
+    EpubWriter.write(book, str(output))
+
+    with zipfile.ZipFile(output) as archive:
+        transcript = BeautifulSoup(archive.read(f"EPUB/{chapter.filename}"), "html.parser")
+    assert transcript.get_text().count("0:00") == 1
+    assert transcript.select_one("a.youtube-timestamp")["href"] == "https://www.youtube.com/watch?v=abc123&t=0s"
+
+
 def test_pdf_html_uses_temp_file_image_refs(tmp_path):
     book = BookData(
         title="PDF Test",

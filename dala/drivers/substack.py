@@ -20,35 +20,37 @@ from ..utils.llm import LLMHelper
 from ..utils.formatting import _enrich_comment_tree, format_comment_html
 
 class SubstackDriver(BaseDriver):
-    async def prepare_book_data(self, context: ConversionContext, source: Source) -> Optional[BookData]:
+    async def prepare_book_data(self, context: ConversionContext, source: Source, *, article_data=None) -> Optional[BookData]:
         session = context.session
         options = context.options
         url = source.url
         log.info(f"Substack Driver processing: {url}")
 
-        browser_options = ArticleExtractor.browser_options_from_conversion_options(options)
-        data = await ArticleExtractor.get_article_content(
-            session,
-            url,
-            force_archive=options.archive,
-            raw_html=source.html,
-            profile=context.profile,
-            browser_options=browser_options,
-            include_pdf_images=not options.no_images,
-            pdf_image_options=options,
-        )
+        data = article_data
+        if data is None:
+            data = await ArticleExtractor.get_article_content(
+                session,
+                url,
+                force_archive=options.archive,
+                raw_html=source.html,
+                profile=context.profile,
+                browser_options=ArticleExtractor.browser_options_from_conversion_options(options),
+                include_pdf_images=not options.no_images,
+                pdf_image_options=options,
+            )
         if not data['success']:
             log.error(f"Failed to fetch Substack content: {url}")
             return None
 
         raw_html = data.get('raw_html_for_metadata') or data.get('html', '')
         soup = BeautifulSoup(data['html'], 'html.parser')
-        post_id, pub_id, subdomain = self._extract_all_metadata(soup, raw_html)
+        post_id, pub_id, subdomain = self._extract_all_metadata(BeautifulSoup(raw_html, 'html.parser'), raw_html)
+        resolved_url = data.get('source_url') or url
+        primary_domain = self._extract_base_url(resolved_url)
 
         if not post_id:
             log.info("Metadata extraction incomplete. Trying API slug lookup...")
-            base_url = self._extract_base_url(url)
-            api_post, api_pub, api_sub = await self._fetch_ids_from_slug(url, base_url, session)
+            api_post, api_pub, api_sub = await self._fetch_ids_from_slug(resolved_url, primary_domain, session)
             if api_post: post_id = api_post
             if api_pub: pub_id = api_pub
             if api_sub and not subdomain: subdomain = api_sub
@@ -82,10 +84,9 @@ class SubstackDriver(BaseDriver):
 
         comments_html = ""
         if post_id and not options.no_comments:
-            primary_domain = self._extract_base_url(url)
             raw_comments = await self._fetch_comments(primary_domain, post_id, pub_id, session)
 
-            if (not raw_comments) and subdomain and subdomain not in primary_domain:
+            if not raw_comments and subdomain and urlparse(primary_domain).hostname != f"{subdomain}.substack.com":
                 fallback_domain = f"https://{subdomain}.substack.com"
                 log.info(f"Primary API empty. Retrying on native domain: {fallback_domain}")
                 raw_comments = await self._fetch_comments(fallback_domain, post_id, pub_id, session, force_referer=fallback_domain)
@@ -135,29 +136,26 @@ class SubstackDriver(BaseDriver):
             pattern = r'window\._preloads\s*=\s*JSON\.parse\((["\'].*?["\'])\)'
             match = re.search(pattern, html, re.DOTALL)
             if match:
-                import json
                 inner = json.loads(match.group(1))
                 data = json.loads(inner)
-                if 'post' in data: post_id = str(data['post'].get('id'))
-                if 'pub' in data:
-                    pub_id = str(data['pub'].get('id'))
-                    subdomain = data['pub'].get('subdomain')
-                elif 'publication' in data:
-                    pub_id = str(data['publication'].get('id'))
-                    subdomain = data['publication'].get('subdomain')
+                post = data.get('post') or {}
+                publication = data.get('pub') or data.get('publication') or {}
+                post_id = str(post.get('id') or '') or None
+                pub_id = str(publication.get('id') or '') or None
+                subdomain = publication.get('subdomain')
         except Exception: pass
         if not post_id:
-            m = soup.find("meta", attrs={"name": "substack:post_id"})
+            m = soup.select_one('meta[name="substack:post_id"], meta[property="substack:post_id"]')
             if m: post_id = m.get("content")
         if not pub_id:
-            m = soup.find("meta", attrs={"name": "substack:publication_id"})
+            m = soup.select_one('meta[name="substack:publication_id"], meta[property="substack:publication_id"]')
             if m: pub_id = m.get("content")
         if not subdomain:
              og = soup.find("meta", attrs={"property": "og:url"})
-             if og and "substack.com" in str(og.get("content")):
-                 p = urlparse(og.get("content"))
-                 parts = p.netloc.split('.')
-                 if len(parts) >= 3: subdomain = parts[0]
+             if og:
+                 host = urlparse(og.get("content") or "").hostname or ""
+                 if host.endswith(".substack.com"):
+                     subdomain = host.removesuffix(".substack.com")
         return post_id, pub_id, subdomain
 
     async def _fetch_ids_from_slug(self, url, base_url, session) -> Tuple[Optional[str], Optional[str], Optional[str]]:
@@ -169,8 +167,12 @@ class SubstackDriver(BaseDriver):
         try:
             data, _ = await fetch_with_retry(session, api_url, 'json')
             if data:
-                pub_data = data.get('publication', {})
-                return str(data.get('id')), str(data.get('publication_id')), pub_data.get('subdomain')
+                pub_data = data.get('publication') or {}
+                return (
+                    str(data.get('id') or '') or None,
+                    str(data.get('publication_id') or pub_data.get('id') or '') or None,
+                    pub_data.get('subdomain'),
+                )
         except Exception: pass
         return None, None, None
 
