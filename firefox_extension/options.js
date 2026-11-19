@@ -31,19 +31,22 @@ const DEFAULT_QUEUE = "ctrl+shift+q";
 const DEFAULT_SERVER_URL = "http://127.0.0.1:8000";
 const FALLBACK_LLM_MODELS = {
   gemini: [
-    {id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite (fast)"},
-    {id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite"},
-    {id: "gemini-2.5-flash", label: "Gemini 2.5 Flash"}
+    {id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite"},
+    {id: "gemini-4-hydrogen", label: "Gemini 4 Hydrogen"},
+    {id: "gemini-4-neon", label: "Gemini 4 Neon"},
+    {id: "gemini-3.8-flash", label: "Gemini 3.8 Flash"},
   ],
   openrouter: [
-    {id: "deepseek/deepseek-v4-flash", label: "DeepSeek V4 Flash (cheap)"},
-    {id: "deepseek/deepseek-v4-pro", label: "DeepSeek V4 Pro"},
-    {id: "minimax/minimax-m3", label: "MiniMax M3"},
-    {id: "x-ai/grok-4.3", label: "Grok 4.3"}
+    {id: "deepseek/deepseek-v4-flash-0731", label: "DeepSeek V4 Flash 0731"},
+    {id: "google/gemini-4-hydrogen", label: "Gemini 4 Hydrogen"},
+    {id: "google/gemini-4-neon", label: "Gemini 4 Neon"},
+    {id: "openai/gpt-6-luna", label: "GPT-6 Luna"},
   ],
   openai: [
-    {id: "gpt-4o-mini", label: "GPT-4o mini"}
-  ]
+    {id: "gpt-6-luna", label: "GPT-6 Luna"},
+    {id: "gpt-6.2-sol", label: "GPT-6.2 Sol"},
+    {id: "gpt-6.2-astra", label: "GPT-6.2 Astra"},
+  ],
 };
 let translationStatus = null;
 
@@ -185,25 +188,28 @@ async function saveSettings() {
   });
 }
 
-function modelListForProvider(provider) {
-  const effectiveProvider = provider === "auto"
-    ? (translationStatus?.recommended_provider || "gemini")
-    : provider;
-  return (translationStatus?.models && translationStatus.models[effectiveProvider])
-    || FALLBACK_LLM_MODELS[effectiveProvider]
-    || [];
+function autoProvider() {
+  const key = llmApiKeyInput.value.trim();
+  if (key.startsWith("AIza")) return "gemini";
+  if (key.startsWith("sk-or-")) return "openrouter";
+  if (key.startsWith("sk-")) return "openai";
+  if (key) return "openrouter";
+  return translationStatus?.recommended_provider;
 }
 
 function syncLlmModelOptions() {
   if (!llmModelPresetSelect) return;
   const savedModel = (llmModelInput.value || "").trim();
   const provider = llmProviderSelect.value || "auto";
-  const models = modelListForProvider(provider);
-  const recommended = provider === "auto" ? (translationStatus?.recommended_model || "") : "";
+  const effectiveProvider = provider === "auto" ? autoProvider() : provider;
+  const listProvider = effectiveProvider || "gemini";
+  const models = translationStatus?.models?.[listProvider] || FALLBACK_LLM_MODELS[listProvider];
+  const defaultModel = translationStatus?.default_models?.[effectiveProvider]
+    || (effectiveProvider === translationStatus?.recommended_provider ? translationStatus?.recommended_model : "");
   llmModelPresetSelect.textContent = "";
   const defaultOption = document.createElement("option");
   defaultOption.value = "";
-  defaultOption.textContent = recommended ? `Recommended (${recommended})` : "Server default";
+  defaultOption.textContent = defaultModel ? `Provider default (${defaultModel})` : "Provider default";
   llmModelPresetSelect.appendChild(defaultOption);
   for (const model of models) {
     const opt = document.createElement("option");
@@ -227,7 +233,8 @@ function syncLlmModelOptions() {
   if (llmModelStatus) {
     const keys = translationStatus?.keys || {};
     const available = Object.entries(keys).filter(([, value]) => value).map(([key]) => key).join(", ");
-    llmModelStatus.textContent = available ? `Server keys available: ${available}` : "No server LLM keys detected.";
+    llmModelStatus.textContent = !translationStatus ? "Server model settings unavailable."
+      : available ? `Server keys available: ${available}` : "No server LLM keys detected.";
   }
 }
 
@@ -235,7 +242,7 @@ async function refreshTranslationStatus() {
   try {
     const serverUrl = normalizeServerUrl(serverUrlInput.value);
     const response = await fetch(`${serverUrl}/helper/translation/status`, {signal: AbortSignal.timeout(1500)});
-    if (response.ok) translationStatus = await response.json();
+    translationStatus = response.ok ? await response.json() : null;
   } catch (_) {
     translationStatus = null;
   }
@@ -351,11 +358,16 @@ llmProviderSelect.addEventListener("change", () => {
   saveSettings();
 });
 llmModelPresetSelect.addEventListener("change", () => {
-  syncLlmModelOptions();
+  const custom = llmModelPresetSelect.value === "__custom__";
+  llmModelInput.value = custom ? "" : llmModelPresetSelect.value;
+  llmCustomModelRow.style.display = custom ? "" : "none";
   saveSettings();
 });
 llmModelInput.addEventListener("change", saveSettings);
-llmApiKeyInput.addEventListener("change", saveSettings);
+llmApiKeyInput.addEventListener("change", () => {
+  syncLlmModelOptions();
+  saveSettings();
+});
 ytLangInput.addEventListener("change", saveSettings);
 ytAutoBox.addEventListener("change", saveSettings);
 ytTimestampsBox.addEventListener("change", saveSettings);

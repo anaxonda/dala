@@ -1,9 +1,11 @@
 import pytest
+from aioresponses import aioresponses
 from bs4 import BeautifulSoup
+from yarl import URL
 
 from dala.core.translation import TranslationCache, TranslationError, TranslationProcessor, normalize_translation_display
 from dala.models import BookData, Chapter, ConversionOptions
-from dala.utils.llm import LLMHelper
+from dala.utils.llm import LLMHelper, infer_llm_provider
 
 
 def make_translation_book():
@@ -613,6 +615,48 @@ async def test_llm_summary_forwards_provider(monkeypatch):
         "model": "gemini-3.1-flash-lite",
         "provider": "gemini",
     }
+
+
+@pytest.mark.parametrize(("model", "provider", "keys", "expected"), [
+    (None, "auto", (True, True, True), "gemini"),
+    (None, "auto", (False, True, True), "openrouter"),
+    (None, "auto", (False, False, True), "openai"),
+    ("gpt-6-luna", "auto", (True, True, True), "openai"),
+    ("google/gemini-4-hydrogen", "auto", (True, True, True), "openrouter"),
+    ("google/gemini-4-hydrogen", "auto", (True, False, True), "openrouter"),
+    ("gpt-6-luna", "openrouter", (True, True, True), "openrouter"),
+])
+def test_llm_provider_resolution(model, provider, keys, expected):
+    assert infer_llm_provider(model, provider, *keys) == expected
+
+
+@pytest.mark.asyncio
+async def test_llm_openai_override_and_gpt6_translation_payload(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "server-gemini")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "server-openrouter")
+    monkeypatch.setenv("LLM_MODEL", "google/gemini-4-hydrogen")
+    endpoint = URL("https://api.openai.com/v1/chat/completions")
+    with aioresponses() as mock:
+        mock.post(endpoint, payload={"choices": [{"message": {"content": "Hola"}}]})
+        assert await LLMHelper._call_llm(
+            "Translate", None, "sk-test-openai", provider="auto",
+            request_options={"chat_payload": {"temperature": 0, "max_tokens": 8192}},
+        ) == "Hola"
+        request = mock.requests[("POST", endpoint)][0].kwargs
+        assert request["headers"]["Authorization"] == "Bearer sk-test-openai"
+        assert request["json"]["model"] == "gpt-6-luna"
+        assert request["json"]["max_completion_tokens"] == 8192
+        assert request["json"]["reasoning_effort"] == "none"
+        assert "temperature" not in request["json"]
+        assert "max_tokens" not in request["json"]
+
+
+@pytest.mark.asyncio
+async def test_llm_does_not_send_a_known_key_to_the_wrong_provider(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "server-openrouter")
+    with aioresponses() as mock:
+        assert await LLMHelper._call_llm("Translate", None, "sk-test-openai", provider="openrouter") is None
+        assert not mock.requests
 
 
 @pytest.mark.asyncio

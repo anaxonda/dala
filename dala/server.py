@@ -56,7 +56,7 @@ from dala.core.writer import (
     write_output_book,
 )
 from dala.core.translation import TranslationCache, TranslationError, TranslationProcessor
-from dala.utils.llm import DEFAULT_GEMINI_MODEL, DEFAULT_OPENAI_MODEL, DEFAULT_OPENROUTER_MODEL
+from dala.utils.llm import DEFAULT_LLM_MODELS, LLM_MODEL_PRESETS, infer_llm_provider
 from dala.core.image_budget import assert_image_budget
 from dala.core.discovery import DiscoveryError, discover_posts_for_sources
 from dala.core.browser import (
@@ -1255,40 +1255,16 @@ async def translation_status():
         "openrouter": bool(os.getenv("OPENROUTER_API_KEY")),
         "openai": bool(os.getenv("OPENAI_API_KEY")),
     }
-    models = {
-        "gemini": [
-            {"id": DEFAULT_GEMINI_MODEL, "label": "Gemini 3.1 Flash Lite (fast)"},
-            {"id": "gemini-2.5-flash-lite", "label": "Gemini 2.5 Flash Lite"},
-            {"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash"},
-            {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash"},
-        ],
-        "openrouter": [
-            {"id": DEFAULT_OPENROUTER_MODEL, "label": "DeepSeek V4 Flash (cheap)"},
-            {"id": "deepseek/deepseek-v4-pro", "label": "DeepSeek V4 Pro"},
-            {"id": "minimax/minimax-m3", "label": "MiniMax M3"},
-            {"id": "x-ai/grok-4.3", "label": "Grok 4.3"},
-        ],
-        "openai": [
-            {"id": DEFAULT_OPENAI_MODEL, "label": "GPT-4o mini"},
-        ],
-    }
-    if keys["gemini"]:
-        recommended_provider = "gemini"
-        recommended_model = DEFAULT_GEMINI_MODEL
-    elif keys["openrouter"]:
-        recommended_provider = "openrouter"
-        recommended_model = DEFAULT_OPENROUTER_MODEL
-    elif keys["openai"]:
-        recommended_provider = "openai"
-        recommended_model = DEFAULT_OPENAI_MODEL
-    else:
-        recommended_provider = None
-        recommended_model = None
+    recommended_provider = infer_llm_provider(None, "auto", keys["gemini"], keys["openrouter"], keys["openai"])
     return {
         "keys": keys,
-        "models": models,
-        "recommended_provider": recommended_provider,
-        "recommended_model": recommended_model,
+        "models": {
+            provider: [{"id": model_id, "label": label} for model_id, label in presets]
+            for provider, presets in LLM_MODEL_PRESETS.items()
+        },
+        "default_models": DEFAULT_LLM_MODELS,
+        "recommended_provider": None if recommended_provider == "auto" else recommended_provider,
+        "recommended_model": DEFAULT_LLM_MODELS.get(recommended_provider),
         "server_default_provider": os.getenv("LLM_PROVIDER"),
         "server_default_model": os.getenv("LLM_MODEL"),
     }

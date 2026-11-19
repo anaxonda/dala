@@ -4,23 +4,26 @@ import asyncio
 from typing import Any, Dict, Optional
 from ..models import log
 
-DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
-DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v4-flash"
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
-
-OPENROUTER_MODEL_PREFIXES = (
-    "anthropic/",
-    "deepseek/",
-    "google/",
-    "meta-llama/",
-    "mistralai/",
-    "minimax/",
-    "moonshotai/",
-    "openai/",
-    "qwen/",
-    "x-ai/",
-    "z-ai/",
-)
+LLM_MODEL_PRESETS = {
+    "gemini": (
+        ("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"),
+        ("gemini-4-hydrogen", "Gemini 4 Hydrogen"),
+        ("gemini-4-neon", "Gemini 4 Neon"),
+        ("gemini-3.8-flash", "Gemini 3.8 Flash"),
+    ),
+    "openrouter": (
+        ("deepseek/deepseek-v4-flash-0731", "DeepSeek V4 Flash 0731"),
+        ("google/gemini-4-hydrogen", "Gemini 4 Hydrogen"),
+        ("google/gemini-4-neon", "Gemini 4 Neon"),
+        ("openai/gpt-6-luna", "GPT-6 Luna"),
+    ),
+    "openai": (
+        ("gpt-6-luna", "GPT-6 Luna"),
+        ("gpt-6.2-sol", "GPT-6.2 Sol"),
+        ("gpt-6.2-astra", "GPT-6.2 Astra"),
+    ),
+}
+DEFAULT_LLM_MODELS = {provider: presets[0][0] for provider, presets in LLM_MODEL_PRESETS.items()}
 
 
 def normalize_llm_provider(provider: Optional[str]) -> str:
@@ -35,11 +38,12 @@ def infer_llm_provider(model: Optional[str], provider: Optional[str], has_gemini
     model_id = (model or "").strip().lower()
     if model_id.startswith("gemini-"):
         return "gemini"
-    if "/" in model_id or model_id.startswith(OPENROUTER_MODEL_PREFIXES):
-        if has_openrouter:
-            return "openrouter"
-        if model_id.startswith("openai/") and has_openai:
+    if "/" in model_id:
+        if model_id.startswith("openai/") and has_openai and not has_openrouter:
             return "openai"
+        return "openrouter"
+    if model_id.startswith(("gpt-", "chatgpt-")):
+        return "openai"
     if has_gemini:
         return "gemini"
     if has_openrouter:
@@ -47,6 +51,17 @@ def infer_llm_provider(model: Optional[str], provider: Optional[str], has_gemini
     if has_openai:
         return "openai"
     return "auto"
+
+
+def api_key_provider(api_key: str) -> Optional[str]:
+    if api_key.startswith("AIza"):
+        return "gemini"
+    if api_key.startswith("sk-or-"):
+        return "openrouter"
+    if api_key.startswith("sk-"):
+        return "openai"
+    return None
+
 
 class LLMHelper:
     @staticmethod
@@ -57,55 +72,43 @@ class LLMHelper:
         provider: Optional[str] = None,
         request_options: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
-        gemini_key = api_key or os.getenv("GEMINI_API_KEY")
-        openrouter_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        openai_key = api_key or os.getenv("OPENAI_API_KEY")
-
-        # Heuristic to detect key type if passed generically
-        passed_key_is_gemini = api_key and ("AIza" in api_key)
-        
-        if api_key:
-            if passed_key_is_gemini:
-                gemini_key = api_key
-                openrouter_key = None
-                openai_key = None
-            else:
-                gemini_key = None
-                openrouter_key = api_key 
-                openai_key = api_key
-
-        if not (gemini_key or openrouter_key or openai_key):
-            log.warning("No API keys found. Skipping LLM task.")
-            return None
-
-        # Determine Model. Legacy callers that do not pass a provider keep using LLM_MODEL.
-        # Translation callers pass provider="auto" so server .env model defaults do not
-        # accidentally force an OpenRouter model when Gemini is available.
+        # Requests that supply a provider (including Auto) use its model default.
         model = model or (os.getenv("LLM_MODEL") if provider is None else None)
-        selected_provider = infer_llm_provider(model, provider or os.getenv("LLM_PROVIDER"), bool(gemini_key), bool(openrouter_key), bool(openai_key))
+        model = (model or "").strip()
+        api_key = (api_key or "").strip()
+        requested_provider = provider or os.getenv("LLM_PROVIDER")
+        keys = {name: os.getenv(f"{name.upper()}_API_KEY") for name in DEFAULT_LLM_MODELS}
+        if api_key:
+            override = api_key_provider(api_key) or infer_llm_provider(model, requested_provider, False, False, False)
+            keys = {"openrouter" if override == "auto" else override: api_key}
+        selected_provider = infer_llm_provider(
+            model, requested_provider, bool(keys.get("gemini")), bool(keys.get("openrouter")), bool(keys.get("openai")),
+        )
+        active_key = keys.get(selected_provider)
+        if not active_key:
+            log.warning("No matching API key for LLM provider %s. Skipping LLM task.", selected_provider)
+            return None
+        target_model = model or DEFAULT_LLM_MODELS[selected_provider]
         request_options = request_options or {}
 
         try:
             # Google Gemini (REST)
             if selected_provider == "gemini":
-                if not gemini_key:
-                    log.error("Gemini provider selected but GEMINI_API_KEY is not configured.")
-                    return None
-                target_model = model or DEFAULT_GEMINI_MODEL
                 if "/" in target_model:
                     log.error("Gemini provider cannot use non-Gemini model id: %s", target_model)
                     return None
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent?key={gemini_key}"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{target_model}:generateContent"
                 payload = {"contents": [{"parts": [{"text": prompt}]}]}
                 generation_config = request_options.get("gemini_generation_config") or {}
                 if generation_config:
                     payload["generationConfig"] = generation_config
                 async with aiohttp.ClientSession() as session:
-                    async with session.post(url, json=payload) as resp:
+                    async with session.post(url, headers={"x-goog-api-key": active_key}, json=payload) as resp:
                         if resp.status == 200:
                             data = await resp.json()
                             if 'candidates' in data and data['candidates']:
-                                return data['candidates'][0]['content']['parts'][0]['text']
+                                parts = data['candidates'][0].get('content', {}).get('parts', [])
+                                return "".join(part.get('text', '') for part in parts if not part.get('thought')) or None
                             else:
                                 log.warning(f"Gemini API returned no candidates: {data}")
                                 return None
@@ -114,32 +117,19 @@ class LLMHelper:
                             return None
 
             # OpenAI Compatible (OpenRouter / OpenAI)
-            if selected_provider == "openrouter":
-                active_key = openrouter_key
-                base_url = "https://openrouter.ai/api/v1"
-            elif selected_provider == "openai":
-                active_key = openai_key
-                base_url = "https://api.openai.com/v1"
-            else:
-                active_key = openrouter_key or openai_key
-                base_url = "https://openrouter.ai/api/v1" if openrouter_key else "https://api.openai.com/v1"
-            if not active_key:
-                log.error("%s provider selected but no matching API key is configured.", selected_provider)
-                return None
-            if "openrouter" in (model or ""): base_url = "https://openrouter.ai/api/v1"
-            
-            if api_key and not passed_key_is_gemini:
-                active_key = api_key
-                if selected_provider == "openrouter" or (model and ("/" in model)):
-                    base_url = "https://openrouter.ai/api/v1"
+            use_openrouter = selected_provider == "openrouter"
+            base_url = "https://openrouter.ai/api/v1" if use_openrouter else "https://api.openai.com/v1"
+            if not use_openrouter:
+                target_model = target_model.removeprefix("openai/")
+                if "/" in target_model:
+                    log.error("OpenAI provider cannot use router model id: %s", target_model)
+                    return None
 
-            target_model = model or (DEFAULT_OPENROUTER_MODEL if "openrouter" in base_url else DEFAULT_OPENAI_MODEL)
-            
             headers = {
                 "Authorization": f"Bearer {active_key}",
                 "Content-Type": "application/json"
             }
-            if "openrouter" in base_url:
+            if use_openrouter:
                 headers["HTTP-Referer"] = "https://github.com/loki/dala"
                 headers["X-Title"] = "EPUB Downloader"
 
@@ -151,8 +141,14 @@ class LLMHelper:
                 ]
             }
             payload.update(request_options.get("chat_payload", {}))
-            if "openrouter" in base_url:
+            if use_openrouter:
                 payload.update(request_options.get("openrouter_payload", {}))
+            elif target_model.startswith("gpt-6"):
+                for parameter in ("temperature", "top_p", "logprobs", "top_logprobs"):
+                    payload.pop(parameter, None)
+                if "max_tokens" in payload:
+                    payload.setdefault("max_completion_tokens", payload.pop("max_tokens"))
+                payload.setdefault("reasoning_effort", "none" if target_model.startswith("gpt-6-luna") else "low")
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(f"{base_url}/chat/completions", headers=headers, json=payload) as resp:

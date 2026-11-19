@@ -397,11 +397,12 @@ uv run dala --translate es --test-translation-provider "Hello world"
 
 ### LLM configuration precedence
 
-LLM and translation settings are resolved in this order:
+**Use LLM for YouTube Transcripts** edits the formatting of existing captions.
+The same provider, model, and key settings apply to AI summaries and to translation when its provider is set to LLM.
 
-1. Extension settings.
-2. CLI flags.
-3. Environment variables or `.env`.
+With the extension set to **Auto** and the model and key fields left blank, Dala uses the first configured provider in this order. Gemini, OpenRouter, then OpenAI. Each request goes to a single provider. A specific model ID can direct Auto to its provider. An API key entered in the extension replaces the server keys for that request.
+
+Use **Custom** to enter an exact model ID. The extension uses the selected provider's built-in default when the model is blank. On the CLI, use `--llm-provider` and `--llm-model` to choose explicitly.
 
 ### Environment variables
 
@@ -413,9 +414,8 @@ GEMINI_API_KEY=your-gemini-api-key
 OPENROUTER_API_KEY=your-openrouter-api-key
 OPENAI_API_KEY=your-openai-api-key
 
-# Default LLM provider/model
+# Default CLI provider
 LLM_PROVIDER=auto
-LLM_MODEL=gemini-3.1-flash-lite
 
 # Headless browser fallback
 DALA_BROWSER_EXECUTABLE=/path/to/chrome-or-chromium

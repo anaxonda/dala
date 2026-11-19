@@ -484,7 +484,10 @@ def test_translation_status_helper_does_not_expose_keys(monkeypatch):
     body = response.json()
     assert body["keys"] == {"gemini": True, "openrouter": False, "openai": False}
     assert body["recommended_provider"] == "gemini"
-    assert body["recommended_model"] == "gemini-3.1-flash-lite"
+    assert body["recommended_model"] == "gemini-3.5-flash-lite"
+    assert body["recommended_model"] == body["default_models"]["gemini"]
+    assert {model["id"] for model in body["models"]["gemini"]} >= {"gemini-4-hydrogen", "gemini-4-neon"}
+    assert body["default_models"]["openai"] == "gpt-6-luna"
     assert "secret-gemini" not in response.text
 
 

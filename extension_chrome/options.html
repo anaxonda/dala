@@ -132,7 +132,7 @@
       <input type="checkbox" id="llm-format">
       Use LLM for YouTube Transcripts
     </label>
-    <div class="hint">Requires valid API key (entered below or in server .env).</div>
+    <div class="hint">Formats existing YouTube captions. Requires an API key below or on the server.</div>
   </div>
   <div class="row">
     <label for="llm-provider">LLM Provider</label>
@@ -142,7 +142,7 @@
       <option value="openrouter">OpenRouter</option>
       <option value="openai">OpenAI</option>
     </select>
-    <div class="hint">Auto uses the best configured server key. Gemini is fastest for translation when available.</div>
+    <div class="hint">With no model or key override, Auto uses the first configured provider in this order. Gemini, then OpenRouter, then OpenAI.</div>
   </div>
   <div class="row">
     <label for="llm-model-preset">LLM Model</label>
@@ -151,13 +151,13 @@
   </div>
   <div class="row" id="llm-custom-model-row">
     <label for="llm-model">Custom Model</label>
-    <input type="text" id="llm-model" placeholder="deepseek/deepseek-v4-flash" autocomplete="off">
-    <div class="hint">Use only when the model is not listed above.</div>
+    <input type="text" id="llm-model" placeholder="e.g. google/gemini-4-hydrogen" autocomplete="off">
+    <div class="hint">Enter the exact model ID from your provider’s catalog.</div>
   </div>
   <div class="row">
     <label for="llm-api-key">LLM API Key</label>
     <input type="password" id="llm-api-key" placeholder="AIza... or sk-..." autocomplete="off">
-    <div class="hint">Optional. Overrides server .env variables. Leave blank to use server .env key.</div>
+    <div class="hint">A key entered here replaces the server keys for these requests. Leave blank to use the server keys.</div>
   </div>
   <script src="chrome-shim.js"></script><script src="options.js"></script>
 </body>

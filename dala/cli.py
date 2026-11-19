@@ -381,7 +381,7 @@ def parse_args():
     parser.add_argument("--css", help="Custom CSS file to inject")
     parser.add_argument("--llm", action="store_true", dest="llm_format", help="Format transcript using LLM (requires GEMINI_API_KEY)")
     parser.add_argument("--llm-provider", choices=["auto", "gemini", "openrouter", "openai"], default=os.getenv("LLM_PROVIDER", "auto"), help="LLM provider selection")
-    parser.add_argument("--llm-model", help="Specify LLM model (default: gemini-3.1-flash-lite for Gemini or deepseek/deepseek-v4-flash for OpenRouter)")
+    parser.add_argument("--llm-model", help="Specify an LLM model ID (default: the selected provider's model)")
     parser.add_argument("--api-key", help="API Key for LLM (overrides env vars)")
     parser.add_argument("--summary", action="store_true", help="Generate AI summary at start of article")
     parser.add_argument("--translate", dest="translation_target_lang", help="Translate article text to this target language")

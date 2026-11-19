@@ -198,6 +198,7 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 }""")
 
                 options_page = await context.new_page()
+                await options_page.route("**/helper/translation/status", lambda route: route.fulfill(status=503))
                 await options_page.goto(f"chrome-extension://{extension_id}/options.html")
                 await options_page.wait_for_function("document.querySelector('#opt-server-url').value.length > 0")
                 assert not await options_page.locator("#yt-timestamps").is_checked()
@@ -218,6 +219,17 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 assert payload["youtube_timestamps"]
                 assert not payload["sources"][0]["is_forum"]
                 assert not payload["fetch_assets"]
+                await options_page.select_option("#llm-provider", "openai")
+                await options_page.select_option("#llm-model-preset", "gpt-6.2-sol")
+                await options_page.wait_for_function("""async () =>
+                    (await browser.storage.local.get('savedOptions')).savedOptions?.llm_model === 'gpt-6.2-sol'
+                """)
+                await options_page.select_option("#llm-model-preset", "__custom__")
+                await options_page.fill("#llm-model", "gpt-6-luna")
+                await options_page.dispatch_event("#llm-model", "change")
+                await options_page.wait_for_function("""async () =>
+                    (await browser.storage.local.get('savedOptions')).savedOptions?.llm_model === 'gpt-6-luna'
+                """)
                 await options_page.close()
 
                 page = await context.new_page()
@@ -227,6 +239,19 @@ async def test_current_chrome_extension_popup_loads_and_updates_queue(tmp_path, 
                 await page.wait_for_selector("#server-status.online")
                 assert "Server Online" in (await page.locator("#server-status").get_attribute("title"))
                 await page.wait_for_selector("#btn-download-single")
+                original_viewport = page.viewport_size
+                await page.set_viewport_size({"width": 360, "height": 230})
+                assert await page.locator("html").evaluate("el => getComputedStyle(el).overscrollBehaviorY") == "none"
+                await page.mouse.move(170, 115)
+                await page.mouse.wheel(0, 5000)
+                await page.wait_for_function("""() => {
+                    const root = document.scrollingElement;
+                    return root.scrollTop > 0 && root.scrollHeight - root.clientHeight - root.scrollTop < 1;
+                }""")
+                assert abs(await page.locator("#status-bar").evaluate("el => el.getBoundingClientRect().bottom - innerHeight")) < 1
+                await page.mouse.wheel(0, -5000)
+                await page.wait_for_function("window.scrollY === 0")
+                await page.set_viewport_size(original_viewport)
                 assert await page.locator("#btn-debug-capture, #debug-capture-status").count() == 0
                 assert await page.locator("#pdf-options").evaluate("el => el.classList.contains('hidden')")
                 await page.select_option("#opt-output-format", "pdf")

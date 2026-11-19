@@ -1,5 +1,18 @@
 # Changelog
 
+## v2.4.10
+
+### LLM settings
+
+- Explain Auto's provider priority. With blank model and key fields, Dala uses the first configured provider in this order. Gemini, OpenRouter, then OpenAI.
+- Refresh the model presets and defaults for all three providers. Keep custom model IDs available.
+- Save model selections correctly and route direct OpenAI model IDs and key overrides to their provider.
+
+### Browser extensions
+
+- Stop the popup from scrolling into blank space beyond its top and bottom edges in Chromium and Firefox.
+- Align the Python package and both extensions at 2.4.10. Release assets include the Chrome ZIP, AMO-signed Firefox XPI, and installer bundle.
+
 ## v2.4.9
 
 ### YouTube

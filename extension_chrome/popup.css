@@ -1,3 +1,4 @@
+html { overscroll-behavior-y: none; }
 body { width: 340px; font-family: system-ui, sans-serif; margin: 0; background: #f4f4f4; }
 
 /* HEADER */
